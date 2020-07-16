@@ -1,0 +1,1464 @@
+! $Id$: SY_531APSActivation_ui.PVC $
+! Activate APS Credit Card
+! Accounting Systems, Inc. 2013-2020. Bob Sosbee
+!
+DEF CLASS "SY_531APSActivation_ui" CREATE REQUIRED DELETE REQUIRED 
+	! Inherits from the following class(es)
+	LIKE "SY_MaintUI"	! was SY_MainSetUI
+	LIKE "SY_Password"
+	
+	! Public Properties
+	
+	! Local/Private Properties
+	LOCAL cAPSActivationFH
+	LOCAL cOldAPSCurrentActivated$
+	LOCAL cOldAPSAllActivated$
+	LOCAL cEnableForCompany$
+	LOCAL ARCreditCard
+	LOCAL SYConvDriver
+	LOCAL cAPSVersion$ 				! PLW 2016-02-26 added version and revision display 
+	LOCAL cAPSAdditionalInfo$
+
+	LOCAL cOrigD531APSMerchantID$
+	LOCAL cOrigD531APSPassword$
+	LOCAL cOldAPSLevelIIIProcessing$
+
+	! C2P Change
+	LOCAL cD531_APSIOList$
+	LOCAL oldD531_C2PACHPaymentType$
+	LOCAL oldD531_C2PccPaymentType$
+	
+	! DSD MCR Change
+	LOCAL cAPSMultiCurrency
+
+	
+	! Public Functions (Methods)
+
+	
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL BT_OK()													BT_OK
+ 	FUNCTION LOCAL BT_DOC()													BT_DOC
+ 	FUNCTION LOCAL BT_Uninstall()											BT_UNINSTALL
+ 	FUNCTION LOCAL ChangeCB_APSAllActivated()								CHANGE_CB_APSALLACTIVATED
+ 	FUNCTION LOCAL ChangeCB_APSCurrentActivated()							CHANGE_CB_APSCURRENTACTIVATED
+ 	FUNCTION LOCAL CheckIfPaymentTypeUpdated(PaymentTypeFH)					CHECK_IF_PAYMENT_TYPE_UPDATED
+ 	FUNCTION LOCAL ClearAllCreditCards(SystemFlag$)							CLEAR_ALL_CREDIT_CARDS
+ 	FUNCTION LOCAL ClearAPSActivationFile()									CLEAR_APS_ACTIVATION_FILE
+ 	FUNCTION LOCAL ClearCreditCard(comp$,SystemFlag$)						CLEAR_CREDIT_CARD
+ 	FUNCTION LOCAL ClearCurrentCompanyCreditCards(SystemFlag$)				CLEAR_CURRENT_COMPANY_CREDIT_CARDS
+ 	FUNCTION LOCAL EnableAPSFiles(cCompanyCode$)							ENABLE_APS_FILES
+ 	FUNCTION LOCAL PostLoad()												POST_LOAD
+ 	FUNCTION LOCAL PostLoadPCreditCards()									POST_LOAD_PCREDITCARDS
+ 	FUNCTION LOCAL PreLoad()												PRE_LOAD
+ 	FUNCTION LOCAL PostReadRec()											POST_READ_REC
+ 	FUNCTION LOCAL PreReadRec()												PRE_READ_REC
+ 	FUNCTION LOCAL RemoveTasks()											REMOVE_TASKS
+	FUNCTION LOCAL RemoveEnhancement()										REMOVE_ENHANCEMENT
+	FUNCTION LOCAL RemoveCTLRecords()										REMOVE_CTL_RECORDS
+	FUNCTION LOCAL RemoveNOMADsChanges()									REMOVE_NOMADS_CHANGES
+	FUNCTION LOCAL RemoveURLs()												REMOVE_URLS ! #232007 - RCS - 2017-11-20 Merged C2P, APS.
+
+	! APS
+	FUNCTION LOCAL ChangeML_APSMerchantID()									CHANGE_APS_CREDENTIALS
+	FUNCTION LOCAL ChangeML_APSPassword()									CHANGE_APS_CREDENTIALS
+	FUNCTION LOCAL ChangeD531APSLevelIIIProcessing()						CHANGE_LEVEL_III_PROCESSING
+	FUNCTION LOCAL CreditCardCheckForEnable()								CREDIT_CARD_CHECK_FOR_ENABLE
+!	FUNCTION LOCAL RulesForPCreditCards()									RULES_FOR_PCREDITCARDS
+
+	! C2P Change
+	FUNCTION LOCAL BT_C2PAPITest()											BT_C2P_API_TEST
+	FUNCTION LOCAL BT_OptoutHelp()											BT_OPTOUT_HELP
+	FUNCTION LOCAL changeD531_C2PEnabled()									CHANGE_D531_C2PENABLED
+	FUNCTION LOCAL changeDB_C2PCurrency()									CHANGE_DB_C2P_CURRENCY
+	FUNCTION LOCAL changeDB_C2POption()										CHANGE_DB_C2P_OPTION
+	
+	! DSD MultiCurrency Compatibility
+	FUNCTION LOCAL MultiCurrencyCheckForEnable()							MULTICURRENCY_CHECK_FOR_ENABLE
+	FUNCTION LOCAL MultiCurrencyEnabled()									MULTICURRENCY_ENABLED
+	FUNCTION LOCAL MultiCurrencyHideShow()									MULTICURRENCY_HIDE_SHOW
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession 
+END DEF
+!
+
+ON_CREATE:
+
+	tmpFH				= coSession'OpenTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
+	IF NOT(tmpFH) { 
+		tmpFH			= coSession'CreateTable("SY_531APSActivation","SYSTEM") 
+	} 
+	CLOSE (tmpFH,ERR=*NEXT)
+		
+	SCREEN_LIB$			= "SY_531APSActivation.M4L"
+	SCREEN_ID$			= "DMain"
+		
+	coBusiness			= _OBJ'InitBusinessObject("MAIN","SY_531APSActivation_bus",$$,isTRUE,isTRUE,isTRUE)
+	IF NOT(coBusiness) { EXIT errOBJECT }
+
+	IF NUL(CompanyKey$) { 
+		CompanyKey$		= coSession'CompanyKey$
+	}
+
+	
+RETURN 
+!
+
+ON_DELETE:
+	CLOSE (cAPSActivationFH,ERR=*NEXT)
+	cAPSActivationFH	= 0
+	DROP OBJECT SYConvDriver,ERR=*NEXT
+	SYConvDriver		= 0
+RETURN
+!
+
+BT_DOC:
+	cInfoFileName$		= "../ASI/APSUserGuide.pdf"
+	SYSTEM_HELP cInfoFileName$
+RETURN retVal
+!
+
+BT_C2P_API_TEST:
+
+	retVal				= coBusiness'ValidateC2P_ApiKey()
+	if retval {
+		coSession'UI'MessageBox$($$,"API Key Test Successful!","title=APS ClickToPay,style=OK,icon=I")
+	}
+RETURN retVal
+!
+
+BT_OK:
+	CMD_STR$			= "E"
+RETURN
+!
+
+BT_OPTOUT_HELP:
+
+	coSession'UI'MessageBox$("SY_531APSC2PHelp","","title=APS ClickToPay,style=OK,icon=I")
+	retVal				= retSUCCESS
+
+RETURN retVal
+!
+
+BT_UNINSTALL:
+	
+	! check if APS is activated in any company
+	retVal				= coBusiness'CheckIfActivated(Activated)
+	if not(retVal) {
+		coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+		RETURN retSUCCESS
+	}
+	if Activated {
+		! APS must be deactivated in all companies
+		coSession'UI'MessageBox$("SY_531APSDeactivateAll",MSG("SY_531APSDeactivateAll"))
+		RETURN retSUCCESS
+	}
+			
+	! ask if they want to uninstall
+	answer$		= coSession'UI'MessageBox$("SY_531APSUninstallAPS.Y",MSG("SY_531APSUninstallAPS.Y"))
+			
+	IF answer$	= "YES" {
+
+		tmpRet	= coSession'UI'ProgressBar("init","Updating files...",DIM(50)+SEP+" ",0)
+
+		! remove enhancement record and class enhancements
+		coSession'UI'ProgressBar("update", $$, "Removing APS Enhancement Records"+SEP+" ", 0, "force")
+		retVal		= _OBJ'RemoveEnhancement()
+		
+		IF retVal {
+			! remove CTL records and programs
+			coSession'UI'ProgressBar("update", $$, "Removing NOMADs Changes"+SEP+" ", 0, "force")
+			retVal	= _OBJ'RemoveNOMADsChanges()
+		}
+		
+		IF retVal {
+			! remove CTL records and programs
+			coSession'UI'ProgressBar("update", $$, "Removing APS CTL Records and Programs"+SEP+" ", 0, "force")
+			retVal	= _OBJ'RemoveCTLRecords()
+		}
+		
+		IF retVal {
+			! remove tasks and menu options
+			coSession'UI'ProgressBar("update", $$, "Removing APS Tasks and Menus"+SEP+" ", 0, "force")
+			retVal	= _OBJ'RemoveTasks()
+		}
+		
+		IF retVal {
+			! remove activation records
+			coSession'UI'ProgressBar("update", $$, "Removing APS Activation Records"+SEP+" ", 0, "force")
+			retVal	= _OBJ'ClearAPSActivationFile()
+		}
+		
+		IF retVal {
+			! remove URL records
+			coSession'UI'ProgressBar("update", $$, "Removing APS URL Records"+SEP+" ", 0, "force")
+			retVal	= _OBJ'RemoveURLs()
+		}
+		
+		coSession'UI'ProgressBar("close")
+
+		CMD_STR$	= "END"
+		
+	}
+	
+RETURN retSUCCESS
+!
+
+CHANGE_APS_CREDENTIALS:
+	
+	IF NOT(NUL(ML_APSMerchantID$)) AND NOT(NUL(ML_APSPassword$)) {
+		_OBJ'EncryptPassword(ML_APSMERCHANTID$, tmpAPSMerchantID$)
+		_OBJ'EncryptPassword(ML_APSPASSWORD$, tmpAPSPassword$)
+		
+		tstVal	= EVN("coBusiness'ARCreditCard",err=*next) ! checks to see if SED is running #232007 2018-04-11
+		if tstVal {
+			test	= coBusiness'ARCreditCard'TestAPSCredentials(tmpAPSMerchantID$, tmpAPSPassword$)
+			IF test	= retSUCCESS {
+				IF CreditCardEnable$	= isNO$ {
+					coBusiness'SetValue("CreditCardEnable$", isYES$)
+					_OBJ'CreditCardCheckForEnable()
+				}
+			} ELSE {
+				ErrMsg$					= UCS(coBusiness'ARCreditCard'LastErrorMsg$)
+				IF POS("AUTHENTICATION FAILED" = ErrMsg$) {
+					coSession'UI'MessageBox$ ("AR_531APSInvalidMerchant", MSG("AR_531APSInvalidMerchant"))
+				} ELSE {
+					coSession'UI'MessageBox$ (coBusiness'ARCreditCard'LastErrorNum$, coBusiness'ARCreditCard'LastErrorMsg$)
+				}
+				ML_APSMerchantID$  		= $$
+				ML_APSPassword$  		= $$
+				NEXT_ID					= ML_APSMerchantID.ctl
+				REFRESH_FLG				= isTRUE
+			}
+			! PLW 2017-12-06 four lines below. Code wasn't doing SetValue(). Not sure how it was working in the old system
+			D531APSMerchantID$	= tmpAPSMerchantID$ ! PLW 2017-12-06
+			D531APSPassword$	= tmpAPSPassword$ ! PLW 2017-12-06
+			coBusiness'SetValue("D531APSMerchantID$",D531APSMerchantID$) ! PLW 2017-12-06
+			coBusiness'SetValue("D531APSPassword$",D531APSPassword$) ! PLW 2017-12-06
+		} ELSE {
+			coSession'UI'MessageBox$( "SY_531APSSedRequired" )
+			ML_APSMerchantID$   		= $$
+			ML_APSPassword$  			= $$
+			NEXT_ID						= ML_APSMerchantID.ctl
+			REFRESH_FLG					= isTRUE
+		}
+	}
+
+RETURN retSUCCESS
+!
+
+CHANGE_CREDIT_CARD_ENABLE:
+
+	IF coBusiness'APSActivated {
+
+		retVal		= retSUCCESS
+
+		IF POS(CreditCardEnable$= "YAB") { ! #231342 Yes, ACH, Both
+
+			! check if SY_Company has been updated
+			tmpSY_CompanyFH		= coSession'OpenTable("SY_531APSCompany","SYSTEM",ERR=*NEXT) ! PLW 2017-12-11 changed to check SY_531APSCompany instead of SY_Company
+ 			IF NOT(tmpSY_CompanyFH) { ! removed SY_Company field checking RCS 2017-12-11 #232007
+				retVal			= retFAILURE
+				LastErrorNum$	= "SY_531APSCannotOpen"
+				LastErrorMsg$	= MSG("SY_531APSCannotOpen","SY_Company")
+			}
+			CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+
+			IF retVal {
+				! check if AR_PaymentType has been updated
+				tmpAR_PaymentTypeFH		= coSession'OpenTable("AR_PaymentType", pthOTHERCOMPANY$ + CompanyCode$)
+				FileNeedsToBeUpdated	= isTRUE
+				IF POS("D531APSMERCHANTID" = UCS(LST(IOL(tmpAR_PaymentTypeFH)))) { FileNeedsToBeUpdated = isFALSE } ! file already updated
+				CLOSE (tmpAR_PaymentTypeFH,ERR=*NEXT)
+				IF FileNeedsToBeUpdated {
+					retVal				= retFAILURE
+					coSession'UI'MessageBox$("SY_531APSConvertFiles",MSG("SY_531APSConvertFiles"))
+				}
+			}
+		}
+
+		IF retVal {
+			retVal = coBusiness'SetValue("CreditCardEnable$", CreditCardEnable$)
+
+			SWITCH retVal
+				CASE retSUCCESS
+					_OBJ'CreditCardCheckForEnable()
+					IF CreditCardEnable$ = isNO$ { _OBJ'RulesForPCreditCards() }
+					BREAK
+				CASE retWARNING
+					IF POS(CreditCardEnable$ = "YAB") { ! #231342 - Yes, ACH, Both
+						answer$		= coSession'UI'MessageBox$ (coBusiness'LastErrorNum$, coBusiness'LastErrorMsg$)
+						IF answer$	= msgYES$ {
+							ML_APSMerchantID$	= $$
+							ML_APSPassword$		= $$
+							_OBJ'SetControlState("APS_VAULT.grp$", ctlENABLE)
+							_OBJ'CreditCardCheckForEnable()
+							NEXT_ID				= ML_APSMerchantID.ctl
+						} ELSE {
+							retVal	= coBusiness'SetValue("CreditCardEnable$", isNO$) ! set value back
+						}
+					} ELSE {
+						IF CreditCardEnable$	= isNO$ { _OBJ'RulesForPCreditCards() } ! retWARNING message already displayed above
+					}
+					BREAK
+				CASE retFAILURE
+					coSession'UI'MessageBox$ (coBusiness'LastErrorNum$, coBusiness'LastErrorMsg$)
+					BREAK
+			END SWITCH
+
+		}
+	} ELSE {
+!		retVal		= _OBJ'ChangeCreditCardEnable(FROM "SY_531APSCompany_ui_BASE")
+	}
+RETURN retVal
+!
+
+CHANGE_D531_C2PENABLED:
+
+!	c2pRec$				= rec ( cD531_APSIOList$ )
+
+	DB_C2PCurrency$ 	= D531_C2PCurrency$
+	IF NUL(DB_C2PCurrency$) { ! currency drop box
+		DB_C2PCurrency$		= "USD"
+		D531_C2PCurrency$	= DB_C2PCurrency$
+	}
+	DB_C2POption$ 		= D531_C2POptOut$
+	IF NUL(DB_C2POption$) { ! Opt in/Opt out drop box
+		DB_C2POption$	= isNO$
+		D531_C2POptOut$	= DB_C2POption$
+	}
+
+!	coBusiness'SetPartialRecord( c2pRec$, cD531_APSIOList$ )
+	retVal			= coBusiness'SetValue("D531_C2PEnabled$",D531_C2PEnabled$)
+	retVal			= coBusiness'SetValue("D531APSLevelIIIProcessing$",D531APSLevelIIIProcessing$)
+
+	retVal			= retSUCCESS
+	SWITCH D531_C2PEnabled$
+		CASE isYES$
+			_OBJ'SetControlState("APS_C2P.GRP$",ctlENABLE)
+			_OBJ'SetControlState("APS_C2P.GRP$",ctlSHOW)
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlSHOW)
+			SHOW CONTROL D531APSLEVELIIIPROCESSING.CTL
+			ENABLE CONTROL D531APSLEVELIIIPROCESSING.CTL
+
+			cOldAPSLevelIIIProcessing$		= D531APSLevelIIIProcessing$
+
+			IF NUL(cOldAPSLevelIIIProcessing$) { 
+				cOldAPSLevelIIIProcessing$	= isNO$
+			}
+
+			APSC2PEnabled					= isTRUE
+
+			if D531APSLevelIIIProcessing$	= isYES$ {
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+			} ELSE {
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+			}
+
+			BREAK
+		DEFAULT
+			_OBJ'SetControlState("APS_C2P.GRP$",ctlDISABLE)
+			_OBJ'SetControlState("APS_C2P.GRP$",ctlHIDE)
+
+			APSC2PEnabled = isFALSE
+
+			if D531APSLevelIIIProcessing$	= isYES$ {
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+			} ELSE {
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+			}
+			
+			IF NOT(coBusiness'APSActivated) {
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlHIDE)
+				HIDE CONTROL D531APSLEVELIIIPROCESSING.CTL
+			} 
+			BREAK
+	END SWITCH
+RETURN retVal
+!
+
+CHANGE_DB_C2P_CURRENCY:
+
+	D531_C2PCurrency$	= DB_C2PCurrency$
+!	c2pRec$				= rec ( cD531_APSIOList$ )
+!	coBusiness'SetPartialRecord( c2pRec$, cD531_APSIOList$ )  ! ***** Why are we doing this?   PLW 2017-12-11
+	retVal				= coBusiness'SetValue("D531_C2PCurrency$",D531_C2PCurrency$)
+
+RETURN retVal
+!
+
+CHANGE_DB_C2P_OPTION:
+
+	D531_C2POptOut$		= DB_C2POption$ ! PLW 2017-12-11 correct line added
+!	c2pRec$				= rec ( cD531_APSIOList$ )
+!	coBusiness'SetPartialRecord( c2pRec$, cD531_APSIOList$ )  ! ***** Why are we doing this?   PLW 2017-12-11
+	retVal				= coBusiness'SetValue("D531_C2POptOut$",D531_C2POptOut$)
+
+RETURN retVal
+!
+
+CHANGE_LEVEL_III_PROCESSING:
+
+	retVal				= retSUCCESS
+
+!	IF retVal { retVal	= _OBJ'DefaultChange() }
+
+	IF retVal {
+		cOldAPSLevelIIIProcessing$	= D531APSLevelIIIProcessing$
+		IF D531APSLevelIIIProcessing$=isYES$ {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+		} ELSE {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+		}
+	} ELSE {
+		D531APSLevelIIIProcessing$	= cOldAPSLevelIIIProcessing$
+	}
+RETURN retVal
+!
+
+CREDIT_CARD_CHECK_FOR_ENABLE:
+	retVal				= retSUCCESS ! _OBJ'CreditCardCheckForEnable(FROM "SY_531APSCompany_ui_BASE")
+	IF cSecurityAccess AND cSecurityAccess<>secDELETEONLY {
+		IF coBusiness'APSActivated {
+			IF POS(CreditCardEnable$	= "YAB") { ! #231342 - Yes, ACH, Both
+				tmpVal=_OBJ'SetControlState("CC_APS.grp$",ctlENABLE)
+				_OBJ'SetControlState("APS_VAULT.GRP$",ctlENABLE)
+				_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)	! #258342 - 2019-10-04 - RCS
+				ENABLE CONTROL D531_APSCREDITCARDLOG.CTL
+				ENABLE CONTROL D531APSLEVELIIIPROCESSING.CTL
+				IF D531APSLevelIIIProcessing$	= isYES$ {
+					_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+				} ELSE {
+					_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+				}
+				_obj'MultiCurrencyCheckForEnable() ! PLW 2019-02-08 Ticket #248049
+			} ELSE {
+				_OBJ'SetControlState("CC_APS.grp$",ctlDISABLE)
+				_OBJ'SetControlState("APS_VAULT.GRP$",ctlDISABLE)
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+				DISABLE CONTROL D531_APSCREDITCARDLOG.CTL
+				DISABLE CONTROL D531APSLEVELIIIPROCESSING.CTL
+			}
+		}
+	}
+RETURN retVal
+!
+CHANGE_CB_APSALLACTIVATED:
+	
+	retVal				= retSUCCESS
+	tmpUpdate			= isFALSE
+	
+	IF CB_APSAllActivated$<>cOldAPSAllActivated$ {
+		
+		! Check Company Maintenance / Credit Card / Enable Credit Card Procesessing
+		! we cannot allow to activate/inactivate the APS modification if Credit Card Procesessing
+		! is enabled in one or more companies
+		tmpSY_CompanyFH	= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+		IF tmpSY_CompanyFH {
+			CCEnabled				= isZERO
+			NotPaymentTypeUpdated	= isFALSE
+			StopFromActivating		= isFALSE
+		
+			SELECT *, REC=ENABLE$ FROM tmpSY_CompanyFH BEGIN $$ END $FE$
+				IF ENABLE.CreditCardEnable$	= isYES$ {
+					CCEnabled		++ 
+					BREAK
+				}
+				
+				IF CB_APSAllActivated$	= isYES$ {
+					! check if AR_PaymentType has been updated 
+					_obj'EnableAPSFiles(ENABLE.CompanyCode$) ! #229519 - RCS - 2017-10-19
+					tmpAR_PaymentTypeFH	= coSession'OpenTable("AR_PaymentType", pthOTHERCOMPANY$ + ENABLE.CompanyCode$)
+					tmpNotPaymentTypeUpdated	= _OBJ'CheckIfPaymentTypeUpdated(tmpAR_PaymentTypeFH)
+					IF tmpNotPaymentTypeUpdated { 
+						NotPaymentTypeUpdated	= tmpNotPaymentTypeUpdated 
+					}
+					CLOSE (tmpAR_PaymentTypeFH,ERR=*NEXT)
+					IF tmpNotPaymentTypeUpdated {
+						! check if credit cards have been converted yet
+						IF NOT(SYConvDriver) { 
+							SYConvDriver		= NEW("SY_ConversionDriver",coSession) 
+						}
+						notSageExchangeConvRequired	= SYConvDriver'CheckConversionHistory((ENABLE.CompanyCode$),"05.00.00.00","DATA","CI_SageExchange","000000","000")
+						IF notSageExchangeConvRequired {
+							! if it is a new installation - do not allow to activate before conversion
+							! if it is an upgrade from the earlier version - do not stop them
+							! APS must be activated after migration, but before conversion 
+							! otherwise all credit card will not go to the APS vault
+							StopFromActivating	= isTRUE
+							BREAK
+						}
+					}
+				}
+			NEXT RECORD
+		
+			IF CCEnabled {
+				coSession'UI'MessageBox$("SY_531APSCreditCardProcessingActivate",MSG("SY_531APSCreditCardProcessingActivate"))
+				retVal							= retFAILURE
+				CB_APSAllActivated$				= cOldAPSAllActivated$
+			} ELSE {
+				IF NotPaymentTypeUpdated {
+					coSession'UI'MessageBox$("SY_531APSConvertFilesAll",MSG("SY_531APSConvertFilesAll"))
+					IF StopFromActivating {
+						retVal					= retFAILURE
+						CB_APSAllActivated$		= cOldAPSAllActivated$
+					}
+				}
+				IF POS("D531APSMERCHANTID"		= UCS(LST(IOL(tmpSY_CompanyFH)))) {
+					! file already updated
+				} ELSE {
+					tmpUpdate					= isTRUE
+				}
+			}
+		} ELSE {
+			coSession'UI'MessageBox$("","Cannot open SY_Company")
+			retVal								= retFAILURE
+			CB_APSAllActivated$					= cOldAPSAllActivated$
+		}
+		CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+	
+		IF retVal {
+		
+			IF CB_APSAllActivated$	= isYES$ {
+		
+				! update SY_Company
+				IF tmpUpdate {
+					tmpRetVal					= coSession'CreateTable("SY_Company","SYSTEM",ERR=*NEXT)
+					IF NOT(tmpRetVal) {
+						coSession'UI'MessageBox$("SY_531APSRunBat",MSG("SY_531APSRunBat"))
+						retVal					= retFAILURE
+						CB_APSAllActivated$		= cOldAPSAllActivated$
+					}
+					tmpUpdate					= isFALSE
+ 				}
+				
+				IF retVal { 
+					coBusiness'UpdatesURLs()
+				}
+				IF retVal {
+					retVal						= coBusiness'UpdateAPSAllCompanies(isYES$)
+					IF NOT(retVal) {
+						coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+					}
+				}
+				IF retVal {
+					cOldAPSAllActivated$		= CB_APSAllActivated$
+					CB_APSCurrentActivated$		= CB_APSAllActivated$
+					cOldAPSCurrentActivated$	= CB_APSCurrentActivated$
+				} ELSE {
+					CB_APSAllActivated$			= cOldAPSAllActivated$
+				}
+			} ELSE {
+				retVal							= coBusiness'UpdateAPSAllCompanies(isNO$)
+				IF retVal {
+					cOldAPSAllActivated$		= CB_APSAllActivated$
+					CB_APSCurrentActivated$		= CB_APSAllActivated$
+					cOldAPSCurrentActivated$	= CB_APSCurrentActivated$
+				}
+			}
+		}
+		IF retVal {
+			IF CB_APSAllActivated$	= isYES$ {
+				IF NOT(NotPaymentTypeUpdated) {
+					coSession'UI'MessageBox$("SY_531APSEnableCCProcessing",MSG("SY_531APSEnableCCProcessing"))
+				}
+			} ELSE {
+				coSession'UI'MessageBox$("SY_531APSHaveToRemoveCreditCards",MSG("SY_531APSHaveToRemoveCreditCards"))
+			}
+			! enable/disable BT_Uninstall
+			tmpRetVal							= coBusiness'CheckIfActivated(Activated)
+			IF tmpRetVal AND NOT(Activated) {
+				ENABLE CONTROL BT_UNINSTALL.CTL
+			} ELSE {
+				DISABLE CONTROL BT_UNINSTALL.CTL
+			}
+		}
+	}
+	
+RETURN retVal
+!
+
+CHANGE_CB_APSCURRENTACTIVATED:
+	
+	retVal				= retSUCCESS
+	CurrentCompanyKey$	= coSession'CompanyKey$
+	CurrentCompanyCode$	= coSession'CompanyCode$
+
+	_obj'EnableAPSFiles(CurrentCompanyCode$) ! #229519 - RCS - 2017-10-19
+	
+	IF CB_APSCurrentActivated$<>cOldAPSCurrentActivated$ {
+		
+		! Check Company Maintenance / Credit Card / Enable Credit Card Procesessing
+		! we cannot allow to activate/inactivate the APS modification if Credit Card Procesessing
+		! is enabled in this company
+
+		tmpSY_CompanyFH	= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+		IF tmpSY_CompanyFH {
+			CCEnabled					= 0
+			NotPaymentTypeUpdated		= 0
+		
+			IF CB_APSCurrentActivated$	= isYES$ {
+				! check if AR_PaymentType has been updated 
+				_obj'EnableAPSFiles(coSession'CompanyCode$) ! #229519 - RCS - 2017-10-19
+				tmpAR_PaymentTypeFH		= coSession'OpenTable("AR_PaymentType", "COMPANY")
+				NotPaymentTypeUpdated	=_OBJ'CheckIfPaymentTypeUpdated(tmpAR_PaymentTypeFH)
+				CLOSE (tmpAR_PaymentTypeFH,ERR=*NEXT)
+			}
+				
+			ENABLE.CreditCardEnable$	= isNO$
+			READ (tmpSY_CompanyFH,KEY=CurrentCompanyKey$,REC=ENABLE$)
+			IF pos(ENABLE.CreditCardEnable$	= "YAB") {
+				CCEnabled				++ 
+			}
+	
+			IF CCEnabled {
+				coSession'UI'MessageBox$("SY_531APSCreditCardProcessingActivateComp",MSG("SY_531APSCreditCardProcessingActivateComp"))
+				retVal					= retFAILURE
+				CB_APSCurrentActivated$	= cOldAPSCurrentActivated$
+			} ELSE {
+				IF NotPaymentTypeUpdated {
+					coSession'UI'MessageBox$("SY_531APSConvertFiles",MSG("SY_531APSConvertFiles"))
+					! check if credit cards have been converted yet
+					IF NOT(SYConvDriver) {
+						SYConvDriver	= NEW("SY_ConversionDriver",coSession)
+					}
+					notSageExchangeConvRequired	= SYConvDriver'CheckConversionHistory((CurrentCompanyCode$),"05.00.00.00","DATA","CI_SageExchange","000000","000")
+					IF notSageExchangeConvRequired {
+						! if it is a new installation - do not allow to activate before conversion
+						! if it is an upgrade form the earlier version - do not stop them
+						! APS must be activated after migration, but before conversion 
+						! otherwise all credit card will not go to the APS vault
+						retVal					= retFAILURE
+						CB_APSCurrentActivated$	= cOldAPSCurrentActivated$
+					}
+				
+				}
+				IF POS("D531APSMERCHANTID"		= UCS(LST(IOL(tmpSY_CompanyFH)))) {
+					! file has been already updated
+				} ELSE {
+					tmpUpdate			= isTRUE
+				}
+			}
+		} ELSE {
+			coSession'UI'MessageBox$("","Cannot open SY_Company")
+			retVal						= retFAILURE
+			CB_APSCurrentActivated$		= cOldAPSCurrentActivated$
+		}
+		CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+	
+		IF retVal { 
+		
+			IF CB_APSCurrentActivated$	= isYES$ {
+		
+				! update SY_Company
+				IF tmpUpdate {
+					tmpRetVal			= coSession'CreateTable("SY_Company","SYSTEM",ERR=*NEXT)
+					IF NOT(tmpRetVal) {
+						coSession'UI'MessageBox$("SY_531APSRunBat",MSG("SY_531APSRunBat"))
+						retVal			= retFAILURE
+					}
+					tmpUpdate			= isFALSE
+ 				}
+				
+				IF retVal { 
+					coBusiness'UpdatesURLs() 
+				}
+				
+				IF retVal {
+					retVal				= coBusiness'UpdateAPSCurrentCompany(isYES$)
+					IF NOT(retVal) { 
+						coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+					}
+				}
+				IF retVal {
+					cOldAPSCurrentActivated$	= CB_APSCurrentActivated$
+				} ELSE {
+					CB_APSCurrentActivated$		= cOldAPSCurrentActivated$
+				}
+			} ELSE {
+				retVal							= coBusiness'UpdateAPSCurrentCompany(isNO$)
+				IF retVal {
+					cOldAPSCurrentActivated$	= CB_APSCurrentActivated$
+					CB_APSAllActivated$			= isNO$
+					cOldAPSAllActivated$		= CB_APSAllActivated$
+				}
+			}
+		}
+		IF retVal {
+			IF CB_APSCurrentActivated$			= isYES$ {
+				IF NOT(NotPaymentTypeUpdated) {
+					coSession'UI'MessageBox$("SY_531APSEnableCCProcessing",MSG("SY_531APSEnableCCProcessing"))
+				}
+			} ELSE {
+				coSession'UI'MessageBox$("SY_531APSHaveToRemoveCreditCards",MSG("SY_531APSHaveToRemoveCreditCards"))
+			}
+			! enable/disable BT_Uninstall
+			tmpRetVal							= coBusiness'CheckIfActivated(Activated)
+			IF tmpRetVal AND NOT(Activated) {
+				ENABLE CONTROL BT_UNINSTALL.CTL
+			} ELSE {
+				DISABLE CONTROL BT_UNINSTALL.CTL
+			}
+		}
+	}
+	
+RETURN retVal
+!
+
+CLEAR_CURRENT_COMPANY_CREDIT_CARDS:
+ENTER (SystemFlag$)
+	
+	retVal				= retSUCCESS
+	
+	progressMeterDelay	= 0
+	coSession'UI'ProgressBar("init","Clearing credit card data",DIM(50)+SEP+" ",0)
+	
+	ARCreditCard		= NEW("AR_CreditCard",coSession,ERR=*NEXT)
+	IF ARCreditCard {
+		comp$			= coSession'CompanyCode$
+		retVal			= _OBJ'ClearCreditCard(comp$,SystemFlag$)
+		IF retVal		= retWARNING { 
+			coSession'UI'MessageBox$("SY_531APSClearGUIDUsed",MSG("SY_531APSClearGUIDUsed")) 
+		}
+	} ELSE {
+		coSession'UI'MessageBox$("","Cannot open SY_Company")
+	}
+	
+	DROP OBJECT ARCreditCard, ERR=*NEXT
+	ARCreditCard		= 0
+	coSession'UI'ProgressBar("close")
+	
+RETURN retSUCCESS
+!
+
+CLEAR_ALL_CREDIT_CARDS:
+ENTER (SystemFlag$)
+	
+	retVal				= retSUCCESS
+	
+	progressMeterDelay	= 0
+	coSession'UI'ProgressBar("init","Clearing credit card data",DIM(50)+SEP+" ",0)
+	
+	ARCreditCard		= NEW("AR_CreditCard",coSession,ERR=*NEXT)
+	IF ARCreditCard {
+		
+		tmpSY_CompanyFH	= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+ 		IF tmpSY_CompanyFH {
+		
+			SELECT *, REC=COMP$ FROM tmpSY_CompanyFH BEGIN $$ END $FE$
+				comp$	= COMP.CompanyCode$
+				tmpRetVal	= _OBJ'ClearCreditCard(comp$,SystemFlag$)
+				IF tmpRetVal	= retWARNING { 
+					retVal		= retWARNING 
+				}
+			NEXT RECORD
+			
+			IF retVal	= retWARNING { 
+				coSession'UI'MessageBox$("SY_531APSClearGUIDUsed",MSG("SY_531APSClearGUIDUsed")) 
+			}
+			
+		} ELSE {
+			coSession'UI'MessageBox$("","Cannot open SY_Company")
+		}
+	} ELSE {
+		retVal			= retFAILURE
+		coSession'UI'MessageBox$(coSession'LastErrorNum$,coSession'LastErrorMsg$)
+	}
+	
+	CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+	DROP OBJECT ARCreditCard, ERR=*NEXT
+	ARCreditCard		= 0
+	coSession'UI'ProgressBar("close")
+
+RETURN retSUCCESS
+!
+
+CLEAR_APS_ACTIVATION_FILE:
+	APSActivationFH			= 0
+	APSActivationAltFH		= 0
+	APSActivationFH			= coSession'OpenTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
+	APSActivationAltFH		= coSession'OpenTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
+	IF APSActivationFH AND APSActivationAltFH {
+		SELECT * FROM APSActivationFH BEGIN $$ END $FE$
+			REMOVE (APSActivationAltFH,KEY=KEC(APSActivationFH),DOM=*NEXT)
+		NEXT RECORD
+	} ELSE {
+		coSession'UI'MessageBox$("","Cannot open SY_531APSActivation file.")
+	}
+	CLOSE (APSActivationFH,		ERR=*NEXT)
+	CLOSE (APSActivationAltFH,	ERR=*NEXT)
+	APSActivationFH			= 0
+	APSActivationAltFH		= 0
+
+RETURN retVal
+!
+
+CLEAR_CREDIT_CARD:
+ENTER (CompanyCode$),(SystemFlag$)
+	
+	retVal				= retSUCCESS
+	
+	AR_CustomerFH		= coSession'OpenTable("AR_Customer",pthOTHERCOMPANY$+CompanyCode$)
+	AR_PaymentTypeFH	= coSession'OpenTable("AR_PaymentType",pthOTHERCOMPANY$+CompanyCode$)
+  	AR_CustomerCCFH		= coSession'OpenTable("AR_CustomerCreditCard",pthOTHERCOMPANY$+CompanyCode$)
+  	AR_CustomerCreditCardEBMUserFH	= coSession'OpenTable("AR_CustomerCreditCardEBMUser",pthOTHERCOMPANY$+CompanyCode$)
+ 	 	
+	warningMsg			= isFALSE
+ 	SELECT *,REC=cc$ FROM AR_CustomerCCFH BEGIN $$ END $FE$
+ 	
+ 		progressMeterDelay			++
+ 		IF NOT(MOD(progressMeterDelay,25)) { 
+			coSession'UI'ProgressBar("update") 
+		}
+	
+		PaymentTypeFound			= 0
+		READ (AR_PaymentTypeFH,KEY=cc.PaymentType$,REC=PAYMENT$,DOM=*NEXT);	PaymentTypeFound = 1
+		
+		IF PaymentTypeFound {
+			
+			IF (SystemFlag$="APS" AND NOT(NUL(PAYMENT.D531APSPassword$))) OR (SystemFlag$="SPS" AND NUL(PAYMENT.D531APSPassword$)) {
+				! if we want to delete APS credit cards (SystemFlag$="APS") - we have to delete all cards
+				! with the APS payment types - on APS payment types password is not blank
+				! if we want to delete SPS credit cards (SystemFlag$="SPS") - we have to delete all cards
+				! with the SPS payment types - on SPS payment types password is blank
+				notUsed		= ARCreditCard'CheckGUIDDataEntry(cc.CreditCardGUID$,isTRUE,CompanyCode$,"")
+ 				IF notUsed {
+					tmpKey$	= KEC(AR_CustomerCCFH)
+ 					REMOVE (AR_CustomerCCFH,KEY = tmpKey$)
+ 					ARCreditCard'DeleteFromVault(cc.CreditCardGUID$,cc.PaymentType$,CompanyCode$)
+ 
+ 					! Check AR_Customer record
+ 					SELECT *,REC=cust$ FROM AR_CustomerFH BEGIN cc.ARDivisionNo$:cc.CustomerNo$ END cc.ARDivisionNo$:cc.CustomerNo$ WHERE cust.CreditCardGUID$=cc.CreditCardGUID$
+						cust.CreditCardGUID$			= $$
+ 						IF cust.DefaultPaymentType$=cust.DefaultCreditCardPmtType$ { 
+							cust.DefaultPaymentType$	= $$ 
+						}
+						cust.DefaultCreditCardPmtType$	= $$
+ 						WRITE (AR_CustomerFH,REC=cust$)
+ 					NEXT RECORD
+
+					! Delete From EBM Users Table
+ 					SELECT * FROM AR_CustomerCreditCardEBMUserFH BEGIN cc.ARDivisionNo$:cc.CustomerNo$:cc.CreditCardGUID$ END cc.ARDivisionNo$:cc.CustomerNo$:cc.CreditCardGUID$:$FE$
+						tmpEBMKey$						= KEC(AR_CustomerCreditCardEBMUserFH)
+ 						REMOVE (AR_CustomerCreditCardEBMUserFH,KEY=tmpEBMKey$)
+ 					NEXT RECORD
+  
+				} ELSE {
+					warningMsg							= isTRUE
+				}
+  			}
+		}
+ 	NEXT RECORD
+ 
+ 	IF warningMsg {
+		retVal			= retWARNING
+		LastErrorNum$	= "SY_531APSClearGUIDUsed"
+		LastErrorMsg$	= MSG("SY_531APSClearGUIDUsed")
+  	}
+ 		
+ 	CLOSE (AR_CustomerFH,		ERR=*NEXT)
+ 	CLOSE (AR_PaymentTypeFH,	ERR=*NEXT)
+  	CLOSE (AR_CustomerCCFH,		ERR=*NEXT)
+  	CLOSE (AR_CustomerCreditCardEBMUserFH,	ERR=*NEXT)
+   		
+RETURN retVal
+!
+
+CHECK_IF_PAYMENT_TYPE_UPDATED:
+ENTER PaymentTypeFH
+		FileNeedsToBeUpdated		= isTRUE
+		IF POS("D531APSMERCHANTID"=UCS(LST(IOL(PaymentTypeFH)))) {
+			! file already updated
+			FileNeedsToBeUpdated	= isFALSE
+ 		}
+RETURN FileNeedsToBeUpdated
+!
+	
+ENABLE_APS_FILES: ! #229519 - RCS - 2017-10-19
+ENTER (cCompanyCode$),err=*next
+	if nul(cCompanyCode$) { 
+		cCompanyCode$ 	= coSession'CompanyCode$ 
+	}
+	retVal				= retFAILURE
+	coComp				= NEW("SY_Company_bus",coSession)
+	retVal				= coComp'UpdateC2PFiles (cCompany$)
+	
+	drop object coComp
+	coComp				= 0
+	
+RETURN retVal
+!
+	
+MULTICURRENCY_CHECK_FOR_ENABLE:	! PLW 2019-02-08 Ticket #248049	
+	IF cAPSMultiCurrency { 
+		_OBJ'SetControlState("APS_MC.GRP$",ctlENABLE)
+	} ELSE {
+		_OBJ'SetControlState("APS_MC.GRP$",ctlDISABLE)
+	}
+RETURN retSUCCESS
+!
+
+MULTICURRENCY_ENABLED:			! PLW 2019-02-08 Ticket #248049
+	retVal			= isFALSE
+	tmpEnhFH		= coSession'OpenTable("SY_Enhancement",pthSYSTEM$)
+	READ(tmpEnhFH,KEY="A/R234ARMC",DOM=*NEXT); retVal = isTRUE
+	CLOSE(tmpEnhFH)
+	tmpEnhFH		= 0
+RETURN retVAL
+!
+
+MULTICURRENCY_HIDE_SHOW:		! PLW 2019-02-08 Ticket #248049
+	IF cAPSMultiCurrency {
+		_OBJ'SetControlState("APS_MC.GRP$",ctlSHOW)
+	} ELSE {
+		_OBJ'SetControlState("APS_MC.GRP$",ctlHIDE)
+	}
+RETURN retSUCCESS
+!
+
+PRE_LOAD:
+	! moved to bus object _obj'RetrieveVersionInfo()
+	coBusiness'RetrieveVersionInfo(cAPSVersion$,cAPSAdditionalInfo$) ! #227159 - RCS - 2017-09-14
+	comp$				= coSession'CompanyCode$
+	CompanyKey$			= coSession'CompanyKey$
+	!cEnableForCompany$	= "Enable APS Credit Card Processing for "+comp$+" Company"
+	cEnableForCompany$	= "Enable APS for "+comp$+" Company"
+RETURN retSuccess
+!
+
+POST_LOAD:
+	
+	retVal				= coBusiness'CheckActivatedCompanies(CurrentActivated,AllActivated)
+	
+	IF retVal {
+		IF AllActivated {
+			CB_APSCURRENTACTIVATED$			= isYES$
+			CB_APSALLACTIVATED$				= isYES$
+			cOldAPSCurrentActivated$		= isYES$
+			cOldAPSAllActivated$			= isYES$
+		} ELSE {
+			CB_APSALLACTIVATED$				= isNO$
+			cOldAPSAllActivated$			= isNO$
+			IF CurrentActivated {
+				CB_APSCURRENTACTIVATED$		= isYES$
+				cOldAPSCurrentActivated$	= isYES$
+			} ELSE {
+				CB_APSCURRENTACTIVATED$		= isNO$
+				cOldAPSCurrentActivated$	= isNO$
+			}
+		}
+	} ELSE {
+		coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+		retVal			= _OBJ'OK()
+	}
+	
+	! enable/disable BT_Uninstall
+	tmpRetVal			= coBusiness'CheckIfActivated(Activated)
+	IF tmpRetVal AND NOT(Activated) {
+		ENABLE CONTROL BT_UNINSTALL.CTL
+	} ELSE {
+		DISABLE CONTROL BT_UNINSTALL.CTL
+	}
+	_obj'PostLoadPCreditCards()
+RETURN retVal
+!
+
+POST_LOAD_PCREDITCARDS:
+
+!	coBusiness'GetPartialRecord(tempRecord$, cD531_APSIOList$)
+!	READ DATA FROM tempRecord$ TO IOL=cD531_APSIOList$
+
+	! APS
+	IF coBusiness'APSActivated {
+!		retVal			= _OBJ'PostLoadPCreditCards(FROM "SY_531APSCompany_ui_BASE")
+		_OBJ'SetControlState("CC_APS.grp$",ctlSHOW)
+		_OBJ'SetControlState("APS_VAULT.GRP$",ctlSHOW)
+		_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlSHOW)
+		_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)	! #258342 - 2019-10-04 - RCS
+		SHOW CONTROL D531_APSCREDITCARDLOG.CTL
+		SHOW CONTROL D531APSLEVELIIIPROCESSING.CTL
+		cOldAPSLevelIIIProcessing$	= D531APSLevelIIIProcessing$
+		IF NUL(cOldAPSLevelIIIProcessing$) { cOldAPSLevelIIIProcessing$ = isNO$ }
+		IF D531APSLevelIIIProcessing$	= isYES$ {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+		} ELSE {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+		}
+		_obj'MultiCurrencyHideShow()				! PLW 2019-02-08 Ticket #248049
+	} ELSE {
+		_OBJ'SetControlState("CC_APS.grp$",ctlHIDE)
+		_OBJ'SetControlState("APS_MC.GRP$",ctlHIDE)	! PLW 2019-02-06 Ticket #248049
+		HIDE CONTROL D531_APSCREDITCARDLOG.CTL
+		HIDE CONTROL D531APSLEVELIIIPROCESSING.CTL
+!		retVal			= _OBJ'PostLoadPCreditCards(FROM "SY_531APSCompany_ui_BASE")
+		_OBJ'SetControlState("APS_VAULT.GRP$",ctlHIDE)
+		_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlHIDE)
+	}
+
+	! C2P Change
+
+	IF D531_C2PEnabled$	= isYES$ {
+		_OBJ'SetControlState("APS_C2P.GRP$",ctlENABLE)
+		_OBJ'SetControlState("APS_C2P.GRP$",ctlSHOW)
+		SHOW 	CONTROL D531APSLEVELIIIPROCESSING.CTL
+		ENABLE	CONTROL D531APSLEVELIIIPROCESSING.CTL
+		_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlSHOW)
+		cOldAPSLevelIIIProcessing$		= D531APSLevelIIIProcessing$
+		IF NUL(cOldAPSLevelIIIProcessing$) { cOldAPSLevelIIIProcessing$ = isNO$ }
+		if D531APSLevelIIIProcessing$	= isYES$ {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+		} ELSE {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+		}
+	} ELSE {
+		_OBJ'SetControlState("APS_C2P.GRP$",ctlDISABLE)
+		_OBJ'SetControlState("APS_C2P.GRP$",ctlHIDE)
+		IF coBusiness'APSActivated {
+			if D531APSLevelIIIProcessing$	= isYES$ {
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+			} ELSE {
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+			}
+		} else {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlHIDE)
+			HIDE CONTROL D531APSLEVELIIIPROCESSING.CTL
+		}
+	}
+
+
+RETURN retVal
+!
+
+PRE_READ_REC:
+	CompanyKey$		= coSession'CompanyKey$
+	retVal			= coBusiness'SetKey(CompanyKey$)
+RETURN retVal
+!
+
+POST_READ_REC:
+
+!	retVal			= _OBJ'PostReadRec(FROM "SY_531APSCompany_ui_BASE")
+
+!	coBusiness'GetPartialRecord(tempRecord$, cD531_APSIOList$)	! PLW 2017-12-06 moved to before enable/disable
+!	READ DATA FROM tempRecord$ TO IOL=cD531_APSIOList$			! PLW 2017-12-06 moved to before enable/disable
+	cAPSMultiCurrency	= _obj'MultiCurrencyEnabled()			! PLW 2019-02-08 Ticket #248049
+	IF coBusiness'APSActivated {
+		_OBJ'DecryptPassword(D531APSMerchantID$, ML_APSMerchantID$) ! RCS 2017-12-11 Added to insure screen is updated during browse.
+		_OBJ'DecryptPassword(D531APSPassword$, ML_APSPassword$) ! RCS 2017-12-11 Added to insure screen is updated during browse.
+		_OBJ'SetControlState("CC_APS.grp$",ctlSHOW)
+		_OBJ'SetControlState("APS_VAULT.GRP$",ctlSHOW)
+		_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlSHOW)
+		_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)	! #258342 - 2019-10-04 - RCS
+		SHOW CONTROL D531_APSCREDITCARDLOG.CTL
+		SHOW CONTROL D531APSLEVELIIIPROCESSING.CTL
+		cOldAPSLevelIIIProcessing$		= D531APSLevelIIIProcessing$
+		IF NUL(cOldAPSLevelIIIProcessing$) { cOldAPSLevelIIIProcessing$=isNO$ }
+		if D531APSLevelIIIProcessing$	= isYES$ {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+		} ELSE {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+		}
+		_obj'MultiCurrencyHideShow()							! PLW 2019-02-08 Ticket #248049
+	} ELSE {
+		HIDE CONTROL D531_APSCREDITCARDLOG.CTL
+		HIDE CONTROL D531APSLEVELIIIPROCESSING.CTL
+		_OBJ'SetControlState("APS_VAULT.GRP$",ctlHIDE)
+		_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlHIDE)
+		_OBJ'SetControlState("APS_MC.GRP$",ctlHIDE)				! PLW 2019-02-08 Ticket #248049
+	}
+
+	cOrigD531APSMerchantID$	= D531APSMerchantID$
+	cOrigD531APSPassword$	= D531APSPassword$
+	if CreditCardEnable$	= isNO$ {
+		ML_APSMerchantID$	= $$
+		ML_APSPassword$		= $$
+	}
+
+	! C2P Change
+	DB_C2PCurrency$		= D531_C2PCurrency$
+	IF NUL(DB_C2PCurrency$) { ! currency drop box
+		DB_C2PCurrency$		= "USD"
+		D531_C2PCurrency$	= DB_C2PCurrency$
+	}
+	DB_C2POption$		= D531_C2POptOut$
+	IF NUL(DB_C2POption$) { ! Opt in/Opt out drop box
+		DB_C2POption$	= isNO$
+		D531_C2POptOut$	= DB_C2POption$
+	}
+
+ 	IF D531_C2PEnabled$	= isYES$ {
+ 		_OBJ'SetControlState("APS_C2P.GRP$",ctlENABLE)
+ 		_OBJ'SetControlState("APS_C2P.GRP$",ctlSHOW)
+ 		_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlSHOW)
+ 		SHOW CONTROL D531APSLEVELIIIPROCESSING.CTL
+ 		ENABLE CONTROL D531APSLEVELIIIPROCESSING.CTL
+		cOldAPSLevelIIIProcessing$ = D531APSLevelIIIProcessing$
+		IF NUL(cOldAPSLevelIIIProcessing$) { cOldAPSLevelIIIProcessing$	= isNO$ }
+		if D531APSLevelIIIProcessing$	= isYES$ {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+		} ELSE {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+		}
+ 	} else {
+		_OBJ'SetControlState("APS_C2P.GRP$",ctlDISABLE)
+		_OBJ'SetControlState("APS_C2P.GRP$",ctlHIDE)
+		IF coBusiness'APSActivated {
+			if D531APSLevelIIIProcessing$ = isYES$ {
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlENABLE)
+			} ELSE {
+				_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
+			}
+		} else {
+			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlHIDE)
+			HIDE CONTROL D531APSLEVELIIIPROCESSING.CTL
+		}
+ 	}
+	refresh_flg			= isTRUE
+RETURN retVal
+!
+
+REMOVE_CTL_RECORDS:
+	
+	retVal					=	retSUCCESS
+	
+	Modules$				= "ARCIITSOSY" ! #232007 - Merge C2P, added IT,SO - 2017-11-20 - RCS
+	
+	FILE_NAME$				= coSession'PathRoot$+"SOA\SY0CTL.SOA" 
+	CTLFileExists			= 0
+	cCTLFh					= UNT
+	OPEN (cCTLFh,ERR=*NEXT)FILE_NAME$; CTLFileExists	= 1
+	
+	IF CTLFileExists {
+		
+		! remove SYS record if exists
+		ctlKey$				= "lSYS_APS"
+		REMOVE (cCTLFh,KEY=ctlKey$,DOM=*NEXT)
+		
+		! remove AR record if exists
+		ctlKey$				= "lA/R_APS"
+		REMOVE (cCTLFh,KEY=ctlKey$,DOM=*NEXT)
+		
+		FOR X	= 1 TO 5 STEP 2
+			! remove programs
+			NextModule$		= MID(Modules$,X,2)
+			DirPath$		= coSession'PathRoot$+NextModule$
+			NextDirFH		= HFN
+			NextDirExists	= 0
+			OPEN (NextDirFH,ERR=*NEXT)DirPath$;	NextDirExists	= 1
+			IF NextDirExists {
+				WHILE 1 
+					READ (NextDirFH,END=*BREAK,ERR=*BREAK)FILENAME$
+					IF UCS(MID(FILENAME$,1,9))=NextModule$ + "_531APS" {
+						FILE_TO_ERASE$	= DirPath$ + "\" + FILENAME$
+						ERASE FILE_TO_ERASE$,ERR=*NEXT
+					}
+				WEND
+				CLOSE (NextDirFH,ERR=*NEXT)
+				NextDirFH	= 0
+			}
+		NEXT X
+		
+		! remove additional programs
+		ProgToErase$		= coSession'PathRoot$+"Home\APSUpdateCompany.bat"
+		ERASE ProgToErase$,ERR=*NEXT
+		ProgToErase$		= coSession'PathRoot$+"Home\APSUpdateCompany.m4p"
+		ERASE ProgToErase$,ERR=*NEXT
+		ProgToErase$		= coSession'PathRoot$+"Home\APSUpdateVault.bat"
+		ERASE ProgToErase$,ERR=*NEXT
+
+		! Clean ASI folder for APS files
+		cDirFH				= HFN
+		OPEN (cDirFH)coSession'PathRoot$+"ASI\"
+		WHILE 1
+			READ (cDirFH,END=*BREAK,ERR=*BREAK)cName$
+			if pos("APS" = cName$) {
+				ERASE coSession'PathRoot$+"ASI\"+cName$,err=*next
+			}
+		WEND
+		CLOSE (cDirFH)
+		cDirFH				= 0
+		
+		ProgToErase$		= coSession'PathRoot$+"ASI\IngenicoUSBDrivers_2.60_setup.exe"
+		ERASE ProgToErase$,ERR=*NEXT
+		
+		cDirFH				= HFN
+		cInstalled			= isFALSE
+		open (cDirFH,ERR=*NEXT)coSession'PathRoot$+"ASI\EMV\stop.bat"; cInstalled	= isTRUE
+		close (cDirFH)
+		if cInstalled	= isTRUE {
+			stopFile$		= "stop.bat"
+			call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV\" ! stop emv if running
+			wait 1
+		}
+		
+		! clean EMV folders
+		stopFile$		= "removeEmv.bat"
+		call "../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\" ! remove emv folder and contents
+		wait 1
+		ERASE coSession'PathRoot$+"ASI\EMV",ERR=*NEXT
+		
+		ERASE ProgToErase$,ERR=*NEXT
+		ProgToErase$		= coSession'PathRoot$+"Launcher\apsC2P.bmp"
+		ERASE ProgToErase$,ERR=*NEXT
+		ProgToErase$		= coSession'PathRoot$+"Launcher\apsC2P16.bmp"
+		ERASE ProgToErase$,ERR=*NEXT
+		ProgToErase$		= coSession'PathRoot$+"Launcher\APS_Payments.ico"
+		ERASE ProgToErase$,ERR=*NEXT
+		
+		! clean Launcher\images folder
+		cDirFH				= HFN
+		OPEN (cDirFH)coSession'PathRoot$+"Launcher\Images\"
+		WHILE 1
+			READ (cDirFH,END=*BREAK,ERR=*BREAK)cName$
+			if pos("APS" = cName$) {
+				ERASE coSession'PathRoot$+"Launcher\Images\"+cName$,err=*next
+			}
+		WEND
+		CLOSE (cDirFH)
+		cDirFH				= 0
+	
+		! clean Reports folder.
+		ProgToErase$		= coSession'PathRoot$+"Reports\AR_531APSCreditCardSettlement.rpt"
+		ERASE ProgToErase$,ERR=*NEXT
+		
+	} ELSE {
+		retVal				= retFAILURE
+		coSession'UI'MessageBox$("","Cannot open SY0CTL file.")
+	}
+	
+RETURN retVal
+!
+
+REMOVE_ENHANCEMENT:
+	
+	retVal					= retSUCCESS
+	
+	RemModCode$				= "ASIAPS"
+	RemModuleCode$			= "A/R"
+	RemDeveloperCode$		= "531"
+	
+	cEnhancementFh			= 0
+	cEnhancementFh			= coSession'OpenTable("SY_Enhancement","SYSTEM",ERR=*NEXT)
+	cEnhancementAltFh		= coSession'OpenTable("SY_Enhancement","SYSTEM",ERR=*NEXT)
+	
+	IF cEnhancementFh {
+		cClassEnhancementFh		= coSession'OpenTable("SY_ClassEnhancement","SYSTEM",ERR=*NEXT)
+		cClassEnhancementAltFh	= coSession'OpenTable("SY_ClassEnhancement","SYSTEM",ERR=*NEXT)
+	}
+	
+	IF cEnhancementFh AND cClassEnhancementFh {
+		SELECT *,REC=ENH$ FROM cEnhancementFh						\
+			BEGIN	RemModuleCode$									\
+			END		RemModuleCode$:$FE$								\
+			WHERE	ENH.DeveloperCode$		= RemDeveloperCode$		\
+			AND 	ENH.EnhancementCode$	= RemModCode$
+			
+			SELECT *,REC=CLASS$ FROM cClassEnhancementFh			\
+				BEGIN 	RemModuleCode$								\
+				END		RemModuleCode$:$FE$							\
+				WHERE	CLASS.DeveloperCode$	= RemDeveloperCode$	\
+				AND		CLASS.EnhancementCode$	= RemModCode$
+				
+				REMOVE (cClassEnhancementAltFh,KEY=KEC(cClassEnhancementFh),DOM=*NEXT)
+			NEXT RECORD
+			REMOVE (cEnhancementAltFh,KEY=ENH.ModuleCode$:ENH.DeveloperCode$:ENH.EnhancementCode$,DOM=*NEXT)
+		NEXT RECORD
+		
+		! close files
+		CLOSE (cEnhancementFh,			ERR=*NEXT)
+		CLOSE (cEnhancementAltFh,		ERR=*NEXT)
+		CLOSE (cClassEnhancementFh,		ERR=*NEXT)
+		CLOSE (cClassEnhancementAltFh,	ERR=*NEXT)
+
+		! clean all companies
+		tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+		tmpEnhModuleFH			= coSession'OpenTable("SY_EnhancementModule","SYSTEM")
+
+	 	SELECT * from tmpSY_CompanyFH BEGIN $00$ END $FE$
+	
+			! clean module conversion records.
+			tmpCIEnhModuleFH				= coSession'OpenTable("CI_EnhancementActivation","COMPANY:"+CompanyCode$,ERR=*next)
+			if tmpCIEnhModuleFH {
+				SELECT *,rec=sy$ from tmpEnhModuleFH BEGIN $00$ END $FE$ WHERE sy.EnhancementCode$="ASIAPS"
+					ci.ModuleCode$			= sy.ModuleCode$
+					ci.DeveloperCode$		= "531"
+					ci.EnhancementCode$		= "ASIAPS"
+					cCI_Read				= 0
+				READ (tmpCIEnhModuleFH,REC	= ci$,KEY = ci.ModuleCode$:ci.DeveloperCode$:ci.EnhancementCode$,dom = *next); cCI_Read = 1
+				if cCI_Read {
+					REMOVE (tmpCIEnhModuleFH,KEY=KEC(tmpEnhModuleFH))
+				}
+				NEXT RECORD
+				CLOSE (tmpCIEnhModuleFH)
+				tmpCIEnhModuleFH	= 0
+			}
+	
+		NEXT RECORD
+		CLOSE (tmpSY_CompanyFH, err=*next)
+		tmpSY_CompanyFH				= 0
+		
+		! Clean the sy_enhancementModule file
+		SELECT *,rec=sy$ from tmpEnhModuleFH BEGIN $00$ END $FE$ WHERE sy.EnhancementCode$="ASIAPS"
+			REMOVE (tmpEnhModuleFH)
+		NEXT RECORD
+		CLOSE (tmpEnhModuleFH,ERR=*NEXT)
+		tmpEnhModuleFH				= 0
+	} ELSE {
+		retVal						= retFAILURE
+		coSession'UI'MessageBox$("","Cannot open SY_Enhancement file.")
+	}
+	
+RETURN retVal
+!
+
+REMOVE_NOMADS_CHANGES:
+	
+	retVal					= retSUCCESS
+
+	ChangedLibs$			= "AR_PaymentType.M4L|AR_CashReceipts.M4L|AR_CreditCard.M4L|AR_Customer.ML|AR_InvoiceHistoryInquiry.M4L|AR_PaymentType.M4L|"
+	ChangedLibs$			+="SY_Company.M4L|"
+	
+	WHILE NOT(NUL(ChangedLibs$)) 
+		P					= POS("|"=ChangedLibs$)
+		NAME$				= $$
+		APP_CODE$			= $$
+		IF P {
+			NAME$			= MID(ChangedLibs$,1,P-1)
+			APP_CODE$		= MID(NAME$,1,2)
+			ChangedLibs$	= MID(ChangedLibs$,P+1)
+		} ELSE {
+			ChangedLibs$	= $$
+		}
+		IF NOT(NUL(NAME$)) {
+			tmpPOS1			= POS("."=NAME$)
+			TARGET_NAME$	= "../"+APP_CODE$+"/"+NAME$
+			PROJECT_NAME$	= "../ASI/"+MID(NAME$,1,tmpPOS1)+"APSUninstASI"
+			PROJECT_CHANGE_NAME$	= "../ASI/"+MID(NAME$,1,tmpPOS1)+"APSUninstChangedLibRecords"
+			
+			CALL "..\ASI\ASI_LIBRARY_PATCH",TARGET_NAME$,PROJECT_NAME$,PROJECT_CHANGE_NAME$
+			
+			! erase files
+			ERASE PROJECT_NAME$,ERR=*NEXT
+			ERASE PROJECT_CHANGE_NAME$,ERR=*NEXT
+		} ELSE {
+			ChangedLibs$	= $$
+		}
+	WEND
+ 	
+RETURN retVal
+!
+
+REMOVE_TASKS:
+	
+	retVal					= retSUCCESS
+	RemDeveloperCode$		= "531"
+	
+	FILE_NAME$				= coSession'PathRoot$+"ASI\IN_Task.APS" 
+	TaskFileExists			= 0
+	REMOVE_FILE				= UNT
+	OPEN (REMOVE_FILE,IOL=*,ERR=*NEXT)FILE_NAME$;TaskFileExists=1
+	
+	IF TaskFileExists {
+		
+		cTaskFh				= 0
+		cTaskFh				= coSession'OpenTable("SY_Task","SYSTEM",ERR=*NEXT)
+		cTaskAltFh			= coSession'OpenTable("SY_Task","SYSTEM",ERR=*NEXT)
+		
+		IF cTaskFh {
+			cMenuFh			= 0
+			cMenuFh			= coSession'OpenTable("SY_Menu","SYSTEM",ERR=*NEXT)
+			cMenuAltFh		= coSession'OpenTable("SY_Menu","SYSTEM",ERR=*NEXT)
+		}
+		
+		IF cTaskFh AND cMenuFh {
+			CompileMenus	= 0
+			SELECT * FROM REMOVE_FILE BEGIN $$ END $FE$
+				RemoveProgram$			= ProgramName$
+				SELECT *,REC=TASK$ FROM cTaskFh,KNO="KPROGRAMNAME" BEGIN RemoveProgram$ END RemoveProgram$:$FE$ WHERE TASK.DeveloperCode$=RemDeveloperCode$
+					SELECT *,REC=MNU$ FROM cMenuFh BEGIN $$ END $FE$ WHERE MNU.TASKKEY$=TASK.MODULENUMBER$+TASK.TASKOWNER$+TASK.DEVELOPERCODE$+TASK.TASKID$
+						CompileMenus	++
+						REMOVE (cMenuAltFh,KEY=MNU.MODULECODE$:MNU.TASKKEY$:MNU.SEQUENCE$,DOM=*NEXT)
+					NEXT RECORD
+					REMOVE (cTaskAltFh,KEY=TASK.MODULENUMBER$:TASK.TASKOWNER$:TASK.DEVELOPERCODE$:TASK.TASKID$,DOM=*NEXT)
+				NEXT RECORD 
+			NEXT RECORD
+			
+			! close files
+			CLOSE (REMOVE_FILE,	ERR=*NEXT)
+			CLOSE (cMenuFh,		ERR=*NEXT)
+			CLOSE (cMenuAltFh,	ERR=*NEXT)
+			CLOSE (cTaskFh,		ERR=*NEXT)
+			CLOSE (cTaskAltFh,	ERR=*NEXT)
+			
+			 ! Compile menus.
+			 IF CompileMenus {
+				oMenus		= 0
+				oMenus		= NEW("SY_Menu_svc",coSession,ERR=*NEXT)
+ 				IF NOT(oMenus) {
+					retVal	= retFAILURE
+					coSession'UI'MessageBox$(coSession'LastErrorNum$,coSession'LastErrorMsg$)
+				} ELSE {
+					skipProgress	= isTRUE
+					tmpRetVal		= oMenus'CompileMenu(skipProgress)
+ 					DROP OBJECT oMenus,ERR=*NEXT
+				}
+  			}
+		} ELSE {
+			retVal			= retFAILURE
+			coSession'UI'MessageBox$("","Cannot open SY_Task or SY_Menu file.")
+		}
+	}
+RETURN retVal
+!
+
+REMOVE_URLS: ! #232007 - Merge C2P, APS.  2017-11-20 - RCS
+	
+	cURL_CH					= coSession'OpenTable("SY_URLMaintenance","SYSTEM")
+	
+	Select *,rec=TST$ from cURL_CH begin $00$ end $FE$
+		tKey$				= kec(cURL_CH)
+		if pos("APS"=tst.URLcode$) { remove (cURL_CH,key=tKey$) }
+		if pos("C2P"=tst.URLcode$) { remove (cURL_CH,key=tKey$) }
+	Next Record
+	
+	close (cURL_CH)
+	cURL_CH					= 0
+	
+RETURN retSUCCESS
+!
+
+RULES_FOR_PCREDITCARDS:
+
+!	retVal=_OBJ'RulesForPCreditCards(FROM "SY_531APSCompany_ui_BASE")
+
+	IF coBusiness'APSActivated {
+
+		IF NUL(D531APSMerchantID$) {
+			ML_APSMerchantID$   = $$
+			ML_APSPassword$		= $$
+		} ELSE {
+			_OBJ'SetControlState("APS_VAULT.GRP$", ctlSHOW)
+			_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)	! #258342 - 2019-10-04 - RCS
+			IF CreditCardEnable$ <> isNO$ AND cOrigCreditCardEnable$ = isNO$ {
+				_OBJ'SetControlState("APS_VAULT.GRP$", ctlENABLE)
+			} ELSE {
+				_OBJ'SetControlState("APS_VAULT.GRP$", ctlDISABLE)
+				_OBJ'DecryptPassword(D531APSMerchantID$, ML_APSMerchantID$)
+				_OBJ'DecryptPassword(D531APSPassword$, ML_APSPassword$)
+			}
+		}
+	}
+	DB_C2PCurrency$ = D531_C2PCurrency$
+	IF NUL(DB_C2PCurrency$) { ! currency drop box
+		DB_C2PCurrency$		= "USD"
+		D531_C2PCurrency$	= DB_C2PCurrency$
+	}
+	DB_C2POption$ = D531_C2POptOut$
+	IF NUL(DB_C2POption$) { ! Opt in/Opt out drop box
+		DB_C2POption$		= isNO$
+		D531_C2POptOut$		= DB_C2POption$
+	}
+RETURN retVal
+!

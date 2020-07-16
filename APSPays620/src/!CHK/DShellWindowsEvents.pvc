@@ -1,0 +1,64 @@
+0010 DEF CLASS "DShellWindowsEvents"
+0020    PROPERTY EventCaller GET GetEventCaller SET Err
+0030    PROPERTY EventStack GET GetEventStack SET Err
+0040    PROPERTY EventsDispatched GET GetEventsDispatched SET Err
+0050    PROPERTY EventsDiscarded GET GetEventsDiscarded SET Err
+0060    FUNCTION Event_WindowRegistered(int_lCookie) Event_WindowRegistered FOR EVENT "WindowRegistered"
+0070    FUNCTION Event_WindowRevoked(int_lCookie) Event_WindowRevoked FOR EVENT "WindowRevoked"
+0080 END DEF
+0090 !
+0100 STOP
+0110 !
+0120 ! CONSTRUCTOR On_Create
+0130 !
+0140 On_Create:
+0150 !
+0160 !   < Insert code here >
+0170 !
+0180 RETURN
+0190 !
+0200 ! DESTRUCTOR On_Delete
+0210 !
+0220 On_Delete:
+0230 !
+0240 !   < Insert code here >
+0250 !
+0260 RETURN
+0270 !
+0280 ! PROPERTY EventCaller (GET)
+0290 !
+0300 GetEventCaller:
+0310 RETURN TCB(120)
+0320 !
+0330 ! PROPERTY EventStack (GET)
+0340 !
+0350 GetEventStack:
+0360 RETURN TCB(122)
+0370 !
+0380 ! PROPERTY EventsDispatched (GET)
+0390 !
+0400 GetEventsDispatched:
+0410 RETURN TCB(121)
+0420 !
+0430 ! PROPERTY EventsDiscarded (GET)
+0440 !
+0450 GetEventsDiscarded:
+0460 RETURN TCB(123)
+0470 !
+0480 ! EVENT WindowRegistered - A new window was registered.
+0490 !
+0500 Event_WindowRegistered:
+0510 ENTER int_lCookie
+0520 !
+0530 !   < Insert code here >
+0540 !
+0550 RETURN
+0560 !
+0570 ! EVENT WindowRevoked - A new window was revoked.
+0580 !
+0590 Event_WindowRevoked:
+0600 ENTER int_lCookie
+0610 !
+0620 !   < Insert code here >
+0630 !
+0640 RETURN

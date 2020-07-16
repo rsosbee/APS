@@ -1,0 +1,10 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<!--File should be named client.config.xml and placed in same directory as client sample -->
+<ChipDnaClient version="1.0.0">
+    <!-- Must match Terminal attribute posid in server config -->
+	<PosId>Till1</PosId>
+    <!-- Key can be obtained from gateway control pennel -->
+	<ApiKey>U4d8nrtY5TnW2Jx8R8kxF23Acg7f8733</ApiKey>
+    <!-- Must match socket tag from server config-->
+	<Server>127.0.0.1:1869</Server>
+</ChipDnaClient>

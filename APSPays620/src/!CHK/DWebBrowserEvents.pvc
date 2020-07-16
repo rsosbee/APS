@@ -1,0 +1,209 @@
+DEF CLASS "DWebBrowserEvents"
+PROPERTY EventCaller GET GetEventCaller SET ERR
+PROPERTY EventStack GET GetEventStack SET ERR
+PROPERTY EventsDispatched GET GetEventsDispatched SET ERR
+PROPERTY EventsDiscarded GET GetEventsDiscarded SET ERR
+FUNCTION Event_BeforeNavigate(str_URL$,int_Flags,str_TargetFrameName$,var_PostData,str_Headers$,int_Cancel)Event_BeforeNavigate FOR EVENT "BeforeNavigate"
+FUNCTION Event_NavigateComplete(str_URL$)Event_NavigateComplete FOR EVENT "NavigateComplete"
+FUNCTION Event_StatusTextChange(str_Text$)Event_StatusTextChange FOR EVENT "StatusTextChange"
+FUNCTION Event_ProgressChange(int_Progress,int_ProgressMax)Event_ProgressChange FOR EVENT "ProgressChange"
+FUNCTION Event_DownloadComplete()Event_DownloadComplete FOR EVENT "DownloadComplete"
+FUNCTION Event_CommandStateChange(int_Command,int_Enable)Event_CommandStateChange FOR EVENT "CommandStateChange"
+FUNCTION Event_DownloadBegin()Event_DownloadBegin FOR EVENT "DownloadBegin"
+FUNCTION Event_NewWindow(str_URL$,int_Flags,str_TargetFrameName$,var_PostData,str_Headers$,int_Processed)Event_NewWindow FOR EVENT "NewWindow"
+FUNCTION Event_TitleChange(str_Text$)Event_TitleChange FOR EVENT "TitleChange"
+FUNCTION Event_FrameBeforeNavigate(str_URL$,int_Flags,str_TargetFrameName$,var_PostData,str_Headers$,int_Cancel)Event_FrameBeforeNavigate FOR EVENT "FrameBeforeNavigate"
+FUNCTION Event_FrameNavigateComplete(str_URL$)Event_FrameNavigateComplete FOR EVENT "FrameNavigateComplete"
+FUNCTION Event_FrameNewWindow(str_URL$,int_Flags,str_TargetFrameName$,var_PostData,str_Headers$,int_Processed)Event_FrameNewWindow FOR EVENT "FrameNewWindow"
+FUNCTION Event_Quit(int_Cancel)Event_Quit FOR EVENT "Quit"
+FUNCTION Event_WindowMove()Event_WindowMove FOR EVENT "WindowMove"
+FUNCTION Event_WindowResize()Event_WindowResize FOR EVENT "WindowResize"
+FUNCTION Event_WindowActivate()Event_WindowActivate FOR EVENT "WindowActivate"
+FUNCTION Event_PropertyChange(str_Property$)Event_PropertyChange FOR EVENT "PropertyChange"
+END DEF
+! 
+STOP 
+! 
+! CONSTRUCTOR On_Create
+! 
+On_Create:
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! DESTRUCTOR On_Delete
+! 
+On_Delete:
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! PROPERTY EventCaller (GET)
+! 
+GetEventCaller:
+RETURN TCB(120)
+! 
+! PROPERTY EventStack (GET)
+! 
+GetEventStack:
+RETURN TCB(122)
+! 
+! PROPERTY EventsDispatched (GET)
+! 
+GetEventsDispatched:
+RETURN TCB(121)
+! 
+! PROPERTY EventsDiscarded (GET)
+! 
+GetEventsDiscarded:
+RETURN TCB(123)
+! 
+! EVENT BeforeNavigate - Fired when a new hyperlink is being navigated to.
+! 
+Event_BeforeNavigate:
+ENTER str_URL$,int_Flags,str_TargetFrameName$,var_PostData,str_Headers$,int_Cancel
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT NavigateComplete - Fired when the document being navigated to becomes visible and enters the navigation stack.
+! 
+Event_NavigateComplete:
+ENTER str_URL$
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT StatusTextChange - Statusbar text changed.
+! 
+Event_StatusTextChange:
+ENTER str_Text$
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT ProgressChange - Fired when download progress is updated.
+! 
+Event_ProgressChange:
+ENTER int_Progress,int_ProgressMax
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT DownloadComplete - Download of page complete.
+! 
+Event_DownloadComplete:
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT CommandStateChange - The enabled state of a command changed
+! 
+Event_CommandStateChange:
+ENTER int_Command,int_Enable
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT DownloadBegin - Download of a page started.
+! 
+Event_DownloadBegin:
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT NewWindow - Fired when a new window should be created.
+! 
+Event_NewWindow:
+ENTER str_URL$,int_Flags,str_TargetFrameName$,var_PostData,str_Headers$,int_Processed
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT TitleChange - Document title changed.
+! 
+Event_TitleChange:
+ENTER str_Text$
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT FrameBeforeNavigate - Fired when a new hyperlink is being navigated to in a frame.
+! 
+Event_FrameBeforeNavigate:
+ENTER str_URL$,int_Flags,str_TargetFrameName$,var_PostData,str_Headers$,int_Cancel
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT FrameNavigateComplete - Fired when a new hyperlink is being navigated to in a frame.
+! 
+Event_FrameNavigateComplete:
+ENTER str_URL$
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT FrameNewWindow - Fired when a new window should be created.
+! 
+Event_FrameNewWindow:
+ENTER str_URL$,int_Flags,str_TargetFrameName$,var_PostData,str_Headers$,int_Processed
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT Quit - Fired when application is quiting.
+! 
+Event_Quit:
+ENTER int_Cancel
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT WindowMove - Fired when window has been moved.
+! 
+Event_WindowMove:
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT WindowResize - Fired when window has been sized.
+! 
+Event_WindowResize:
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT WindowActivate - Fired when window has been activated.
+! 
+Event_WindowActivate:
+! 
+! < Insert code here >
+! 
+RETURN 
+! 
+! EVENT PropertyChange - Fired when the PutProperty method has been called.
+! 
+Event_PropertyChange:
+ENTER str_Property$
+! 
+! < Insert code here >
+! 
+RETURN 

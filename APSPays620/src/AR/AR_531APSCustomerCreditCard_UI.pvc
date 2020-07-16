@@ -1,0 +1,328 @@
+! $Id: AR_531APSCustomerCreditCard_UI.pvc
+! Accounting Systems, Inc. 2013-2019  PLWhirley, RCSosbee
+!
+DEF CLASS "AR_531APSCustomerCreditCard_ui" CREATE REQUIRED DELETE REQUIRED
+
+	! Inheritance
+	LIKE "AR_CustomerCreditCard_ui"
+
+	! Public Properties
+
+	! Public Methods
+
+	! Local Methods
+	! ** Button to allow editing of card data.
+	! ** @returns [boolean] Success unless an error message was set in business class or card not found.
+	FUNCTION LOCAL BT_EditCard()					BT_EDIT_CARD
+	! ** Button to display vault UI to allow a new card to be added.
+	! ** @returns [boolean] Success if card successfully stored in the vault with new GUID$ value created.
+	FUNCTION LOCAL BT_NewCard()						BT_NEW_CARD
+	FUNCTION LOCAL PostReadRec()					POST_READ_REC
+
+	! Local Variables
+	LOCAL cPaymentMethod$
+	LOCAL cRetailAccount$
+	LOCAL custIOL$	= CPL("IOLIST CardHolderName$, AVSAddressLine1$, AVSAddressLine2$, AVSZipCode$, AVSCity$, AVSState$, AVSCountryCode$, EMailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")	! RCS 2018-10-18 #236076
+	LOCAL isNULL$	= $$
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	! ** List of variables to be set after adding a record to the Sage Exchange vault.
+	! LOCAL cVaultIOL$ = CPL("IOLIST CreditCardGUID$, ExpirationDateYear$, ExpirationDateMonth$,"	\
+	!					+ "CardType$, Last4UnencryptedCreditCardNos$, CreditCardID$"  )
+
+END DEF
+!
+
+ON_CREATE:
+
+ENTER coSession, cCurrentARDivisionNo$, cCurrentCustomerNo$, cCurrentCreditCardGUID$, cCurrentEBMEnabled$, ERR=*NEXT
+
+	PRECISION 4 FOR OBJECT
+
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+BT_EDIT_CARD:
+
+	TestedCreditCard		= isFALSE
+	payTypeObj = coBusiness'GetChildHandle( "PaymentType" )
+	IF payTypeObj'FIND(PaymentType$) {
+		payTypeObj'GetValue("CreditCardSetupTested$",	tmpCreditCardSetupTested$)
+		payTypeObj'GetValue("PaymentMethod$",			cPaymentMethod$) 					! 227159 - RCS
+		payTypeObj'GetValue("D531APSRetailAccount$",	cRetailAccount$)
+		IF tmpCreditCardSetupTested$	= isYES$ { 
+			TestedCreditCard			= isTRUE 
+		}
+	}
+
+	IF coBusiness'APSActivated AND TestedCreditCard { ! 227159 - RCS
+
+		cAllowEdit			= isFALSE
+
+		SWITCH cPaymentMethod$
+			CASE "R"
+				cAllowEdit	= EVN ("coBusiness'SE_ARAllowAddEditCreditCards",err=*next)
+				BREAK
+			CASE "A"
+				cAllowEdit	= EVN ("coBusiness'SE_ARAllowAddEditACH",err=*next)
+				BREAK
+		END SWITCH
+
+		IF cAllowEdit {
+			retVal			= _OBJ'ImpliedWrite()
+
+			IF retVal {
+				coBusiness'SetKeyValue("ARDivisionNo$",		cCurrentARDivisionNo$)
+				coBusiness'SetKeyValue("CustomerNo$",		cCurrentCustomerNo$)
+				coBusiness'SetKeyValue("CreditCardGUID$",	CreditCardGUID$)
+				retVal			= coBusiness'SetKey()
+				coBusiness'GetPartialRecord(custRec$, 		custIOL$)						! RCS 2018-10-23 #236076
+
+				vaultOp$		= TBL(BT_EditCard.ctl'Text$ = "View...", "UPDATE", "RETRIEVE")	
+
+				coBusiness'GetDefaults((cCurrentARDivisionNo$),(cCurrentCustomerNo$),defaultRec$,defaultIOL$) ! PLW 2018-08-17 Ticket #236076
+
+				READ DATA FROM custRec$ TO IOL = defaultIOL$								! RCS 2018-10-23 #236076
+				defaultRec$		= REC(defaultIOL$)											! RCS 2018-10-23 #236076
+				READ DATA FROM defaultRec$,REC=custcard$ to defaultIOL$						! PLW 2018-08-17 Ticket #236076
+				CustomerName$	= custCard.CardholderName$									! PLW 2018-08-17 Ticket #236076
+				accountName$	= custCard.CardholderName$									! RCS 2018-11-21 Ticket #236076
+				CustomerID$		= STP(cCurrentARDivisionNo$)+"-"+STP(cCurrentCustomerNo$)	! PLW 2018-08-17 Ticket #236076
+				IF CustomerID$	= "-" { 													! PLW 2018-08-17 Ticket #236076
+					CustomerID$	= isNLL$													! PLW 2018-08-17 Ticket #236076
+				}																			! PLW 2018-08-17 Ticket #236076
+				CardID$			= CreditCardID$ 											! PLW 2018-08-17 Ticket #236076
+
+				retVal			= coBusiness'ARCreditCard'ProcessAPSVault(vaultOp$,		\
+														PaymentType$,					\
+														CreditCardGUID$,				\
+														Last4UnencryptedCreditCardNos$,	\
+														ExpirationDateYear$,			\
+														ExpirationDateMonth$,			\
+														CardType$,						\
+														Last4BankRoutingNos$,			\
+														Last4BankAccountNos$,			\
+														BankAccountType$,				\
+														accountName$,					\
+														CustomerName$,					\
+														CustomerID$,					\
+														CardID$,						\ 
+														defaultRec$, 					\
+														defaultIOL$ ) 						! PLW 2018-08-17 Ticket #236076, updated 2018-10-16 RCS to add defaultRec$, defaultIOL$
+
+				SWITCH retVal
+					CASE retSUCCESS
+						PaymentType$	= cPaymentType$
+						CreditCardID$	= cCreditCardID$
+
+						vaultRec$		= REC(cVaultIOL$)
+						READ DATA FROM defaultRec$ TO IOL = custIOL$						! RCS 2018-10-23 #236076 - read back changes from entry.
+						custRec$		= REC(custIOL$)										! RCS 2018-10-23 #236076 - read back changes from entry.
+
+
+						coBusiness'SetKeyValue("ARDivisionNo$", 	cCurrentARDivisionNo$)
+						coBusiness'SetKeyValue("CustomerNo$", 		cCurrentCustomerNo$)
+						coBusiness'SetKeyValue("CreditCardGUID$", 	CreditCardGUID$)
+						retVal			= coBusiness'SetKey()
+
+						IF retVal {
+							retVal		= coBusiness'SetPartialRecord(vaultRec$,	cVaultIOL$)
+							retVal		= coBusiness'SetPartialRecord(custRec$,		custIOL$)	! RCS 2018-10-23 #236076 - write back changes from entry.
+								
+							IF cPaymentMethod$ = "R" { 											! 227159 - RCS
+								coBusiness'SetValue("BankAccountType$",		isNULL$)
+								coBusiness'SetValue("BankName$",			isNULL$)
+								coBusiness'SetValue("Last4BankRoutingNos$",	isNULL$)
+								coBusiness'SetValue("Last4BankAccountNos$",	isNULL$)
+							}
+							IF NOT(retVal) {
+								coSession'UI'MessageBox$(coBusiness'LastErrorNum$, coBusiness'LastErrorMsg$)
+								tmpRetVal	= _OBJ'BT_Cancel()
+								NEXT_ID		= ID
+							} ELSE {
+								IF coBusiness'RecordChanged {
+									retVal	= _OBJ'WriteFromImpliedWrite()
+								}
+							}
+						}
+						BREAK
+
+					CASE retWARNING
+						! cancel pressed on CC dialog
+						BREAK
+
+					CASE retFAILURE
+						coSession'UI'MessageBox$(coBusiness'ARCreditCard'LastErrorNum$, coBusiness'ARCreditCard'LastErrorMsg$)
+						BREAK
+				END SWITCH
+
+				NEXT_ID		= CreditCardID.ctl
+
+			} ELSE {
+				coSession'UI'MessageBox$(LastErrorNum$, LastErrorMsg$)
+			}
+
+		} ELSE {
+			retVal			= retFAILURE
+			coSession'UI'MessageBox$("CI_NoRights", MSG("CI_Rights", "edit", "credit card data in APS"))
+		}
+	} ELSE {
+		retVal				= _OBJ'BT_EditCard(FROM "AR_531APSCustomerCreditCard_ui_BASE")
+	}
+
+RETURN retVal
+!
+
+BT_NEW_CARD:
+
+	TestedCreditCard		= isFALSE
+	payTypeObj				= coBusiness'GetChildHandle( "PaymentType" )
+	IF payTypeObj'FIND(PaymentType$) {
+		payTypeObj'GetValue("CreditCardSetupTested$",	tmpCreditCardSetupTested$)
+		payTypeObj'GetValue("PaymentMethod$",			cPaymentMethod$)
+		payTypeObj'GetValue("D531APSRetailAccount$",	cRetailAccount$)
+		IF tmpCreditCardSetupTested$	= isYES$ { 
+			TestedCreditCard			= isTRUE
+		}
+	}
+
+	if TestedCreditCard		= isFALSE { ! #231342 - Catch when payment type isn't valid after a conversion or import. RCS
+		retVal				= retFAILURE
+		LastErrorNum$		= "AR_531APSInvalidPaymentType"
+		LastErrorMsg$		= MSG("AR_531APSInvalidPaymentType")
+		coSession'UI'MessageBox$( "AR_531APSInvalidPaymentType" )
+		tmpRetVal 			= _OBJ'BT_Cancel()
+		RETURN retVal
+	}
+
+	IF coBusiness'APSActivated AND TestedCreditCard { ! 227159 - RCS
+
+		cAllowEdit = isFALSE
+
+		SWITCH cPaymentMethod$
+			CASE "R"
+				cAllowEdit	= EVN ("coBusiness'SE_ARAllowAddEditCreditCards",err=*next)
+				BREAK
+			CASE "A"
+				cAllowEdit	= EVN ("coBusiness'SE_ARAllowAddEditACH",err=*next)
+				BREAK
+		END SWITCH
+
+		IF cAllowEdit {
+
+			coBusiness'GetDefaults((cCurrentARDivisionNo$),(cCurrentCustomerNo$),defaultRec$,defaultIOL$)
+			READ DATA FROM defaultRec$,REC=custcard$ to IOL = defaultIOL$
+			CustomerID$ 	= STP(cCurrentARDivisionNo$)+"-"+STP(cCurrentCustomerNo$) ! PLW 2018-08-17 Ticket #236076
+			IF CustomerID$	= "-" { 
+				CustomerID$	= isNULL$ ! PLW 2018-08-17 Ticket #236076
+			}
+			CardID$			= CreditCardID$ ! PLW 2018-08-17 Ticket #236076
+			CustomerName$	= custcard.CardholderName$ ! PLW 2018-08-17 Ticket #236076
+			accountName$	= custcard.CardholderName$ ! RCS 2018-11-21 Ticket #236076
+
+			retVal			= coBusiness'ARCreditCard'ProcessAPSVault("CREATE",			\
+														PaymentType$,					\
+														CreditCardGUID$,				\
+														Last4UnencryptedCreditCardNos$,	\
+														ExpirationDateYear$,			\
+														ExpirationDateMonth$,			\
+														CardType$,						\
+														Last4BankRoutingNos$,			\
+														Last4BankAccountNos$,			\
+														BankAccountType$,				\
+														accountName$,					\
+														CustomerName$,					\
+														CustomerID$,					\
+														CardID$,						\ 
+														defaultRec$, 					\
+														defaultIOL$ ) ! PLW 2018-08-17 Ticket #236076, updated 2018-10-16 RCS to add defaultRec$, defaultIOL$
+
+			SWITCH retVal
+				CASE retSUCCESS
+					PaymentType$	= cPaymentType$
+					CreditCardID$	= cCreditCardID$
+					vaultRec$		= REC(cVaultIOL$)
+					READ DATA FROM defaultRec$ TO IOL = custIOL$	! RCS 2018-10-23 #236076 - read back changes from entry.
+					custRec$		= REC(custIOL$)					! RCS 2018-10-23 #236076 - read back changes from entry.
+
+					coBusiness'SetKeyValue("ARDivisionNo$", 	cCurrentARDivisionNo$)
+					coBusiness'SetKeyValue("CustomerNo$", 		cCurrentCustomerNo$)
+					coBusiness'SetKeyValue("CreditCardGUID$", 	CreditCardGUID$)
+					retVal			= coBusiness'SetKey()
+
+					IF retVal {
+						coBusiness'SetValue("PaymentType$", 	PaymentType$)
+						retVal		= coBusiness'SetPartialRecord(custRec$, custIOL$)	! RCS 2018-10-18 #236076 - write back changes from entry.
+						IF cPaymentMethod$	= "R" { ! 227159 - RCS
+							coBusiness'SetValue("BankAccountType$", 	isNULL$)
+							coBusiness'SetValue("BankName$", 			isNULL$)
+							coBusiness'SetValue("Last4BankRoutingNos$", isNULL$)
+							coBusiness'SetValue("Last4BankAccountNos$", isNULL$)
+						}
+						retVal		= coBusiness'SetPartialRecord(vaultRec$, cVaultIOL$)
+						IF NOT(retVal) {
+							coSession'UI'MessageBox$(coBusiness'LastErrorNum$, coBusiness'LastErrorMsg$)
+							tmpRetVal	= _OBJ'BT_Cancel()
+							NEXT_ID		= ID
+						} ELSE {
+							IF coBusiness'RecordChanged {
+								retVal	= _OBJ'WriteFromImpliedWrite()
+							}
+						}
+					}
+				BREAK
+
+				CASE retWARNING
+					! cancel pressed on APS dialog
+					NEXT_ID		= CreditCardID.ctl
+				BREAK
+
+				CASE retFAILURE
+					coSession'UI'MessageBox$(coBusiness'ARCreditCard'LastErrorNum$, coBusiness'ARCreditCard'LastErrorMsg$)
+				BREAK
+			END SWITCH
+
+			IF NOT(retVal) {
+				tmpRetVal		= _OBJ'BT_Cancel()
+				NEXT_ID			= ID
+			} ELSE {
+				IF retVal = retSUCCESS {
+					IF cPrimaryCard { 
+						cCurrentCreditCardGUID$	= CreditCardGUID$ 
+					}
+					_OBJ'ExplodeIOL()
+					NEXT_ID		= CardholderName.ctl
+				}
+			}
+		} ELSE {
+			retVal				= retFAILURE
+			coSession'UI'MessageBox$("CI_NoRights", MSG("CI_Rights", "add", "credit card data to Sage Exchange"))
+		}
+	} ELSE {
+		_OBJ'BT_NewCard(FROM "AR_531APSCustomerCreditCard_ui_BASE")
+	}
+
+RETURN retVal
+!
+
+POST_READ_REC:
+
+	_OBJ'PostReadRec(FROM "AR_531APSCustomerCreditCard_ui_BASE")
+
+	IF coBusiness'EditState AND coBusiness'APSActivated {
+
+		payTypeObj		= coBusiness'GetChildHandle("PaymentType")
+ 		payTypeObj'FIND(PaymentType$)
+ 		payTypeObj'GetValue("CreditCardSetupTested$",	APSCreditCard$)
+ 		payTypeObj'GetValue("PaymentMethod$",			arPaymentMethod$)
+
+ 		cPaymentMethod$	= arPaymentMethod$
+
+	}
+
+RETURN retSUCCESS
+!

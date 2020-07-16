@@ -1,0 +1,105 @@
+! $Id: AR_531APSCustomerCreditCard_bus.pvc $
+! Accounting Systems, Inc. 2013-2019. PLWhirley, RCSosbee
+!
+DEF CLASS "AR_531APSCustomerCreditCard_bus" CREATE REQUIRED DELETE REQUIRED
+
+	! Inheritance
+	LIKE "AR_CustomerCreditCard_bus"
+
+	! Public Properties
+	PROPERTY APSActivated
+
+	! Public Methods
+	FUNCTION GetDefaults(Div$,Cust$,defRec$,defIOL$)				GET_DEFAULTS
+	FUNCTION APSCleanData$(EntVal$)									APS_CLEAN_DATA		! #252088 - 2019-06-06 RCS - Fix data changes.
+	
+	! Local Methods
+	FUNCTION LOCAL ValidatePaymentType(value$)						VALIDATE_PAYMENT_TYPE
+
+	! Local Variables
+
+	! Elements Defined Elsewhere, but Referenced Locally
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	! check for activation
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		APSActivated	= coAPSActivation'CheckAPSActivation ()
+		DROP OBJECT coAPSActivation
+		coAPSActivation	= 0
+		IF APSActivated { 
+			cAllowMultipleEMailAddresses	= isFALSE
+		}
+	}
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+APS_CLEAN_DATA:			! #252088 - 2019-06-06 RCS - Fix data changes.
+ENTER inVal$
+
+	retVal$				= $$
+	inVal$				= cvs(inVal$,19) ! #233539 RCS - remove leading and trailing control characters and non printables. 2018-01-11
+	
+	! strip &
+	Inval$				= SUB(Inval$,"&","and")
+	
+	! For hosted form strip certain characters for JSON and XML #236076 - 2019-02-21 RCS
+	if len(InVal$) {
+		Inval$			= SUB(Inval$,quo," ")
+		Inval$			= SUB(Inval$,"\"," ")
+		Inval$			= SUB(Inval$,"[","(")
+		Inval$			= SUB(Inval$,"]",")")
+		Inval$			= SUB(Inval$,"{","(")
+		Inval$			= SUB(Inval$,"}",")")
+	}
+	retVal$			= inVal$
+
+RETURN retVal$
+!
+
+GET_DEFAULTS:
+
+ENTER Division$,Customer$,defRec$,defIOL$
+
+	custObj				= _OBJ'GetChildHandle("CustomerNo")
+	custObj'FIND(Division$ + STP(Customer$))
+
+	custIOL$			= CPL("IOLIST CustomerName$, AddressLine1$, AddressLine2$, ZipCode$, City$, State$, CountryCode$, EmailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")
+	D531APSValidated$	= isNO$
+	custRec$			= REC(custIOL$)
+	custObj'GetPartialRecord(custRec$, custIOL$)
+
+	defIOL$				= CPL("IOLIST CardHolderName$, Address1$, Address2$, Zip$, City$, State$, Country$, EMailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")
+	READ DATA FROM custRec$ TO IOL = defIOL$
+	
+	! clean the data
+	CardHolderName$		= _obj'APSCleanData$(CardHolderName$)
+	Address1$			= _obj'APSCleanData$(Address1$)
+	Address2$			= _obj'APSCleanData$(Address2$)
+	Zip$				= _obj'APSCleanData$(Zip$)
+	City$				= _obj'APSCleanData$(City$)
+
+	defRec$=REC(defIOL$)
+
+RETURN retSUCCESS
+!
+
+VALIDATE_PAYMENT_TYPE:  ! PLW 2015-06-01 Ticket #143591
+
+ENTER (value$)
+
+	if APSActivated { _OBJ'ARCreditCard'GetAPSMerchantCredentials(value$,APSMerchantKey$,APSMerchantPassword$) }
+
+	retVal				= _OBJ'ValidatePaymentType(FROM "AR_531APSCustomerCreditCard_bus_BASE",value$)
+
+RETURN retVal
+!

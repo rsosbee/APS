@@ -1,0 +1,465 @@
+! $Id: AR_CreditCardSPS.pvc 26747 2018-06-06 22:13:07Z ndchang $
+! AR_CreditCardSPS Class - Wrapper to access SPS Exchange COM via XML
+! (c)2015-2016 Sage Software, Inc. All Rights Reserved. Sage 100 v2017
+! Modified by ASI - PLW 2017-03-17
+
+DEF CLASS "AR_CreditCardSPS" 	CREATE REQUIRED		DELETE REQUIRED
+
+	! Inherits from the following class(es)
+
+	! Public Properties
+	PROPERTY cAPSActivated	! ASI PLW 2016-09-29
+	
+	! ** [constant, object handle] Handle to .NET class mapping to the XSD schema
+	PROPERTY Sage.Exchange			SET ERR
+
+	! ** [constant, object handle] Handle to COM object for the SDK
+	PROPERTY Sage.COM				SET ERR
+
+	! ** [boolean] If true, Sage Exchange SDK should exist because interactive window station is available
+	PROPERTY SDKAvailable			SET ERR
+	
+	! Local/Private Properties
+	! ** [boolean] If true, internet access is available.
+	LOCAL cInternet
+
+	! Public Functions (Methods)
+	! ** Get a unique ID value from the SDK client (UUID)
+	! ** @RETURNS [string] Unique ID
+	FUNCTION GetUniqueID$() 									GET_UUID
+
+	! ** Deserialize an XML string to its proper object type
+	! ** @PARAM xmlData$ [string] XML data string
+	! ** @RETURNS [constant, object handle] Handle to the SPS object created
+	FUNCTION FromXML(xmlData$) 									FROM_XML
+
+	! ** Convert a serializable object to XML string
+	! ** @PARAM spsObject [constant, object handle] The handle for the SPS object
+	! ** @RETURNS [string] XML string
+	FUNCTION ToXML$(spsObject) 									TO_XML
+
+	! ** Create XML mapped object of the specified type
+	! ** @PARAM spsObjectType$ [input, string] Type of SPS object
+	! ** @RETURNS [constant, object handle] Handle to the SPS object created
+	FUNCTION Create(spsObjectType$)								CREATE_OBJECT
+
+	! ** Test internet connection
+	! ** @PARAM retest {optional} [input, boolean] if true, will retest internet connection
+	! ** @RETURNS [boolean] Success if there is internet connectivity, otherwise failure.
+	FUNCTION TestInternetConnection()							TEST_INTERNET_CONNECTION
+	FUNCTION TestInternetConnection(retest)						TEST_INTERNET_CONNECTION
+
+	! Local Functions (Methods)
+
+	! ** Create and return a Request_v1 object
+	! ** @PARAM appID$ [input, string] The SPS application / client ID for MAS 90/200
+	! ** @PARAM langID$ [input, string] The Language ID (EN for English)
+	! ** @PARAM cKey$ [input, string] The SPS clientKey$ associated with the appID$
+	! ** @RETURNS [constant, object handle] Handle to the request object created
+	FUNCTION LOCAL CreateRequest(appID$, langID$) 				CREATE_REQUEST
+	FUNCTION LOCAL CreateRequest(appID$, langID$, cKey$) 		CREATE_REQUEST
+
+	! ** Submit object (Request_V1) to the SPS client
+	! ** @PARAM spsObject [constant, object handle] The handle for the SPS object
+	! ** @RETURNS [constant, object handle] The handle to the response object
+	FUNCTION LOCAL Submit(spsObject) 							OBJ_SUBMIT
+
+	! ** Submit XML string to the SPS client
+	! ** @PARAM xmlData$ [string] XML data string
+	! ** @RETURNS [constant, object handle] The handle to the response object
+	FUNCTION LOCAL Submit(xmlData$) 							XML_SUBMIT
+
+END DEF
+
+
+ON_CREATE:
+
+	ENTER coSession
+
+	SDKAvailable = isFALSE
+	
+	! **** ASI Next lines added to skip Sage.Exchange when possible
+	! #236076 - 2019-01-24 RCS - moved to reduce load time and resource load.
+
+	coAPSActivation=NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated		= coAPSActivation'CheckAPSActivation()
+		DROP OBJECT coAPSActivation
+	}
+	
+	! check stack
+	IF cAPSActivated {
+		StackList$			= $$
+		Exception			= 0
+		I					= 1-PRM('B0')
+		StackList$			+= UCS(STK(I,ERR=*NEXT)); I++; GOTO *SAME ! PLW 2016-09-29 get total stack
+		! PLW 2017-01-12 Changed to not look for _bus but for *all* SY_COMPANY.  This will include "CompanyConversion"
+		IF POS("AR_531APSCONVERTTOAPS"=StackList$) OR POS("SY_COMPANY"=StackList$) { Exception	= isTRUE }
+		IF NOT(Exception) { RETURN }
+	}
+	! **** Above lines added by ASI to avoid Sage.Exchange
+
+	! #232007 - 2018-08-31 - PU5 and above
+	subLMVersionNo			= 0
+	coSession'GetParameter("SYS","Version$",LMversionNo$)
+	subLmVersionNo=num(mid(LmVersionNo$,6,3),err=*next)
+
+	onLine = EVN("coSession'OnLine", ERR=*NEXT)
+	
+	coSession'StartDotNetResolver()
+		
+	! Load the .NET class mapping to the XSD schema
+	! Use the Add method to specify the location of the private Sage.Exchange assembly so COM can find it.
+	DEF OBJECT Sage.Exchange, "[.net]"
+					
+	Sage.Exchange'Add("Sage.Exchange", ERR=*NEXT); isOK = isTRUE
+
+	IF NOT(isOK) {
+		coSession'LastErrorMsg$ = MSG(-1)
+	} ELSE {
+		! Load core .NET assemblies
+		Sage.Exchange'Add("System.Xml")
+		
+		! Set namespaces so full name is not required on create's
+		nmSpace$ = "System,System.IO,System.XML,System.XML.Serialization,Sage.Exchange"
+		
+		IF onLine {
+			Sage.Exchange'Add("System")
+			Sage.Exchange'Add("System.Web")
+			nmSpace$ += ",System.Web,System.Net"
+		}
+		
+		Sage.Exchange'NameSpace$ = nmSpace$
+		
+		IF NOT(onLine) {
+			DESKTOP = Sage.Exchange'Create("Desktop",err=*next)	! #244180 - 2018-11-27 - PU5 and above
+			if DeskTop {
+    			DESKTOP'ENSURERUNNING()							! #244180 - 2018-11-27 - PU5 and above
+			}
+
+			! Load COM object for the SDK
+			DEF OBJECT Sage.COM, coSession'Wdx$ + "clSedApi.ModuleClient", ERR=*NEXT
+
+			IF Sage.COM {
+				result$ = $$		
+				tstObj  = Sage.COM'GetResponse("ACK")
+				result$ = tstObj'GetStatusDescription$()
+				if subLmVersionNo > 4 { ! #232007 - 2018-08-31 - PU5 and above
+				r = 0
+				WHILE UCS(STP(result$))="APPLICATION NOT RUNNING, STARTING APPLICATION" ! give SED time to start
+ 					r ++
+ 					IF r > 10 { BREAK }
+ 					WAIT 1
+ 					tstObj  = Sage.COM'GetResponse("ACK")
+ 					result$ = tstObj'GetStatusDescription$()
+ 				WEND
+				}
+				IF UCS(result$) = "OK" {
+					SDKAvailable = isTRUE
+				}				
+			}
+			IF NOT(SDKAvailable) {
+				! Unable to communicate with Sage Exchange.  Try again or contact a Sage Customer Support Representative
+				coSession'LastErrorNum$ = "AR_NoSEDesktop"
+				coSession'LastErrorMsg$ = MSG("AR_NoSEDesktop")					
+			}
+		}		
+	}
+		
+	IF SDKAvailable {
+		cInternet = _OBJ'TestInternetConnection()
+		IF NOT(cInternet) {
+			coSession'LastErrorNum$ = LastErrorNum$
+			coSession'LastErrorMsg$ = LastErrorMsg$
+			EXIT errOBJECT
+		}
+	} ELSE {
+		EXIT errOBJECT		
+	}
+	
+	RETURN
+
+
+ON_DELETE:
+
+	! Delete references to all objects
+	DELETE OBJECT Sage.COM, ERR=*PROCEED; Sage.COM = 0
+	DELETE OBJECT Sage.Exchange, ERR=*PROCEED; Sage.Exchange = 0
+
+	RETURN
+
+
+CREATE_OBJECT:
+
+	ENTER obj_type$
+	
+	onLine = EVN("coSession'OnLine", ERR=*NEXT)
+
+	IF _OBJ'SDKAvailable OR onLine {
+		! Create the object
+		sps_obj = Sage.Exchange'Create(obj_type$)
+	
+		! Unparent the object
+		sps_obj'PvxParent = 0
+	
+		! Def object
+		DEF OBJECT sps_obj
+	} ELSE {
+		LastErrorNum$ = "CI_Report_Unable"
+		LastErrorMsg$ = MSG(LastErrorNum$, "create object via the Sage Exchange SDK")
+	}
+
+	RETURN sps_obj
+
+
+CREATE_REQUEST:
+
+	ENTER app_id$, lang_id$, cKey$, ERR=*NEXT
+	
+	onLine = EVN("coSession'OnLine", ERR=*NEXT)
+
+	IF _OBJ'SDKAvailable OR onLine {
+		! Create .NET object that maps to the request XML schema element
+		request = Sage.Exchange'Create("Request_V1")
+	
+		! Fill in the application element
+		request'Application'ApplicationID$ = app_id$
+		request'Application'ClientID$      = app_id$
+		request'Application'ClientKey$     = cKey$
+		request'Application'LanguageID$    = lang_id$
+	
+		! Unparent the request
+		request'PvxParent = 0
+	
+		! Def object
+		DEF OBJECT request
+	} ELSE {
+		LastErrorNum$ = "CI_Report_Unable"
+		LastErrorMsg$ = MSG(LastErrorNum$, "create transaction request via the Sage Exchange SDK")
+	}
+
+	RETURN request
+
+
+GET_UUID:
+	
+	oGUID = Sage.Exchange'_("Guid")
+	uuid$ = oGUID'NewGuid'ToString$
+	
+	DROP OBJECT oGUID, ERR=*PROCEED; oGUID = 0
+
+	RETURN uuid$
+
+
+TO_XML:
+
+	ENTER sps_obj
+	xmlStr$ = $$
+
+	! Ensure we have object
+	IF (sps_obj) {
+		! Get type
+		obj_type = sps_obj'GetType
+
+		! Create XML serialization object
+		ser = Sage.Exchange'Create("XmlSerializer", *obj_type)
+
+		! Create string writer class
+		sw = Sage.Exchange'Create("StringWriter")
+
+		! Serialize the object to string writer
+		ser'Serialize(*sw, *sps_obj)
+
+		! Get string from string writer
+		xmlStr$ = sw'ToString$
+		
+		! Retrieve / Append XML > 32 K in length
+		WHILE (sw'PvxExtData > 0)
+			xmlStr$ += sw'PvxExtData$
+		WEND
+
+		! Cleanup
+		obj_type'PvxFree()
+		sw'PvxFree()
+		ser'PvxFree()
+	}
+
+	RETURN xmlStr$
+
+
+FROM_XML:
+
+	ENTER xml_data$
+
+	xmlType$ = $$
+	sps_obj  = 0
+
+	IF NOT(NUL(xml_data$)) {
+		! Create a string reader
+		sr = Sage.Exchange'Create("StringReader", xml_data$)
+
+		! Get reference to static class
+		xr_type = Sage.Exchange'_("XmlReader")
+
+		! Create reader class
+		xr = xr_type'Create(*sr)
+
+		! Parse the XML data to get to the first element node
+		WHILE (xr'Read)
+			! Check for element type
+			IF (xr'NodeType'Value__ = xr'NodeType'Element'value__) {
+				! Have the root element name
+				xmlType$ = xr'Name$
+				! Done processing
+				BREAK
+			}
+		WEND
+
+		! Check name
+		IF NOT(NUL(xmlType$)) {
+			! Load type from Sage.Exchange assembly
+			obj_type = Sage.Exchange'_(xmlType$)
+
+			! Create serializer on object type
+			ser = Sage.Exchange'Create("XmlSerializer", *obj_type)
+
+			! Drop string reader
+			sr'PvxFree()
+
+			! Require string reader
+			sr = Sage.Exchange'Create("StringReader", xml_data$)
+
+			! Create object from XML string
+			sps_obj = ser'Deserialize(*sr)
+
+			! Unparent so this is not dropped when the creator is
+			sps_obj'PvxParent = 0
+
+			! Def object
+			DEF OBJECT sps_obj
+
+			! Cleanup
+			obj_type'PvxFree()
+			ser'PvxFree()
+		}
+
+		! Cleanup
+		xr'PvxFree()
+		xr_type'PvxFree()
+		sr'PvxFree()
+	}
+
+	RETURN sps_obj
+
+
+OBJ_SUBMIT:
+
+	ENTER sps_obj
+
+	onLine = EVN("coSession'OnLine", ERR=*NEXT)
+	
+	IF NOT(onLine) {
+		! Serialize the object to XML string
+		xmlData$ = _OBJ'ToXML$(sps_obj)
+		
+		! Get response object
+		CALL coSession'wdx$ + "SYZDLL;Submit_SE_XML", Sage.COM, xmlData$, resp
+
+		IF resp {
+			! Unparent
+			resp'PvxParent = 0
+		
+			! Def object
+			DEF OBJECT resp
+			
+			IF coSession'CS {
+				tmpResp = ABS(resp)
+			} ELSE {
+				tmpResp = resp
+			}
+			
+			IF tmpResp < 32001 OR tmpResp > 32767 {
+				LastErrorNum$ = "CI_Invalid"
+				LastErrorMsg$ = MSG(LastErrorNum$, "object handle "+STR(resp))	
+				resp = 0
+			}
+		} ELSE {
+			LastErrorNum$ = "CI_Invalid"
+			LastErrorMsg$ = MSG(LastErrorNum$, "object handle "+STR(resp))	
+		}
+	} ELSE {
+		! CI_Cannot --> You cannot %1.
+		mssg$         = "submit the credit card transaction request using the Sage Exchange Desktop application from the online version of " + coSession'Caption$
+		LastErrorNum$ = "CI_Cannot"
+		LastErrorMsg$ = MSG("CI_Cannot", mssg$)
+	}
+
+	RETURN resp
+
+
+XML_SUBMIT:
+
+	ENTER xml_data$
+	
+	onLine = EVN("coSession'OnLine", ERR=*NEXT)
+	
+	IF NOT(onLine) {
+		! Get response object
+		resp = Sage.COM'GetResponse(xml_data$)
+		
+		IF resp {
+			! Unparent
+			resp'PvxParent = 0
+	
+			! Def object
+			DEF OBJECT resp
+			
+			IF coSession'CS {
+				tmpResp = ABS(resp)
+			} ELSE {
+				tmpResp = resp
+			}
+			
+			IF tmpResp < 32001 OR tmpResp > 32767 {
+				LastErrorNum$ = "CI_Invalid"
+				LastErrorMsg$ = MSG(LastErrorNum$, "object handle "+STR(resp))	
+				resp = 0
+			}
+		} ELSE {
+			LastErrorNum$ = "CI_Invalid"
+			LastErrorMsg$ = MSG(LastErrorNum$, "object handle "+STR(resp))	
+		}
+	} ELSE {
+		! CI_Cannot --> You cannot %1.
+		mssg$         = "submit the credit card transaction request using the Sage Exchange Desktop application from the online version of " + coSession'Caption$
+		LastErrorNum$ = "CI_Cannot"
+		LastErrorMsg$ = MSG("CI_Cannot", mssg$)
+	}
+	
+	RETURN resp
+
+
+TEST_INTERNET_CONNECTION:
+
+	ENTER retest, ERR=*NEXT
+	
+	! test internet connection once per session unless retest is true
+	retVal = TBL(retest = isTRUE, cInternet, retFAILURE)
+	
+	IF NOT(retVal) {
+
+		OPEN(HFN, ERR=*NEXT)"[TCP]www.na.sage.com;80;nodelay"; retVal = retSUCCESS
+		IF NOT(retVal) { ! in case www.na.sage.com is down	
+			OPEN(HFN, ERR=*NEXT)"[TCP]www.sageexchange.com;443;nodelay"; retVal = retSUCCESS ! this may take a few seconds
+		}
+
+		IF retVal {
+			connectCh = LFO
+			CLOSE(connectCh, ERR=*PROCEED); connectCh = 0
+		} ELSE {
+			LastErrorNum$ = "AR_NoInternet"
+			LastErrorMsg$ = MSG("AR_NoInternet")
+		}
+	}
+		
+	RETURN retVal

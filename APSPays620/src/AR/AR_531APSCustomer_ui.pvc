@@ -1,0 +1,73 @@
+! $Id$: AR_531APSCustomer_ui.pvc $
+! Copyright 2017-2018 Accounting Systems, Inc.
+! Bob Sosbee #232007 - 2017-01-12
+!
+DEF CLASS "AR_531APSCustomer_ui" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "AR_Customer_ui"
+
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL coCompany
+
+	LOCAL c2p.companyCode$
+	LOCAL c2p.Enabled
+	LOCAL c2p.Option
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL PERFORM CheckForEnablepMain()		CHECK_FOR_ENABLE_pMAIN
+	FUNCTION LOCAL PERFORM PostLoadpMain()				POST_LOAD_pMAIN
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+	c2p.companyCode$	= LCS(coSession'companyCode$)
+	c2p.companyKey$		= coSession'companyKey$
+
+	coCompany			= NEW ("SY_Company_SVC", coSession)
+	coCompany'FIND(c2p.companyKey$)
+	c2p.Enabled 		= coCompany'C2PEnabled ! C2P active
+	c2p.Option			= coCompany'C2POption ! C2P opt in/opt out switch.
+
+RETURN
+!
+
+ON_DELETE:
+	drop object coCompany
+	coCompany = 0
+RETURN
+!
+
+CHECK_FOR_ENABLE_pMAIN:
+
+	_OBJ'CheckForEnablepMain(FROM "AR_531APSCustomer_ui_BASE")
+
+	IF c2p.Enabled {
+		_OBJ'SetControlState("C2P.grp$", ctlSHOW)
+	} ELSE {
+		_OBJ'SetControlState("C2P.grp$", ctlHIDE)
+	}
+
+	! Not available for open item customers.
+	IF OpenItemCustomer$ <> isYES$ {
+		_OBJ'SetControlState("C2P.grp$", ctlDISABLE)
+	} ELSE {
+		_OBJ'SetControlState("C2P.grp$", ctlENABLE)
+	}
+
+RETURN retSUCCESS
+!
+
+POST_LOAD_pMAIN:
+
+	retVal = _OBJ'PostLoadpMain(FROM "AR_531APSCustomer_ui_BASE")
+	_OBJ'CheckForEnablepMain()
+
+RETURN retVal
+!

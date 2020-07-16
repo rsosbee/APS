@@ -1,0 +1,791 @@
+! AR_531APSCashReceiptsDeposit_BUS.PVC
+! Copyright 2013-2019 Accounting Systems, Inc.
+! #232007 - RCS 2018-02-27
+!
+DEF CLASS "AR_531APSCashReceiptsDeposit_BUS" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "AR_CashReceiptsDeposit_BUS"
+	LIKE "SY_531APSMultiCurrencyCommon" ! PLW 2019-02-12 Ticket #248049
+
+	! Public Properties
+
+	! Local/Private Properties
+	! objects
+	LOCAL coDocument
+	LOCAL coRequest
+	LOCAL coCompany
+	LOCAL coCashReceiptsBus
+	LOCAL coDeposit
+
+	! settings
+	LOCAL c2p.companyCode$
+	LOCAL c2p.APSLevelIIIProcessing$
+	LOCAL c2p.APSSummaryCommodityCode$
+	LOCAL c2p.APSItemCommodityCode$
+
+	LOCAL c2p.Enabled
+	LOCAL c2p.APIKey$
+	LOCAL c2p.Currency$
+
+	LOCAL c2p.DataFormat$
+	LOCAL c2p.BlockSize				= 25 ! default start block
+	LOCAL c2p.BlockNumberSent		= 1  ! starting block
+	LOCAL c2p.BlockNumberReceived
+	LOCAL CreditCardEnable$
+	LOCAL cRequireDepositAmt$
+	LOCAL cSkipCCVoid
+	LOCAL DB_CardType$
+	LOCAL EndOfSet$					= "N" ! initialize for transmission.
+	LOCAL From_C2P
+	LOCAL isNULL$					= ""
+
+	! files
+	LOCAL cCashReceiptsHeaderFH
+	LOCAL cCashReceiptsHistoryFH
+	LOCAL cArCustomerFH
+	LOCAL cPaymentTypeFH
+	LOCAL c2P.AROpenInvFH
+
+	! Public Functions (Methods)
+	! ** Determines if document has authorized SPS credit card transaction that needs to be voided
+	! ** @returns [numeric] (1) no transaction found
+	! **                    (0) transaction found and user has no right to void
+	! **                    (-1) transaction found and user has right to void
+	FUNCTION CreditCardPreDelete()											CREDIT_CARD_PRE_DELETE
+	FUNCTION ProcessAPSClickToPay()											PROCESS_APS_CLICK_TO_PAY
+	! ** sets the cProcessVoid local property to true so the the credit card void transaction will  be processed when previously authorized when deleting (existing records) or clearing (new records) the record state
+	! ** @returns [boolean] True = success, False = failure (the user does not have sufficent security rights to process the void transaction).
+	FUNCTION ProcessCCVoid()												PROCESS_CC_VOID
+
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL checkPriorPayments(paymentId$)							CHECK_PRIOR_PAYMENTS
+		! Delete Cash Receipt Entries included in a deposit (a pre-delete in the  Delete() method)
+	! ** @returns [boolean] True = success, False = failure
+	FUNCTION LOCAL DeleteCashReceipts()										DELETE_CASH_RECEIPTS
+	FUNCTION LOCAL PERFORM GetDetailResponse(payment,memberKey$,dtlSeq$)	GET_DETAIL_RESPONSE
+	FUNCTION LOCAL PERFORM GetResponse(payment,memberKey$)					GET_RESPONSE
+	FUNCTION LOCAL SetCreditCardType(CreditCardNo$) 						SET_CREDIT_CARD_TYPE
+
+	! Elements Defined Elsewhere, but Referenced Locally
+
+	LOCAL coSession
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	c2p.companyCode$		= LCS(coSession'companyCode$)
+
+	coCompany				= NEW("SY_Company_SVC", coSession)
+	coCompany'FIND(coSession'companyKey$)
+
+	coCompany'GetValue("D531APSLevelIIIProcessing$",	c2p.APSLevelIIIProcessing$)
+	coCompany'GetValue("D531APSSummaryCommodityCode$",	c2p.APSSummaryCommodityCode$)
+	coCompany'GetValue("D531APSItemCommodityCode$",		c2p.APSItemCommodityCode$)
+	coCompany'GetValue("CreditCardEnable$",				CreditCardEnable$)
+	
+
+	c2p.Enabled				= coCompany'C2PEnabled
+
+	coCompany'GetValue("D531_C2PAPIKey$",				c2p.APIKey$)
+	coCompany'GetValue("D531_C2PCurrency$",				c2p.Currency$)
+
+	coDocument				= NEW("SY_531APSDocument_SVC",	coSession)
+	coRequest				= NEW("SY_531APSRequest",		coSession)
+	c2p.DataFormat$			= coRequest'DataFormat$
+
+	coSession'GetParameter( "A/R", "RequireDepositAmt$", cRequireDepositAmt$)
+	coCashReceiptsBus		= NEW("AR_CashReceipts_bus",	coSession)
+
+	cCashReceiptsHeaderFH	= coSession'openTable("AR_CashReceiptsHeader",	pthCOMPANY$)
+	cCashReceiptsHistoryFH	= coSession'openTable("AR_CashReceiptsHistory",	pthCOMPANY$)
+	cArCustomerFH			= coSession'OpenTable("AR_Customer",			pthCOMPANY$)
+	cPaymentTypeFH			= coSession'openTable("AR_PaymentType",			pthCOMPANY$)
+	c2P.AROpenInvFH			= coSession'OpenTable("AR_OpenInvoice",			pthCOMPANY$) ! 2018-05-02 RCS
+	
+RETURN
+
+ON_DELETE:
+	DROP OBJECT coCashReceiptsBus,	ERR=*PROCEED;	coCashReceiptsBus	= 0
+	DROP OBJECT coRequest,			ERR=*PROCEED;	coRequest			= 0
+	DROP OBJECT coDocument,			ERR=*PROCEED;	coDocument			= 0
+	DROP OBJECT coCompany,			ERR=*PROCEED;	coCompany			= 0
+	if cCashReceiptsHeaderFH {		close (cCashReceiptsHeaderFH);	cCashReceiptsHeaderFH	= 0 }
+	if cCashReceiptsHistoryFH {		close (cCashReceiptsHistoryFH);	cCashReceiptsHistoryFH	= 0 }
+	if cArCustomerFH {				close (cArCustomerFH);			cArCustomerFH	= 0 }
+	if cPaymentTypeFH {				close (cPaymentTypeFH);			cPaymentTypeFH	= 0 }
+	IF c2P.AROpenInvFH {			CLOSE (c2P.AROpenInvFH);		c2P.AROpenInvFH	= 0 }
+	%C2P_Import				= isFALSE
+	From_C2P				= isFALSE
+RETURN
+!
+
+CHECK_PRIOR_PAYMENTS:
+ENTER (paymentId$)
+
+	retVal					= retFAILURE
+	SELECT *, REC=temp$ FROM cCashReceiptsHeaderFH BEGIN $00$ END $FE$ WHERE temp.D531_C2PPaymentId$=paymentId$
+		retVal				= retSUCCESS
+		BREAK
+	NEXT RECORD
+	IF NOT(retVal) {
+		SELECT *, REC=temp$ FROM cCashReceiptsHistoryFH BEGIN $00$ END $FE$ WHERE temp.D531_C2PPaymentId$=paymentId$
+			retVal			= retSUCCESS
+			BREAK
+		NEXT RECORD
+	}
+RETURN retVal
+!
+
+CREDIT_CARD_PRE_DELETE:
+
+	retVal					= retSUCCESS
+
+	_obj'GetValue("D531_C2PPaymentId$",D531_C2PPaymentId$)
+	if not(nul(D531_C2PPaymentId$)) {
+		cSkipCCVoid			= isTRUE
+	}
+
+	retVal=_OBJ'CreditCardPreDelete(FROM "AR_531APSCashReceiptsDeposit_bus_BASE")
+
+RETURN retVal
+!
+
+DELETE_CASH_RECEIPTS: ! does not call back to base
+
+	retVal = retSUCCESS
+
+	IF EditState {
+		IF NOT(coCashReceiptsBus) {
+			coCashReceiptsBus	= NEW("AR_CashReceipts_bus", coSession)
+		}
+
+		retVal = coCashReceiptsBus'Clear()
+
+		IF retVal {
+			retVal				= coCashReceiptsBus'SetValue("DepositNo$", DepositNo$)
+
+			IF retVal {
+				coCashReceiptsBus'MoveFirst()
+
+				WHILE NOT(coCashReceiptsBus'EOF)
+					From_C2P			= isFALSE
+					coCashReceiptsBus'getValue("D531_C2PPaymentId$", D531_C2PPaymentId$)
+					if not(nul(D531_C2PPaymentId$)) {
+						cSkipCCVoid		= isTRUE
+						From_C2P		= isTRUE
+					}
+
+					IF cSkipCCVoid		= isTRUE {
+						coCashReceiptsBus'SkipCCVoid()
+					} ELSE {
+						IF cProcessCCVoid {
+							coCashReceiptsBus'ProcessCCVoid()
+						}
+					}
+
+					retVal = coCashReceiptsBus'DELETE()
+
+					IF retVal			= retFAILURE {
+						BREAK
+					}
+
+					coCashReceiptsBus'MoveNext()
+				WEND
+			}
+		}
+
+		IF NOT(retVal = retSUCCESS) {
+			LastErrorMsg$	= coCashReceiptsBus'LastErrorMsg$
+			LastErrorNum$	= coCashReceiptsBus'LastErrorNum$
+		}
+
+		IF NOT(retVal		= retFAILURE) {
+			! Release lock on deposit record because AR_CashReceipts_bus;UpdateDepositRec() calls coDeposit'SetKey(depositKey$)
+			coCashReceiptsBus'DepositObject'Find(DepositNo$)
+		}
+	}
+
+RETURN retVal
+!
+
+GET_DETAIL_RESPONSE:
+ENTER (payment),(memberKey$),(dtlSeq$)
+
+	paymentKey$				= "c2p.payments."+STR(payment:"000000")+".invoices."+dtlSeq$+"."+memberKey$
+	value$					= isNULL$
+	value					= isFALSE
+	retVal					= retFAILURE
+	SELECT * FROM memoryFH BEGIN paymentKey$ END paymentKey$ + $FE$
+		dvalue$				= value$
+		retVal				= retSUCCESS
+	NEXT RECORD
+	IF retval {
+		IF POS("$"			= sageField$) {
+			VIA sageField$	= value$
+		} ELSE {
+			VIA sageField$	= NUM(value$, ERR=*NEXT)
+			value			= NUM(value$, ERR=*NEXT)
+		}
+	}
+
+RETURN retVal
+!
+
+GET_RESPONSE:
+ENTER (payment),(memberKey$)
+
+	paymentKey$				= "c2p.payments."+STR(payment:"000000")+"."+memberKey$
+	value$					= isNULL$
+	value					= isFALSE
+	retVal					= retFAILURE
+	SELECT * FROM memoryFH BEGIN paymentKey$ END paymentKey$ + $FE$
+		dvalue$				= value$
+		retVal				= retSUCCESS
+	NEXT RECORD
+	IF retval {
+		IF POS("$"			= sageField$) {
+			VIA sageField$	= value$
+		} ELSE {
+			VIA sageField$	= NUM(value$, ERR=*NEXT)
+			value			= NUM(value$, ERR=*NEXT)
+		}
+	}
+
+RETURN retVal
+!
+
+PROCESS_APS_CLICK_TO_PAY:
+	
+	retVal					= retSUCCESS
+	headerInt				= isTRUE					! for integer block processing.
+	_obj'SetBankCurrency(cAllowedDownloadCurrency$)		! PLW 2019-02-12 Ticket #248049
+	memoryFH				= coRequest'CreateMemoryFile()
+
+	! api/payments/query
+	documentCode$			= "PQ###Q"
+	coDocument'FIND(documentCode$)
+	coDocument'GetValue("documentPath$", documentPath$)
+
+	coRequest'LoadHeader()
+
+	retVal = coRequest'SendRequest(documentCode$, documentPath$, memoryFH)
+
+	if retVal				= retWARNING {
+		coRequest'TlsWarning()
+	}
+
+	if retVal				= retFAILURE {
+		RETURN retVal
+	}
+
+	! get number of payments
+	IF cAPSMultiCurrency {
+		coSession'UI'ProgressBar("init", "APS Processing payments for currency: "+cAllowedDownloadCurrency$, "Scanning... ", 1, ""); wait .1 ! PLW 2019-02-15 Ticket #248049
+	} else {
+		coSession'UI'ProgressBar("init", "APS Processing Retrieved transactions", "Scanning... ", 1, ""); wait .1
+	}
+	paymentKey$				= "c2p.payments."
+	SELECT * FROM memoryFH BEGIN paymentKey$ END paymentKey$ + $FE$
+		nopStart			= POS("c2p.payment"=member$) + 13
+		nopLength			= POS("."=MID(member$,nopStart)) - 1 ! 2018-01-03 RCS was 12
+		numberOfPayments$	= MID(member$, nopStart, nopLength)
+		numberOfPayments	= NUM(numberOfPayments$)
+	NEXT RECORD
+
+	! check Payment type and credit card enable.
+	! check for payments already retrieved
+	duplicatePayments		= 0
+	duplicatePayments$		= SEP
+	FOR payment=1 TO numberOfPayments
+		recs++
+		paymentKey$			= "c2p.payments."+STR(payment:"000000")+".id$"
+		READ (memoryFH, KEY=paymentKey$, DOM=*CONTINUE)
+		paymentId$			= value$
+		IF _OBJ'checkPriorPayments(paymentId$) {
+			duplicatePayments	++
+			duplicatePayments$	+= STR(payment) + SEP
+			CONTINUE
+		}
+		! PLW 2019-02-15 next we need to exclude if payment is not correct currency
+		IF NOT(_obj'ProcessThisCurrency(c2p.Currency$)) { ! PLW 2019-02-15 Ticket #248049
+			invalidRecs				++
+			if not(pos(str(payment)	= duplicatePayments$)) {
+				duplicatePayments	++
+				duplicatePayments$	+= STR(payment) + SEP
+			}
+			CONTINUE  ! PLW 2019-02-15 Ticket #248049
+		} ! PLW 2019-02-15 Ticket #248049
+		! 2018-05-03 RCS - Check if customer exists.  Should never happen...
+		c2p.customerNo$		= isNULL$
+		_obj'GetResponse(payment,"customerId") ! returns c2p.customerNo$
+
+		value$				= c2p.customerNo$
+		ARDivisionNo$		= MID(value$, 1, 2)
+		CustomerNo$			= MID(value$, 3)
+
+		cCustChk			= isFALSE
+		READ (cArCustomerFH,rec=chk$,key=ARDivisionNo$:CustomerNo$,dom=*next); cCustChk = isTRUE
+		if cCustChk			= isFALSE {
+			invalidCustRecs	++
+			if not(pos(str(payment)	= duplicatePayments$)) {
+				duplicatePayments	++
+				duplicatePayments$	+= STR(payment) + SEP
+			}
+		}
+		
+		! check if transaction type downloaded match the company payment types enabled. RCS 2018-04-18
+		! Only accept transaction types that are allowed under the company setup.
+		c2p.TranType$		= isNULL$
+		_obj'GetResponse(payment,"paymentType") ! returns c2p.TranType$
+		
+		if coSession'ModuleLevel < 5.4 and lcs(c2p.TranType$) = "ach" {
+			c2p.TranType$	= "cc" ! force to CC in 5.30 and below 2018-05-14 RCS
+		}
+		
+		SWITCH lcs(c2p.TranType$)
+			CASE "cc"
+				if NOT(POS(CreditCardEnable$="YB")) {
+					invalidCCRecs			++		
+					IF not(pos(str(payment)=duplicatePayments$)) {
+						duplicatePayments	++
+						duplicatePayments$	+= STR(payment) + SEP
+					}
+				}
+				BREAK
+			CASE "ach"
+				if NOT(POS(CreditCardEnable$="AB")) {
+					invalidACHRecs			++
+					IF not(pos(str(payment)=duplicatePayments$)) {
+						duplicatePayments	++
+						duplicatePayments$	+= STR(payment) + SEP
+					}
+				}
+				BREAK
+			DEFAULT ! unknown.
+				invalidRecs				++
+				if not(pos(str(payment)	= duplicatePayments$)) {
+					duplicatePayments	++
+					duplicatePayments$	+= STR(payment) + SEP
+				}
+				BREAK
+		END SWITCH
+		cPct				= int((recs/numberOfPayments)*100)
+		coSession'UI'ProgressBar("update", "APS Processing Retrieved transactions", "Scanning... ", cPct, "")
+	NEXT payment
+
+	coSession'UI'ProgressBar("update", "APS Processing Retrieved transactions", "Scanning... ", 100, ""); wait .1
+
+	! Display warning if transactions downloaded that are not allowed under the company setup.
+	if invalidCCRecs or invalidACHRecs or invalidRecs or invalidCustRecs {
+		cWarningMsg$		= "There are invalid import records based on the Enable Payments setting in\Company Maintenance or not on file customers.\Scan found "
+		if invalidCCRecs {
+			cWarningMsg$	+= str(invalidCCRecs)+" CC records"					
+		}
+		if invalidCCRecs and invalidACHRecs {
+			cWarningMsg$	+= " and "
+		}
+		if invalidACHRecs {
+			cWarningMsg$	+= str(invalidACHRecs)+" ACH records"
+		}
+		if invalidCCRecs or invalidACHRecs {
+			cWarningMsg$	+= " and " ! 2018-05-03 RCS
+		}
+		if invalidCustRecs {
+			cWarningMsg$	+= str(invalidCustRecs)+" not on file Customer records" ! 2018-05-03 RCS
+		}
+		if not(invalidRecs) {
+			cWarningMsg$	+= " and skipped them."
+		} else {
+			cWarningMsg$	+= ".\Invalid records found: "+str(invalidRecs)+" and skipped them."
+		}
+		cWarningMsg$		+= "\Total records found: "+str(numberOfPayments)+" records."
+		coSession'UI'messageBox$("", cWarningMsg$)
+	}
+	
+	! deposit (depositAmount)
+	IF (numberOfPayments-duplicatePayments) = 0 {
+		retVal				= retFAILURE
+		lastErrorNum$		= isNULL$
+		if cAPSMultiCurrency {
+			lastErrorMsg$		= "No APS Click to Pay payments for currency: "+cAllowedDownloadCurrency$+"."
+		} else {
+			lastErrorMsg$		= "No APS Click to Pay payments are available."
+		}
+		coSession'UI'ProgressBar("close"); wait .1
+		RETURN retVal
+	}
+	_OBJ'getValue("depositDesc$", c2p.depositDesc$)
+	IF NUL(c2p.depositDesc$) {
+		_OBJ'setValue("depositDesc$", "APS Click to Pay Deposit")
+	}
+	cPct					= 0
+	recs					= 0
+	expYr$					= dte(0:"%Yl")
+	expYr					= num(expYr$)+1
+	expYr$					= str(expYr:"0000")
+	expMon$					= dte(0:"%Mz")
+
+	if cAPSMultiCurrency {
+		coSession'UI'ProgressBar("update", "APS Processing Retrieved "+cAllowedDownloadCurrency$+" transactions", "Loading... ", cPct, ""); wait .1
+	} else {
+		coSession'UI'ProgressBar("update", "APS Processing Retrieved transactions", "Loading... ", cPct, ""); wait .1
+	}
+	coDeposit 				= coCashReceiptsBus'DepositObject ! get the deposit object ID
+	c2p.depositAmount		= 0
+	
+	FOR payment	= 1 TO numberOfPayments
+		IF POS(SEP+STR(payment)+SEP	= duplicatePayments$) {
+			CONTINUE
+		}
+		paymentKey$			= "c2p.payments."+STR(payment:"000000")+".amount"
+		SELECT * FROM memoryFH BEGIN paymentKey$ END paymentKey$ + $FE$
+			c2p.depositAmount	+= NUM(value$)
+		NEXT RECORD
+	NEXT payment
+
+	%C2P_Import				= isTRUE ! for cash receipt bus overrides
+
+	FOR payment	= 1 TO numberOfPayments
+		recs				++
+		IF POS(SEP+STR(payment)+SEP=duplicatePayments$) {
+			CONTINUE
+		}
+		cPct				= int((recs/numberOfPayments)*100)
+		coSession'UI'ProgressBar("update", "APS Processing Retrieved transactions", "Loading... ", cPct, "")
+
+		! depositNo$ set by user in UI
+		retVal				= coCashReceiptsBus'setKeyValue("DepositNo$", DepositNo$)
+
+		! Deposit Type
+		c2p.TranType$		= isNULL$
+		_obj'GetResponse(payment,"paymentType") ! returns c2p.TranType$
+
+		if coSession'ModuleLevel < 5.4 and lcs(c2p.TranType$) = "ach" {
+			c2p.TranType$	= "cc" ! force to CC in 5.30 and below 2018-05-14 RCS
+		}
+
+		c2p.paymentAmount	= 0
+		_obj'GetResponse(payment,"amount") ! returns c2p.paymentAmount
+
+		SWITCH lcs(c2p.TranType$)
+			CASE "ach"
+				depositType$	= "A" ! Ach
+				PaymentType$	= coCompany'C2PACHPaymentType$
+				_OBJ'getValue("ACHDepositAmt", value)
+				_OBJ'setValue("ACHDepositAmt", value + c2p.AmountPosted)
+				coDeposit'SetValue("ACHDepositAmt", value + c2p.AmountPosted)
+				BREAK
+			CASE "cc"
+				depositType$	= "R" ! cRedit card
+				PaymentType$	= coCompany'C2PCCPaymentType$
+				_OBJ'getValue("CreditDepositAmt", value)
+				_OBJ'setValue("CreditDepositAmt", value + c2p.AmountPosted)
+				coDeposit'SetValue("CreditDepositAmt", value + c2p.AmountPosted)
+				BREAK
+			DEFAULT
+				depositType$	= "C" ! Cash
+				PaymentType$	= coCompany'C2PCCPaymentType$
+				_OBJ'getValue("CashDepositAmt", value)
+				_OBJ'setValue("CashDepositAmt", value + c2p.AmountPosted)
+				coDeposit'SetValue("CashDepositAmt", value + c2p.AmountPosted)
+				BREAK
+		END SWITCH
+		
+		! Deposit Type
+		c2p.TranType$		= isNULL$
+		_obj'GetResponse(payment,"paymentType") ! returns c2p.TranType$
+
+		if coSession'ModuleLevel < 5.4 and lcs(c2p.TranType$) = "ach" { ! force to CC in 5.30 and below 2018-05-14 RCS
+			PaymentType$	= coCompany'C2PACHPaymentType$
+			depositType$	= "R" ! cRedit card
+		}
+		
+		retVal = coCashReceiptsBus'setKeyValue("DepositType$", depositType$)
+
+		! set key (ARDivisionNo$, CustomerNo$,DepositType$,CheckNo$)
+		c2p.customerNo$		= isNULL$
+		_obj'GetResponse(payment,"customerId") ! returns c2p.customerNo$
+
+		value$				= c2p.customerNo$
+		ARDivisionNo$		= MID(value$, 1, 2)
+		CustomerNo$			= MID(value$, 3)
+
+		retVal = coCashReceiptsBus'setKeyValue("ARDivisionNo$", ARDivisionNo$)
+		retVal = coCashReceiptsBus'setKeyValue("CustomerNo$", CustomerNo$)
+		retVal = coCashReceiptsBus'setKeyValue("CreditCardEntryNo$", STR(payment:"000000"))
+		retVal = coCashReceiptsBus'setKeyValue("CheckNo$", isNULL$)
+		retVal = coCashReceiptsBus'SetKey()
+
+		! header (PostingAmt)
+		_obj'GetResponse(payment,"amount") ! returns c2p.AmountPosted
+		postingAmt			= c2p.AmountPosted
+		retVal				= coCashReceiptsBus'setValue("postingAmt", postingAmt)
+
+		! header (CreditCardTransactionID$)
+		_obj'GetResponse(payment,"apsTransactionId") ! returns c2p.CreditCardTransactionId$
+		CreditCardTransactionID$	= c2p.CreditCardTransactionId$
+
+		! header (D531_C2PPaymentId$)
+		_obj'GetResponse(payment,"id") ! returns c2p.D531_C2PPaymentId$
+		D531_C2PPaymentId$	= c2p.D531_C2PPaymentId$
+		retVal = coCashReceiptsBus'setValue("D531_C2PPaymentId$", D531_C2PPaymentId$)
+
+		! header (Account Name)
+		c2p.accountName$	= isNULL$ ! bank account name supplied by the user on the gateway.
+		_obj'GetResponse(payment,"accountName") ! returns c2p.accountName$
+
+		! header (bank account type)
+		c2p.bankAccountType$	= isNULL$
+		_obj'GetResponse(payment,"bankAccountType") ! returns c2p.bankAccountType$
+		BankAccountType$		= stp(mid(c2p.bankAccountType$,1,1))
+		BankAccountType$		= tbl(nul(BankAccountType$),BankAccountType$,"C") ! set to C if null.
+
+		! header (last four acct #)
+		c2p.maskedBankAccountNumber$	= isNULL$
+		_obj'GetResponse(payment,"maskedBankAccountNumber") ! returns c2p.maskedBankAccountNumber$
+		Last4BankAccountNos$	= mid(c2p.maskedBankAccountNumber$,-4,4)
+
+		! header (last four routing #)
+		c2p.maskedBankRoutingNumber$	= isNULL$
+		_obj'GetResponse(payment,"maskedBankAccountNumber")		! returns c2p.maskedBankRoutingNumber$
+		Last4BankRoutingNos$	= mid(c2p.maskedBankRoutingNumber$,-4,4)
+
+		! header (Last4cc#)
+		c2p.Last4UnencryptedCreditCardNos$	= isNULL$
+		_obj'GetResponse(payment,"ccLast4")		! returns c2p.Last4UnencryptedCreditCardNos$
+
+		! header (PaymentType) - future
+		c2p.paymentType$	= isNULL$
+		_obj'GetResponse(payment,"ccTypeCode")	! returns c2p.paymentType$
+
+		! header (PaymentTypeName) - future
+		c2p.ccTypeCode$		= isNULL$
+		_obj'GetResponse(payment,"ccTypeName")	! returns c2p.ccTypeCode$
+
+		! header (Currency) - future
+		c2p.currency$		= isNULL$
+		_obj'GetResponse(payment,"currency")	! returns c2p.currency$
+		IF cAPSMultiCurrency {  				! PLW 2019-03-08 Ticket #248049 - Integration with DSD multicurrency
+			ARMC_234_CheckCurrency$		= c2p.currency$ ! PLW 2019-03-08 Ticket #248049 - Integration with DSD multicurrency
+			retVal						= coCashReceiptsBus'setValue("ARMC_234_CheckCurrency$", ARMC_234_CheckCurrency$)	! PLW 2019-03-08 Ticket #248049 - Integration with DSD multicurrency
+		}
+
+		! header (Date) - Date of transaction
+		c2p.depositDate$	= isNULL$
+		_obj'GetResponse(payment,"date") ! returns c2p.depositDate$
+
+		! header (CardType$)
+		c2p.maskedCcNumber$ = isNULL$
+		CardType$			= isNULL$
+		_obj'GetResponse(payment,"maskedCcNumber") ! returns c2p.maskedCcNumber$
+
+		CreditCardNo$		= c2p.maskedCcNumber$
+		_obj'SetCreditCardType(CreditCardNo$)
+		CardType$			= DB_CardType$
+
+		! Deposit Type
+		c2p.TranType$		= isNULL$
+		_obj'GetResponse(payment,"paymentType") ! returns c2p.TranType$
+
+		if coSession'ModuleLevel < 5.4 and lcs(c2p.TranType$) = "ach" {
+			c2p.TranType$	= "cc" ! force to CC in 5.30 and below 2018-05-14 RCS
+			CardType$		= "O" ! other
+			c2p.Last4UnencryptedCreditCardNos$	= Last4BankAccountNos$
+		}
+
+		! then detail
+		lastSeq$			= isNULL$
+		paymentKey$ 		= "c2p.payments."+STR(payment:"000000")+".invoices."
+		baseKey$			= paymentKey$ 							! #240918 - 2018-08-20
+		SELECT * FROM memoryFH BEGIN paymentKey$+"000000" END paymentKey$ + "999999.zzzz" + $FE$
+			dtlSeq$			= member$(len(baseKey$)+1,6) 			! #240918 - 2018-08-20
+			lstMember$		= member$(1,len(baseKey$)+7)+"zzzz" 	! #240918 - 2018-08-20
+			_obj'GetDetailResponse(payment,"amount",dtlSeq$) 		! returns c2p.AmountPosted (invoice level)
+			amountPosted	= c2p.AmountPosted
+			_obj'GetDetailResponse(payment,"invoiceId",dtlSeq$) 	! returns c2p.invoiceNo$
+			InvoiceType$	= MID(c2p.invoiceNo$,-2) ! last 2
+			InvoiceNo$		= MID(c2p.invoiceNo$, 1, len(c2p.invoiceNo$)-2)
+
+			_obj'GetDetailResponse(payment,"remainingBalance",dtlSeq$) ! returns c2p.remainingBalance
+		!	InvoiceBalance	= c2p.remainingBalance ! not used at present
+
+			! check the applied to invoice - make into PP if not found. 2018-05-02 RCS
+			cInvoiceFound	= isFALSE
+			READ (c2P.AROpenInvFH, KEY = ARDivisionNo$:CustomerNo$:InvoiceNo$:InvoiceType$, REC = bal$,DOM=*NEXT ); cInvoiceFound = isTRUE
+			IF NOT(cInvoiceFound) { 
+				InvoiceType$	= "PP"
+			}
+
+			IF dtlSeq$<>lastSeq$ {
+				retVal 		= coCashReceiptsBus'addLine()
+				retVal		= coCashReceiptsBus'Lines'setValue("LineType$", "I")		! force to Invoice #256119 - 2019-10-16 - RCS
+				retVal		= coCashReceiptsBus'Lines'setValue("invoiceNo$", invoiceNo$)
+				retVal		= coCashReceiptsBus'Lines'setValue("invoiceType$", invoiceType$)
+				if InvoiceType$ = "PP" {
+					retVal	= coCashReceiptsBus'Lines'setValue("NewPrepayment$", isYES$)
+					retVal	= coCashReceiptsBus'Lines'setValue("Comment$", "APS Click to Pay PrePayment")
+				} ELSE {
+					retVal	= coCashReceiptsBus'Lines'setValue("Comment$", "APS Click to Pay Payment")
+				}
+				retVal		= coCashReceiptsBus'Lines'setValue("amountPosted", amountPosted)
+				retVal		= coCashReceiptsBus'Lines'WRITE()
+
+				IF cRequireDepositAmt$	= isYES$ {	! DB# 1323 - 2020-03-26 RCS #264683
+
+					SWITCH depositType$
+						CASE "R" ! cRedit card
+							creditBalanceAmt	-= amountPosted
+							BREAK
+						CASE "A" ! Ach
+							achBalanceAmt		-= amountPosted
+							BREAK
+						DEFAULT ! cash (should not be here).
+							cashBalanceAmt		-= amountPosted
+							BREAK
+					END SWITCH
+					depositBalance				-= amountPosted
+					IF coUI {
+						coUI'SetVar("DepositBalance",depositBalance) ! PLW 2018-02-26
+					}
+				}
+			}
+			lastSeq$		= dtlSeq$
+			read (memoryFH,key 	= lstMember$,dom=*next) ! set to next invoice in this payment sequence
+			amountPosted	= 0
+		NEXT RECORD
+
+		retVal = coCashReceiptsBus'setValue("CreditCardGUID$", D531_C2PPaymentId$)
+		retVal = coCashReceiptsBus'setValue("PaymentType$", PaymentType$)
+		IF NUL(PaymentType$) { ! PLW 2019-02-15 Ticket #248049
+			retVal 			= retFAILURE
+			LastErrorNum$	= $$ ! PLW 2019-02-15 Ticket #248049
+			LastErrorMsg$	= "Invalid Payment Type in company ClickToPay settings" ! PLW 2019-02-15 Ticket #248049
+			BREAK
+		}
+		SWITCH depositType$
+			CASE "R" ! cRedit Card
+				retVal		= coCashReceiptsBus'setValue("Last4UnencryptedCreditCardNos$", c2p.Last4UnencryptedCreditCardNos$)
+				retVal		= coCashReceiptsBus'setValue("CardType$", CardType$)
+				retVal		= coCashReceiptsBus'setValue("ExpirationDateYear$", expYr$)
+				retVal		= coCashReceiptsBus'setValue("ExpirationDateMonth$", expMon$)
+				BREAK
+			CASE "A" ! Ach
+				retVal		= coCashReceiptsBus'setValue("Last4BankRoutingNos$", Last4BankRoutingNos$)
+				retVal		= coCashReceiptsBus'setValue("Last4BankAccountNos$", Last4BankAccountNos$)
+				retVal		= coCashReceiptsBus'setValue("BankName$", c2p.accountName$)
+				retVal		= coCashReceiptsBus'setValue("BankAccountType$", BankAccountType$)
+				BREAK
+		END SWITCH
+
+		retVal = coCashReceiptsBus'setValue("CreditCardAuthorizationNo$", D531_C2PPaymentId$)
+		retVal = coCashReceiptsBus'setValue("CreditCardTransactionID$", CreditCardTransactionID$)
+
+		! convert date
+		c2p.date$			= c2p.depositDate$
+		cDate$				= mid(c2p.Date$,1,pos(" "=c2p.date$)-1),x=pos("/"=cDate$)
+		cMonth$				= cDate$(1,x-1),cDate$=cDate$(x+1),x=pos("/"=cDate$)
+		cMonth$				= str(num(cMonth$):"00")
+		cDay$				= cDate$(1,x-1),cDate$=cDate$(x+1)
+		cDay$				= str(num(cDay$):"00")
+		cYear$				= cDate$
+		cDate$				= isNULL$
+
+		cDateUpdated$		= cYear$+cMonth$+cDay$
+		
+		! convert time to decimal time from midnight
+		cTime$				= mid(c2p.Date$,pos(" "=c2p.date$)+1)
+		if len(cTime$)		= 10 { cTime$ = "0"+cTime$ }
+		cHour				= num(mid(cTime$,1,2))
+		if mid(cTime$,10,1) = "P" { cHour+=12 } ! change to 24 hour
+		cMin				= num(mid(cTime$,4,2))
+		cSec				= num(mid(cTime$,7,2))
+		cPrcSv				= prc
+		precision 6
+		cDecMin				= cMin * 60 + cSec ! convert to seconds.
+		cDecMin				= cDecMin/3600
+		cTimeUpdated$		= stp(str(cHour+cDecMin:"#0.00##"),2)
+		precision cPrcSv
+		
+		retVal				= coCashReceiptsBus'setValue("AuthorizationDate$", cDateUpdated$)
+		retVal				= coCashReceiptsBus'setValue("AuthorizationTime$", cTimeUpdated$)
+		retVal				= coCashReceiptsBus'setValue("SaveCreditCard$", isNO$)
+
+		%CreditCardGUID$	= D531_C2PPaymentId$
+
+		retVal				= coCashReceiptsBus'WRITE()
+		retVal				= coCashReceiptsBus'CLEAR()
+	NEXT payment
+	coSession'UI'ProgressBar("update", "APS Processing Retrieved transactions", "Loading... ", 100, "")
+	wait 1
+	coSession'UI'ProgressBar("close"); wait .1
+	%C2P_Import				= isFALSE
+
+RETURN retVal
+!
+
+PROCESS_CC_VOID:
+
+	retVal=_OBJ'ProcessCCVoid(FROM "AR_531APSCashReceiptsDeposit_bus_BASE")
+
+	From_C2P				= isFALSE
+	coCashReceiptsBus'getValue("D531_C2PPaymentId$", D531_C2PPaymentId$)
+	if not(nul(D531_C2PPaymentId$)) {
+		cSkipCCVoid			= isTRUE
+		From_C2P			= isTRUE
+	}
+
+RETURN retVal
+!
+
+SET_CREDIT_CARD_TYPE: ! 2018-04-04 RCS revised to match Sage logic in PU4
+
+ENTER (CreditCardNo$)
+
+	FirstDigit$				= MID(CreditCardNo$,1,1)
+	DB_CardType$			= "O" ! Other
+	
+	SWITCH FirstDigit$
+
+		CASE "1"
+			IF MID(CreditCardNo$,1,4)="1800" {
+				DB_CardType$	= "7" ! JCB
+			}
+			BREAK
+		CASE "2"
+			IF MID(CreditCardNo$,1,4)="2131" {
+				DB_CardType$	= "7" ! JCB
+			}
+			IF MID(CreditCardNo$, 1, 4) >= "2221" AND MID(CreditCardNo$, 1, 4) <= "2720" {
+				DB_CardType$	= "5" ! New Mastercard series begins with "2"
+			}
+			BREAK
+		CASE "3"
+			DB_CardType$		= "7" ! JCB
+			IF pos (MID(CreditCardNo$, 2,1)="47") {
+				DB_CardType$	= "3" ! Amex
+			}
+			BREAK
+		CASE "4"
+			DB_CardType$		= FirstDigit$ ! Visa
+			BREAK
+		CASE "5"
+			IF NUM(MID(CreditCardNo$, 2, 1)) <= 5 AND NUM(MID(CreditCardNo$, 2, 1)) >= 1 {
+				DB_CardType$	= "5" ! MasterCard	
+			}
+			BREAK
+		CASE "6"
+			IF MID(CreditCardNo$, 1, 4) = "6011" {
+				DB_CardType$	= "6" ! Discover 
+			}
+			BREAK
+		DEFAULT
+			DB_CardType$		= "O" ! Other
+			BREAK
+	END SWITCH
+
+RETURN retSUCCESS
+!

@@ -1,0 +1,497 @@
+! $Id: CI_531SMCCreditCardConversionTime.pvc $
+! Sage 100 ERP Credit Card Data Conversion Time Estimate Routines
+! Accounting Systems, Inc. 2013-2017. PLWhirley, BSosbee
+!
+DEF CLASS "CI_531APSCreditCardConversionTime" CREATE REQUIRED DELETE REQUIRED 
+
+! Inherits from the following class(es)
+	LIKE "CI_CreditCardConversionTime"
+
+! Public Properties
+
+! Local/Private Properties
+	LOCAL cAPSActivationFh
+	LOCAL cAPSActivated
+	LOCAL cSMPmt_APSFH
+	LOCAL cSMHdr_APSFH
+	LOCAL cTransLogCH
+	LOCAL cLogFile$
+
+! Public Functions (Methods)
+	! ** Estimate Credit Card Conversion, Company Maintenance and Copy Company, Swap Vault conversion time
+	! ** @Param utility {optional} [input, boolean] true = running estimate from command line, false = running estimate from Conversion, Company Maintenance or Copy Company.
+	! ** @Param company$ {optional} [input, string] CompanyCode to estimate credit card conversion time (Blank = current company; *All* = all companies)
+	! ** @Param mssg$ {optional} [input, string] Warning message (not resolved) from Company Maintenance to be included in dConvTime dialog. (When mssg$ is null the source is assumed to be conversion.)
+	! ** @Param module$ {optional} [input, string] SEP separated list of modules included in Copy Company.
+	! ** @Returns [boolean] Always returns Success.
+	FUNCTION EstimateCreditCardConversionTime(APScompany$) 								ESTIMATE_CREDIT_CARD_CONVERSION_TIME
+	FUNCTION EstimateCreditCardConversionTime(APScompany$, APSmssg$) 					ESTIMATE_CREDIT_CARD_CONVERSION_TIME
+	FUNCTION EstimateCreditCardConversionTime(APScompany$, APSmssg$, APSmodule$) 		ESTIMATE_CREDIT_CARD_CONVERSION_TIME
+	FUNCTION EstimateCreditCardConversionTime() 										ESTIMATE_CREDIT_CARD_CONVERSION_TIME
+
+! Local/Private Functions (Methods)
+	FUNCTION LOCAL BT_ShowLog()															BT_SHOW_LOG
+	! ** Close tables used to calculate Conversion time estimate
+	! ** @Returns [boolean] Success
+	FUNCTION LOCAL CloseTables()														CLOSE_TABLES
+	! ** create log file for all transactions in process
+	FUNCTION LOCAL CreateLog()															CREATE_LOG
+	! ** Open framework tables needed to calculate credit card conversion time estimate
+	! ** @Param company$ [input, string] CompanyCode for company to estimate credit card conversion time.
+	! ** @Param soSetup [input, boolean] true = S/O module has been setup up in the company estimating credit card conversion time.
+	! ** @Param itSetup [input, boolean] true = I/T module has been setup up in the company estimating credit card conversion time.
+	! ** @Param appLevel [input, numeric] Application level of credit card tables in the company estimating credit card conversion time.
+	! ** @Returns [boolean] Success or Failure
+	FUNCTION LOCAL OpenFrameworkTables(APScompany$, APSsoSetup, APSitSetup, APSappLevel) OPEN_FRAMEWORK_TABLES
+	! ** Scan Post 5.00 tables for records containg credit cards 
+	! ** @Param soSetup [input, boolean] true = S/O module has been setup up in the company estimating credit card conversion time.
+	! ** @Param itSetup [input, boolean] true = I/T module has been setup up in the company estimating credit card conversion time.
+	! ** @Param module$ {optional} [input, string] SEP separated list of modules included in Copy Company.
+	! ** @Param recordCount [output, numeric] number of records found containing credit cards requiring access to SPS Vault.
+	! ** @Returns [boolean] Success or Failure
+	FUNCTION LOCAL Post500ConversionEstimate(APSsoSetup, APSitSetup, APSrecordCount)	POST_500_CONVERSION_ESTIMATE
+	FUNCTION LOCAL Post500ConversionEstimate(APSsoSetup, APSitSetup, APSrecordCount, 	\
+						APSmodule$)														POST_500_CONVERSION_ESTIMATE
+	! ** Nomads PostLoad logic to populate library variables
+	! ** @Returns [boolean] Always returns success (this return value is ignored by Nomads)
+	FUNCTION LOCAL PostLoad()																POST_LOAD
+! Elements Defined Elsewhere, but Referenced Locally
+END DEF
+
+ON_CREATE:
+	ENTER coSession,ERR=*NEXT
+	IF NOT(coSession) { coSession=%SYS_SS }
+RETURN 
+!
+
+ON_DELETE:
+	CLOSE (cAPSActivationFh,ERR=*NEXT)
+	CLOSE (cSMPmt_APSFH,ERR=*NEXT)
+	cSMPmt_APSFH	= 0
+	CLOSE (cSMHdr_APSFH,ERR=*NEXT)
+	cSMHdr_APSFH	= 0
+RETURN 
+!
+
+ESTIMATE_CREDIT_CARD_CONVERSION_TIME:
+	
+ENTER APScompany$, APSmssg$, APSmodule$, ERR=*NEXT
+	
+	cAPSActivated		= 0
+	ContinueConversion	= 1
+	
+	IF NOT(cAPSActivationFh) { cAPSActivationFh = coSession'OpenTable("SY_531APSActivation", "SYSTEM") }
+	
+	IF cAPSActivationFh {
+		IF UCS(APScompany$) = "*ALL*" {
+			! check if APS is activated in any company
+			SELECT *,REC=TMP$ FROM cAPSActivationFh BEGIN $$ END $FE$ WHERE TMP.APSActivated$="Y"
+				cAPSActivated = 1
+				BREAK
+			NEXT RECORD
+		} ELSE {
+			TMP.APSActivated$ = $$
+			READ (cAPSActivationFh, KEY=APScompany$, KNO="KCOMPANYCODE", REC=TMP$, DOM=*NEXT)
+			IF TMP.APSActivated$ = "Y" { cAPSActivated = 1 }
+		}
+		
+		IF cAPSActivated {
+			IF APSmssg$ = "*CopyCompany*" {
+				ContinueConversion	= 0
+				Response$			= "CONTINUE"
+				retVal				= retSUCCESS
+			} ELSE {
+				SCREEN_LIB$			= "AR_531APSCreditCard.m4l"
+				SCREEN_ID$			= "dConvTime"
+			}
+		}
+	}
+	
+	IF ContinueConversion {
+		retVal=_OBJ'EstimateCreditCardConversionTime(FROM "CI_531APSCreditCardConversionTime_BASE", APScompany$, APSmssg$, APSmodule$)
+	}
+	
+RETURN retVal
+!
+
+POST_500_CONVERSION_ESTIMATE:
+	
+ENTER APSsoSetup, APSitSetup, APSrecordCount, APSmodule$, ERR=*NEXT
+	
+	IF cAPSActivated {
+		
+		memKey=0
+		memFH = HFN
+		OPEN (memFH)"*MEMORY*"
+	
+		pmtWhere$ = TBL(NUL(cPaymentType$), "PaymentType$ = cPaymentType$", "1=1")
+	
+		IF NUL(APSmodule$) 												\
+			OR (NOT(NUL(APSmodule$)) AND POS("AR" + SEP = UCS(APSmodule$))) {
+			! CashReceipts
+			IF cCashRcpt_FH {
+				toSPS = 0
+				
+				SELECT * FROM cCashRcpt_FH, KNO="kCREDITCARDGUID" 		\
+					BEGIN "/" 											\
+					WHERE NOT(NUL(CreditCardGUID$))						\
+						AND EVN(pmtWhere$)
+		
+					convReqd	= isTRUE
+					READ(cCustomerCC_FH, KEY=ARDivisionNo$:CustomerNo$:CreditCardGUID$, DOM = *NEXT); convReqd = isFALSE
+		
+					IF convReqd { toSPS++ }
+					
+					memKey++
+					memKey$=PAD(ARDivisionNo$,2)+PAD(CustomerNo$,20)+PAD(CreditCardID$,10)+STR(memKey:"000000000000")
+					WRITE (memFH,KEY=memKey$) "AR_CashReceipts",ARDivisionNo$,CustomerNo$,CreditCardID$,DepositNo$,CreditCardEntryNo$,CheckNo$
+		
+				NEXT RECORD
+			
+				Cash_Receipt	+= toSPS
+				APSrecordCount  += toSPS
+			}
+		
+		
+			! AR_Invoice
+			IF cARInv_FH {
+				toSPS = 0
+			
+				SELECT * FROM cARInv_FH, KNO="kCREDITCARDGUID" 		\
+					BEGIN "/" 										\
+					WHERE NOT(NUL(CreditCardGUID$)) 				\
+						AND EVN(pmtWhere$)
+		
+					convReqd = isTRUE
+					READ(cCustomerCC_FH, KEY=ARDivisionNo$:CustomerNo$:CreditCardGUID$, DOM = *NEXT); convReqd = isFALSE
+		
+					IF convReqd { toSPS++ }
+					
+					memKey++
+					memKey$=PAD(ARDivisionNo$,2)+PAD(CustomerNo$,20)+PAD(CreditCardID$,10)+STR(memKey:"000000000000")
+					WRITE (memFH,KEY=memKey$) "AR_Invoice",ARDivisionNo$,CustomerNo$,CreditCardID$,InvoiceNo$,InvoiceType$
+		
+				NEXT RECORD
+			
+				AR_Invoice  		+= toSPS
+				APSrecordCount 		+= toSPS
+			}
+		
+		
+			! AR_RepetitiveInvoice
+			IF cARRepetitive_FH {
+				toSPS = 0
+			
+				SELECT * FROM cARRepetitive_FH, KNO="kCREDITCARDGUID" 		\
+					BEGIN "/" 												\
+					WHERE NOT(NUL(CreditCardGUID$)) 						\
+						AND EVN(pmtWhere$)
+		
+					convReqd = isTRUE
+					READ(cCustomerCC_FH, KEY=ARDivisionNo$:CustomerNo$:CreditCardGUID$, DOM = *NEXT); convReqd = isFALSE
+		
+					IF convReqd { toSPS++ }
+					
+					memKey++
+					memKey$=PAD(ARDivisionNo$,2)+PAD(CustomerNo$,20)+PAD(CreditCardID$,10)+STR(memKey:"000000000000")
+					WRITE (memFH,KEY=memKey$) "AR_RepetitiveInvoice",ARDivisionNo$,CustomerNo$,CreditCardID$,ReferenceNo$
+		
+				NEXT RECORD
+			
+				Repetitive_Invoice 		+= toSPS
+				APSrecordCount        	+= toSPS
+			}
+		}
+	
+	
+		IF APSsoSetup {
+			IF NUL(APSmodule$) 												\
+				OR (NOT(NUL(APSmodule$)) AND POS("SO" + SEP = UCS(APSmodule$))){
+				! SalesOrder
+				IF cSOPmt_FH {
+					toSPS     = 0
+					lastDoc$  = $$
+					lastGUID$ = $$
+		
+					SELECT * FROM cSOPmt_FH 				\
+						BEGIN $$ 							\
+						WHERE NOT(NUL(CreditCardGUID$)) 	\
+							AND EVN(pmtWhere$)
+				
+						IF lastDoc$ = SalesOrderNo$ 		\
+							AND lastGUID$ = CreditCardGUID$ {
+							! Account for deposit / payment records with same credit card number
+							! When this occurs on a one-time use card there will be only 1 hit to the vault.
+							! Need to include CreditCardGUID$ in this check future multiple card enhancement.
+							CONTINUE
+						}
+				
+						lastDoc$  = SalesOrderNo$
+						lastGUID$ = CreditCardGUID$
+						convReqd  = isTRUE
+						soOk      = isFALSE
+						READ(cSOHdr_FH, KEY=SalesOrderNo$, ERR=*NEXT); soOk = isTRUE
+		
+						IF soOk {
+							READ(cCustomerCC_FH, KEY=ARDivisionNo$:CustomerNo$:CreditCardGUID$, DOM = *NEXT); convReqd = isFALSE
+							
+							memKey++
+							memKey$=PAD(ARDivisionNo$,2)+PAD(CustomerNo$,20)+PAD(CreditCardID$,10)+STR(memKey:"000000000000")
+							WRITE (memFH,KEY=memKey$) "SO_SalesOrder",ARDivisionNo$,CustomerNo$,CreditCardID$,SalesOrderNo$
+						}
+		
+						IF convReqd { toSPS++ }
+						
+					NEXT RECORD
+				
+					Sales_Order 	+= toSPS
+					APSrecordCount 	+= toSPS
+				}
+	
+	
+				! SO_Invoice
+				IF cSOInvPmt_FH {
+					toSPS     		= 0
+					lastDoc$  		= $$
+					lastGUID$ 		= $$
+				
+					SELECT * FROM cSOInvPmt_FH  			\
+						BEGIN $$ 							\
+						WHERE NOT(NUL(CreditCardGUID$))		\
+							AND EVN(pmtWhere$)
+				
+						IF lastDoc$ = InvoiceNo$ 		\
+							AND lastGUID$ = CreditCardGUID$ {
+							! Account for deposit / payment records with same credit card number
+							! When this occurs on a one-time use card there will be only 1 hit to the vault.
+							! Need to include CreditCardGUID$ in this check future multiple card enhancement.
+							CONTINUE
+						}
+				
+						lastDoc$  = InvoiceNo$
+						lastGUID$ = CreditCardGUID$
+						convReqd  = isTRUE
+						soOk      = isFALSE
+						READ(cSOInv_FH, KEY=InvoiceNo$, ERR=*NEXT); soOk = isTRUE
+		
+						IF soOk {
+							READ(cCustomerCC_FH, KEY=ARDivisionNo$:CustomerNo$:CreditCardGUID$, DOM = *NEXT); convReqd = isFALSE
+							
+							memKey++
+							memKey$=PAD(ARDivisionNo$,2)+PAD(CustomerNo$,20)+PAD(CreditCardID$,10)+STR(memKey:"000000000000")
+							WRITE (memFH,KEY=memKey$) "SO_Invoice",ARDivisionNo$,CustomerNo$,CreditCardID$,InvoiceNo$
+						}
+		
+						IF convReqd { toSPS ++ }
+		
+					NEXT RECORD
+				
+					SO_Invoice  	+= toSPS
+					APSrecordCount 	+= toSPS
+				}
+			}
+		}
+	
+	
+		IF APSitSetup {
+			IF NUL(APSmodule$) 												\
+				OR (NOT(NUL(APSmodule$)) AND POS("IT" + SEP = UCS(APSmodule$))){
+		
+				! IT_ShoppingCart
+				IF cEBMCart_FH {
+					toSPS = 0
+				
+					SELECT * FROM cEBMCart_FH, KNO="kCREDITCARDGUID" 		\
+						BEGIN "/" 											\
+						WHERE NOT(NUL(CreditCardGUID$)) 					\
+							AND EVN(pmtWhere$)
+			
+						convReqd = isTRUE
+					
+						IF NOT(NUL(ARDivisionNo$)) AND NOT(NUL(CustomerNo$)) {
+							READ(cCustomerCC_FH, KEY=ARDivisionNo$:CustomerNo$:CreditCardGUID$, DOM = *NEXT); convReqd = isFALSE
+						}
+			
+						IF convReqd { toSPS++ }
+						
+						memKey++
+						memKey$=PAD(ARDivisionNo$,2)+PAD(CustomerNo$,20)+PAD(CreditCardID$,10)+STR(memKey:"000000000000")
+						WRITE (memFH,KEY=memKey$) "IT_ShoppingCart",ARDivisionNo$,CustomerNo$,CreditCardID$,UserID$
+			
+					NEXT RECORD
+				
+					eBM_Shopping_Cart 	+= toSPS
+					APSrecordCount      += toSPS
+				}
+			}
+		}
+		
+		! I am going to check SM payment file here and write transactions into the memory file
+		! I am not going to add anything to APSrecordCount - it will be done in the SMC version of this program
+		IF  cSMPmt_APSFH AND cSMHdr_APSFH {
+			
+			pmtWhere$=TBL(NUL(cPaymentType$),"PaymentType$ = cPaymentType$","1=1")
+
+			IF NUL(APSmodule$) OR (NOT(NUL(APSmodule$)) AND POS("SM"+SEP=UCS(APSmodule$))) {
+				IF cSMPmt_APSFH {
+					lastDoc$	= $$
+					lastGUID$	= $$
+					SELECT * FROM cSMPmt_APSFH BEGIN $$ WHERE NOT(NUL(CreditCardGUID$)) AND EVN(pmtWhere$)
+						IF lastDoc$=ServiceOrderNo$ AND lastGUID$=CreditCardGUID$ {
+							! Account for deposit / payment records with same credit card number
+							! When this occurs on a one-time use card there will be only 1 hit to the vault.
+							! Need to include CreditCardGUID$ in this check future multiple card enhancement.
+							CONTINUE
+ 						}
+						lastDoc$	= ServiceOrderNo$
+						lastGUID$	= CreditCardGUID$
+						
+						soOk		= isFALSE
+						READ (cSMHdr_APSFH,KEY=ServiceOrderNo$,ERR=*NEXT); soOk=isTRUE
+						IF soOk {
+							memKey	++
+							memKey$	= PAD(ARDivisionNo$,2)+PAD(CustomerNo$,20)+PAD(CreditCardID$,10)+STR(memKey:"000000000000")
+							WRITE (memFH,KEY=memKey$) "SM_ServiceOrder",ARDivisionNo$,CustomerNo$,CreditCardID$,ServiceOrderNo$
+						}
+						
+					NEXT RECORD 
+				}
+ 			}
+ 		}
+		IF memKey {
+			! there are open transactions
+			_OBJ'CreateLog()
+			IF cTransLogCH {
+				WRITE RECORD (cTransLogCH) "Transactions in process"
+				lastCustomer$=$$
+				lastCreditCard$=$$
+				SELECT Table$,DivisionNo$,Customer$,CCID$,tmp1$,tmp2$,tmp3$ FROM memFH BEGIN $$ END $FE$
+					IF lastCustomer$<>DivisionNo$+Customer$ {
+						lastCustomer$=DivisionNo$+Customer$
+						WRITE RECORD (cTransLogCH) $0D0A$+$0D0A$+"Customer: "+DivisionNo$+"-"+Customer$
+					}
+					IF lastCreditCard$<>CCID$ {
+						lastCreditCard$=CCID$
+						WRITE RECORD (cTransLogCH) $0D0A$+"Credit Card ID: "+CCID$+$0D0A$
+					}
+					SWITCH Table$
+						CASE "AR_CashReceipts"
+							WRITE RECORD (cTransLogCH) "AR_CashReceipts: Deposit No "+tmp1$+" Credit Card Entry No "+tmp2$+" Check No "+tmp3$
+						BREAK
+						CASE "AR_Invoice"
+							WRITE RECORD (cTransLogCH) "AR_Invoice: Invoice No "+tmp1$+"-"+tmp2$
+						BREAK
+						CASE "AR_RepetitiveInvoice"
+							WRITE RECORD (cTransLogCH) "AR_RepetitiveInvoice: Reference No "+tmp1$
+						BREAK
+						CASE "SO_SalesOrder"
+							WRITE RECORD (cTransLogCH) "SO_SalesOrder: Sales Order No "+tmp1$
+						BREAK
+						CASE "SO_Invoice"
+							WRITE RECORD (cTransLogCH) "SO_Invoice: Invoice No "+tmp1$
+						BREAK
+						CASE "IT_ShoppingCart"
+							WRITE RECORD (cTransLogCH) "IT_ShoppingCart: User ID "+tmp1$
+						BREAK
+						CASE "SM_ServiceOrder"
+							WRITE RECORD (cTransLogCH) "SM_ServiceOrder: Service Order No "+tmp1$
+						BREAK
+					END SWITCH
+				NEXT RECORD
+				CLOSE (memFH,ERR=*NEXT)
+				memFH = 0
+			}
+		}
+	} ELSE {
+		_OBJ'Post500ConversionEstimate(FROM "CI_531APSCreditCardConversionTime_BASE", APSsoSetup, APSitSetup, APSrecordCount, APSmodule$)
+	}
+
+RETURN retSUCCESS
+!
+
+OPEN_FRAMEWORK_TABLES:
+	
+	ENTER (APScompany$),(APSsoSetup), (APSitSetup), (APSappLevel)
+	
+		_OBJ'OpenFrameworkTables(FROM "CI_531APSCreditCardConversionTime_BASE", APScompany$, APSsoSetup, APSitSetup, APSappLevel)
+	
+		smSetupAPS = coSession'IsSetup("S/M", APScompany$)
+		
+		IF smSetupAPS AND cPaymentType_FH { ! if cPaymentType is not opened - we don't need to open SM files
+		
+			IF coSession'SQL {
+				IF cIsPvxToRDBConversion { coSession'SetSQLFlag(isFALSE) }
+
+				IF APSappLevel>=5.00 {
+					cSMPmt_APSFH	= coSession'OpenTable("SM_531ServiceOrderPayment",pthOTHERCOMPANY$+APScompany$,0,0,"SQLKEYS;","SM_531ServiceOrderPayment",ERR=*NEXT)
+				}
+				cSMHdr_APSFH		= coSession'OpenTable("SM_531ServiceOrderHeader",pthOTHERCOMPANY$+APScompany$,0,0,"SQLKEYS;","SM_531ServiceOrderHeader",ERR=*NEXT)
+ 			
+			
+				IF cIsPvxToRDBConversion { coSession'SetSQLFlag(isTRUE) }
+ 		
+			} ELSE {
+				cSMHdr_APSFH		= coSession'OpenTable("SM_531ServiceOrderHeader","COMPANY:"+APScompany$,ERR=*NEXT)
+				cSMPmt_APSFH		= coSession'OpenTable("SM_531ServiceOrderPayment","COMPANY:"+APScompany$,ERR=*NEXT)
+				cSOPmt_FH			= coSession'OpenTable("SO_SalesOrderPayment","COMPANY:"+APScompany$,ERR=*NEXT)
+				cSOInvPmt_FH		= coSession'OpenTable("SO_InvoicePayment","COMPANY:"+APScompany$,ERR=*NEXT)
+			}
+ 		}
+RETURN retSUCCESS
+!
+
+CLOSE_TABLES:
+	_OBJ'CloseTables(FROM "CI_531APSCreditCardConversionTime_BASE")
+	CLOSE (cSMPmt_APSFH,ERR=*NEXT)
+	cSMPmt_APSFH	= 0
+	CLOSE (cSMHdr_APSFH,ERR=*NEXT)
+	cSMHdr_APSFH	= 0
+RETURN retSUCCESS
+!
+
+CREATE_LOG:
+	cTransLogCH=HFN
+	cLogFile$=coSession'PathCompany$+"APS_TransInProcess.log"
+	WHILE 1
+		OPEN LOCK (cTransLogCH,ERR=*NEXT)cLogFile$; PURGE (cTransLogCH); BREAK
+		IF ERR<>12 {
+			CLOSE (cTransLogCH)
+			OPEN LOCK (cTransLogCH,ERR=*NEXT)cLogFile$; PURGE (cTransLogCH); BREAK
+ 		}
+		SERIAL cLogFile$,ERR=*NEXT
+		CLOSE (cTransLogCH)
+		OPEN LOCK (cTransLogCH,ERR=*NEXT)cLogFile$; BREAK
+		cTransLogCH	= 0
+		BREAK
+	WEND 
+RETURN retSUCCESS
+!
+
+POST_LOAD:
+	
+	_OBJ'PostLoad(FROM "CI_531APSCreditCardConversionTime_BASE")
+	
+	IF cAPSActivated {
+		IF cTransLogCH {
+			CLOSE (cTransLogCH,ERR=*NEXT)
+			cTransLogCH=0
+			SHOW CONTROL BT_SHOWLOG.CTL
+			Message$  = "The merchant ID and merchant password entered correspond "
+			Message$+ = "to a valid credit card processing account. "
+			Message$+ = "These values will be copied to the Merchant ID and Merchant Password fields in "
+			Message$+ = "Payment Type Maintenance for non-APS credit card payment types. "
+			Message$+ = "In-process transactions might be invalid if they are associated with non-APS credit cards."
+			Message$+ = "To veiw all transactions in-process press Show Log Button."
+			Message$+ = "Do you want to change all non-APS credit card payment types to use a processing account?"
+		} ELSE {
+			HIDE CONTROL BT_SHOWLOG.CTL
+		}
+	}
+		
+RETURN retSUCCESS
+!
+
+BT_SHOW_LOG:
+		SYSTEM_HELP cLogFile$
+RETURN retSUCCESS
+!

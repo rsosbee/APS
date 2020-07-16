@@ -1,0 +1,307 @@
+! $Id$: AR_531APSConvertToAPS_UI.pvc $
+! Copyright 2016-2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! ASI - PLW 2016-09-30
+!
+
+DEF CLASS "AR_531APSConvertFromCSV_UI" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "SY_CommonUI"
+	LIKE "AR_531APSConvertFromCSV"
+	LIKE "SY_Password"
+
+	! Public Properties
+
+	! Local Objects
+
+	! Local/Private Properties
+	LOCAL cUnencryptedAPSMerchantID$
+	LOCAL cEncryptedAPSMerchantID$
+	LOCAL cUnencryptedAPSMerchantPassword$
+	LOCAL cEncryptedAPSMerchantPassword$
+	LOCAL cConfirmationAnswer
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	! Buttons
+	FUNCTION LOCAL BT_Cancel()												BT_CANCEL
+	FUNCTION LOCAL BT_Proceed()												BT_PROCEED
+	FUNCTION LOCAL BT_No()													BT_NO
+	FUNCTION LOCAL BT_Yes()													BT_YES
+	FUNCTION LOCAL BT_OK2()													BT_OK2
+	FUNCTION LOCAL BT_IMPPATH()												BT_IMPPATH
+	FUNCTION LOCAL BT_EXPPATH()												BT_EXPPATH
+
+	! Multilines
+	FUNCTION LOCAL ChangeML_APSPassword()									CHANGE_ML_APS_PASSWORD
+	FUNCTION LOCAL ChangeD531APSMerchantID()								CHANGE_APS_MERCHANT_ID
+	FUNCTION LOCAL ChangeMerchantPassword()									CHANGE_MERCHANT_PASSWORD
+	FUNCTION LOCAL ChangeMerchantID()										CHANGE_MERCHANT_ID
+	FUNCTION LOCAL ChangeML_IMPORT_PATH()									CHANGE_ML_IMPORT_PATH
+	FUNCTION LOCAL ChangeML_EXPORT_PATH()									CHANGE_ML_EXPORT_PATH
+
+	! Checkboxes
+
+	! Dates
+
+	FUNCTION LOCAL PostLoad()												POST_LOAD
+
+	FUNCTION LOCAL CheckToDisableBT_Proceed()								CHECK_TO_DISABLE_BT_PROCEED
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+
+END DEF
+!
+
+ON_CREATE:
+
+ENTER coSession
+
+	SCREEN_LIB$ = "AR_531APSConvertFromCSV.m4l"
+	SCREEN_ID$  = "dMain"
+
+	cDB_Refresh_Clear$ = "R"
+
+	coSession'GetParameter("SYS", "CreditCardEnable$", CreditCardEnable$)
+
+RETURN
+!
+
+ON_DELETE:
+
+RETURN
+!
+
+BT_CANCEL:
+
+	CMD_STR$ = "E"
+
+RETURN
+!
+
+BT_PROCEED:
+	IF NOT(_obj'UpdatesURLs()) {
+		coSession'UI'MessageBox$(LastErrorNum$,LastErrorMsg$)
+		RETURN retFAILURE
+	}
+	IF NOT(_obj'ValidateCredentials(cEncryptedAPSMerchantID$,cEncryptedAPSMerchantPassword$,cEncryptedVaultID$,cEncryptedMerchantKey$) = retSUCCESS) {
+		coSession'UI'MessageBox$(LastErrorNum$,LastErrorMsg$)
+		RETURN retFAILURE
+	}
+
+	SCREEN_ID$ = "dConfirm"
+	retVal = _OBJ'PROCESS(answer$)
+
+	IF answer$ = isYES$ {
+		coSession'UI'ProgressBar("init", "Copying SPS Card Information to APS", "Converting credit card data", 0)
+		coSession'WriteLog$(logACTIVITY$,"A/R Convert to APS Utility was run.")
+
+		IF NOT(coSession'SQL) {
+			_OBJ'RemoveObsoleteWrkTables()
+		}
+
+		retVal = _obj'ConvertCardsToAPS()
+
+		coSession'UI'ProgressBar("close")
+	}
+
+	CMD_STR$ = "E"
+
+RETURN retVal
+!
+
+BT_NO:
+
+	ARG_1$   = isNO$
+	CMD_STR$ = "E"
+
+RETURN retSUCCESS
+!
+
+BT_YES:
+
+	ARG_1$   = isYES$
+	CMD_STR$ = "E"
+
+RETURN retSUCCESS
+!
+
+CHECK_TO_DISABLE_BT_PROCEED:
+
+	IF NUL(ML_APSPassword$) OR NUL(D531APSMerchantID$) {
+		DISABLE CONTROL BT_Proceed.ctl
+	} ELSE {
+		ENABLE CONTROL BT_Proceed.ctl
+	}
+
+RETURN retSUCCESS
+!
+
+POST_LOAD:
+
+	IF UCS(SCREEN_ID$) = "DCONFIRM" {
+		! Confirmation dialog messages based on selections made
+
+		IF ClearExpiredCreditCards$ = isYES$ {
+			coSession'FormatDate(ML_ExpireDate$, cFormattedExpireDate$)
+			ML_Line1$ = "Clear expired credit cards dated on or before " + cFormattedExpireDate$ + "."
+		} ELSE {
+			ML_Line1$ = "Clear expired credit cards not selected."
+		}
+
+		ML_Line2$ = "SPS Cards will be copied to the APS vault but APS will not be enabled."
+
+			ML_Line3$   = ""
+	}
+
+	IF UCS(SCREEN_ID$) = "DMAIN" {
+		DB_REFRESH_CLEAR$ = cDB_Refresh_Clear$
+		refresh_flg = isTrue
+	}
+
+	! Append Company and Date to panel caption
+	retVal = _OBJ'AppendTitleBar()
+
+RETURN retVal
+!
+
+CHANGE_APS_MERCHANT_ID:
+	retVal = retSUCCESS
+	cUnencryptedAPSMerchantID$	= D531APSMerchantID$
+	_obj'EncryptPassword(cUnencryptedAPSMerchantID$,cEncryptedAPSMerchantID$)
+ 	_obj'CheckToDisableBT_Proceed()
+RETURN retVal
+!
+
+CHANGE_ML_APS_PASSWORD:
+	retVal = retSUCCESS
+	cUnencryptedAPSMerchantPassword$=ML_APSPassword$
+	_obj'EncryptPassword(cUnencryptedAPSMerchantPassword$,cEncryptedAPSMerchantPassword$)
+	_obj'CheckToDisableBT_Proceed()
+RETURN retVal
+!
+
+CHANGE_MERCHANT_ID:
+	retVal = retSUCCESS
+	IF NOT(NUL(MerchantID$)) {
+		cUnencryptedVaultID$	= MerchantID$
+		_obj'EncryptPassword(cUnencryptedVaultID$,cEncryptedVaultID$)
+		ENABLE CONTROL MerchantPassword.ctl
+	} ELSE {
+		cUnencryptedVaultID$		= $$
+		cEncryptedVaultID$			= $$
+		cUnencryptedMerchantKey$	= $$
+		cEncryptedMerchantKey$		= $$
+		refresh_flg					= isTrue
+		DISABLE CONTROL MerchantPassword.ctl
+	}
+RETURN retVal
+!
+
+CHANGE_MERCHANT_PASSWORD:
+	retVal = retSUCCESS
+	IF NOT(NUL(MerchantPassword$)) {
+		cUnencryptedMerchantKey$=MerchantPassword$
+		_obj'EncryptPassword(cUnencryptedMerchantKey$,cEncryptedMerchantKey$)
+	} ELSE {
+		cUnencryptedMerchantKey$	= $$
+		cEncryptedMerchantKey$		= $$
+	}
+
+RETURN retVal
+!
+
+BT_OK2:
+
+	cConfirmationAnswer				= (stp(UCS(ML_CONFIRM2$),3)="YES")
+	CMD_STR$ = "E"
+
+RETURN retSUCCESS
+!
+
+BT_IMPPATH:
+
+	SAVE_PATH$=ML_IMPORT_PATH$
+ 	IF NOT(NUL(ML_IMPORT_PATH$)) {
+ 		dir$=ML_IMPORT_PATH$
+ 		IF POS("\"=dir$) {
+ 			dir$=dir$(1,POS("\"=dir$,-1))
+ 		}
+	} ELSE {
+		dir$=coSession'PathBase$
+	}
+
+	rtn=0
+ 	fileType$ = "Comma Delimited|*.CSV,"
+ 	GET_FILE_BOX READ ML_IMPORT_PATH$,dir$,"Sage Payments Input CSV File",fileType$,""
+	retVal = _obj'ChangeML_IMPORT_PATH()
+ 	IF NOT(retVal) {
+		ML_IMPORT_PATH$=SAVE_PATH$
+		NEXT_ID=ML_IMPORT_PATH.CTL
+  	}
+	REFRESH_FLG = isTRUE
+RETURN retVal
+!
+
+CHANGE_ML_IMPORT_PATH:
+	retVal=retFAILURE
+	tmpFH = HFN
+	OPEN(tmpFH,ERR=*NEXT)ML_IMPORT_PATH$; retVal = retSUCCESS
+	CLOSE(tmpFH)
+ 	IF NOT(retVal) {
+		ML_IMPORT_PATH$=cOldImportPath$
+		NEXT_ID=ML_IMPORT_PATH.CTL
+  	}
+
+RETURN retVal
+!
+
+BT_EXPPATH:
+
+	SAVE_PATH$=ML_EXPORT_PATH$
+
+ 	IF NOT(NUL(ML_EXPORT_PATH$)) {
+ 		dir$=ML_EXPORT_PATH$
+ 		IF POS("\"=dir$) {
+ 			dir$=dir$(1,POS("\"=dir$,-1))
+ 		}
+	} ELSE {
+		dir$=ML_IMPORT_PATH$(1,POS("\"=ML_IMPORT_PATH$,-1))
+	}
+	IF NUL(dir$) {
+		dir$=coSession'PathBase$
+	}
+
+	rtn=0
+ 	fileType$ = "Comma Delimited|*.CSV,"
+ 	fileName$ = $$
+ 	GET_FILE_BOX ML_EXPORT_PATH$,dir$,"Cross Reference Outpu CSV File",fileType$,""
+	retVal = _obj'ChangeML_EXPORT_PATH()
+ 	IF NOT(retVal) {
+		ML_EXPORT_PATH$=SAVE_PATH$
+		NEXT_ID=ML_EXPORT_PATH.CTL
+  	}
+	REFRESH_FLG = isTRUE
+RETURN retVal
+!
+
+CHANGE_ML_EXPORT_PATH:
+
+	retVal=retSUCCESS
+	tmpFH = HFN
+	OPEN(tmpFH,ERR=*NEXT)ML_EXPORT_PATH$; retVal = retFAILURE
+	CLOSE(tmpFH)
+	IF retVal { ! now test if we can create the file
+		retVal = retFAILURE
+		SERIAL ML_EXPORT_PATH$,ERR=*NEXT; retVal = retSUCCESS
+		ERASE ML_EXPORT_PATH$,ERR=*NEXT
+	}
+ 	IF NOT(retVal) {
+		ML_EXPORT_PATH$=cOldExportPath$
+		NEXT_ID=ML_EXPORT_PATH.CTL
+  	}
+
+RETURN retVal
+!

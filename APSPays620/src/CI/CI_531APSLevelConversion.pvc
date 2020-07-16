@@ -1,0 +1,103 @@
+! $Id$: CI_531APSLevelConversion.pvc
+! MAS 90/MAS 200 Wrapper for all CI level conversions & actual conversion for 5.1+ levels
+! Accounting Systems, Inc. 2013-2020 Bob Sosbee
+!
+DEF CLASS "CI_531APSLevelConversion" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "CI_LevelConversion"
+	LIKE "SY_Password"
+	LIKE "SY_531APSTableCreation"
+
+	! Public Properties
+
+	! Local/Private Properties
+
+
+	! Public Functions (Methods)
+	FUNCTION CONVERT(APScurrLevel, APStargLevel)											CONVERT
+	FUNCTION CONVERT(APScurrLevel, APStargLevel, APScurrSub, APStargSub)					CONVERT
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL UpdateAPSFields(ConvertFromLevel)										UPDATE_APS_FIELDS
+
+	! Local/Private Functions Local Perform
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	
+	LOCAL cProgressBarStarted
+	LOCAL coSession
+
+END DEF
+!
+
+ON_CREATE:
+
+ENTER coSession
+	PRECISION 6 FOR OBJECT
+RETURN
+!
+
+ON_DELETE:
+
+RETURN
+!
+
+UPDATE_APS_FIELDS:
+
+ENTER (ConvertFromLevel)
+
+	retVal					= retSUCCESS
+	tmpEnhModuleFH			= coSession'OpenTable("SY_EnhancementModule",		pthSYSTEM$)
+	tmpEnhActivationFH		= coSession'OpenTable("CI_EnhancementActivation",	pthCOMPANY$)
+
+	APSModuleCode$			= "C/I"
+	APSDeveloperCode$		= "531"
+	APSEnhancementCode$		= "ASIAPS"
+	compare.DataLevel		= 0
+	compare.Sublevel		= 0
+
+	tmpRetVal 				= _obj'UpdateC2PFiles(cCompanyCode$,"CI")	! DB# 1324 - 2020-03-27 RCS
+
+	READ(tmpEnhActivationFH, KEY=APSModuleCode$:APSDeveloperCode$:APSEnhancementCode$, REC=compare$, DOM=*NEXT)
+
+	IF compare.DataLevel <= 6.2 {
+
+		IF retVal {	! # 232007 - 2018-03-29 - RCS - moved down the stack. removed setting the enh.sublevel to 0.
+			! Update the enhancement activation record for the company. This step is required.
+			enh.ModuleCode$			= APSModuleCode$
+			enh.DeveloperCode$		= APSDeveloperCode$
+			enh.EnhancementCode$	= APSEnhancementCode$
+			READ(tmpEnhModuleFH, REC=enh$, KEY=APSModuleCode$:APSDeveloperCode$:APSEnhancementCode$:APSModuleCode$,dom=*next)
+			enh.ModuleCode$			= enh.EnhancedModuleCode$
+			enh.DataLevel			= enh.ConversionLevel
+			WRITE(tmpEnhActivationFH, REC=enh$)
+		}
+
+	}
+
+	CLOSE (tmpEnhModuleFH,ERR=*NEXT)
+	CLOSE (tmpEnhActivationFH,ERR=*NEXT)
+
+RETURN retVal
+!
+
+CONVERT:
+
+ENTER APScurrLevel, APStargLevel, APScurrSub, APStargSub, ERR=*NEXT
+
+	APScurrLevel_save		= APScurrLevel
+
+	IF coSession'SQL { cIsPvxToRDBConversion = NOT(_OBJ'IsSQLCompany(cCode$)) }
+	! ---- Check here for cProgressBarStarted
+	! run the conversion
+	retVal					= _OBJ'CONVERT(FROM "CI_531APSLevelConversion_BASE", APScurrLevel, APStargLevel, APScurrSub, APStargSub)
+
+	IF retVal {
+		IF cIsPvxtoRDBConversion { coSession'SetSQLFlag(isFALSE) }
+		retVal				= _OBJ'UpdateAPSFields(APScurrLevel_save)
+		IF cIsPvxtoRDBConversion { coSession'SetSQLFlag(isTRUE) }
+	}
+
+RETURN retVal
+!

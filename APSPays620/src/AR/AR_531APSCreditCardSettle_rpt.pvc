@@ -1,0 +1,1022 @@
+! $Id: AR_531APSCreditCardSettle_rpt.pvc $
+! (c)2014-2018 Accounting Systems, Inc.  All Rights Reserved.
+! (c)2020 American Payment Systems, Inc. All Rights Reserved.
+!
+DEF CLASS "AR_531APSCreditCardSettle_rpt" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "AR_Report"
+	LIKE "SY_Password"
+	LIKE "SY_File"				! for xml processing
+
+	! Public Properties
+	PROPERTY ReportCaption$		= "APSPays Credit Card and ACH Settlement Report"	SET ERR
+	PROPERTY CreditCardEnable$														SET ERR
+
+	! Local/Private Properties
+	LOCAL cReportID$
+	LOCAL cReportFile$			= "AR_531APSCreditCardSettlement.RPT"
+	LOCAL cWorkFile$			= "AR_CreditCardSettlementWrk"
+	LOCAL cWorkFileFH
+	LOCAL cReportOptions$
+	LOCAL coCreditCard			! used for gateway manipulation
+	LOCAL cAPSQuery$			! gateway query URL
+	LOCAL cTransMemFH
+	LOCAL cTransMemIOL$
+	LOCAL progressCounter
+	LOCAL CR$					= $0D$		
+	LOCAL CrLf$					= $0D0A$
+
+	! RCS #226904 2017-07-21
+	LOCAL coHTTP				! RCS 2017-07-17 use SECUREHTTP DLL.
+	LOCAL coNET					! RCS 2017-07-17 use .NET assembly
+	LOCAL oXML					! RCS 2017-07-21 using MSXML.DOMDOCUMENT ! PLW 2018-03-14 changed to use "*XML"
+	LOCAL coSPM					! RCS 2018-01-11 use .NET assembly
+	LOCAL tlsChk				! RCS 2018-01-11 pass status flag for TLS status
+	local cProgressCount = 50	! RCS 2018-01-11 track cycles adn reset the .NET at 51 cycles.
+
+	LOCAL cXMLFileCount
+	LOCAL compCode$
+
+	! ** The Virtual Terminal ID selected for the report.
+	LOCAL cMerchantID$
+	LOCAL cMerchantKey$
+	LOCAL cPrintDetail$
+	LOCAL cDateRange$
+	LOCAL cBatchNumberLen
+	LOCAL cCompanyCodeLen
+	LOCAL cCreditCardTransTimeout
+
+	LOCAL cTransDateAll$
+	LOCAL cTransDateStart$
+	LOCAL cTransDateEnd$
+
+	! Public Functions (Methods)
+	FUNCTION GetSourceTables$(table$)									GET_SOURCE_TABLES
+	FUNCTION ParseSOAP(SOAPXML$,tmpIOL$,tmpREC$,Status$)				PARSE_XML
+	FUNCTION SetTransDateAll(value$)									SET_TRANS_DATE_ALL
+	FUNCTION SetTransDateStart(value$)									SET_TRANS_DATE_START
+	FUNCTION SetTransDateEnd(value$)									SET_TRANS_DATE_END
+	! ** Reset the .NET communications objects to insure no memory issues.
+	FUNCTION ResetDotNet()												RESET_DOT_NET
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL AddTagToIOLIST(IOLIST$,cTag$)						ADD_TAG_TO_IOLIST
+	FUNCTION LOCAL PopulateWorkTable()									POPULATE_WORKTABLE
+	FUNCTION LOCAL ParseIt(XMLBody$,fldPrefix$,fldIOLIST$,fldRecord$)	PARSE_IT
+	FUNCTION LOCAL SetFormulas()										SET_FORMULAS
+	FUNCTION LOCAL PERFORM GetReportOptions()							GET_REPORT_OPTIONS
+	FUNCTION LOCAL PERFORM GetAPSTransactionDetail()					GET_APS_TRANSACTION_DETAIL
+	FUNCTION LOCAL GetNextTag(XML$,cTag$,DATA$)							GET_NEXT_TAG
+	FUNCTION LOCAL PERFORM ProcessTransactionBlock()					PROCESS_TRANSACTION_BLOCK
+	FUNCTION LOCAL PERFORM RetrieveOneDay(dt$)							RETRIEVE_ONE_DAY
+	FUNCTION LOCAL PERFORM TestAction()									TEST_ACTION
+	FUNCTION LOCAL PERFORM XmlCleanup()									XML_CLEANUP
+
+	FUNCTION LOCAL BuildTransactionTable(startDt$,endDt$)				BUILD_TRANSACTION_TABLE
+	FUNCTION LOCAL FindQueryURL()										FIND_QUERY_URL
+	FUNCTION LOCAL GetDateTime(zulu$,newDate$,newTime$)					GET_DATE_TIME
+	FUNCTION LOCAL FindCardTypeByBIN$(BIN$)								FIND_CARD_TYPE_BY_BIN
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL cOptionsString$		! AR_Report
+	LOCAL coSession
+
+END DEF
+!
+
+ON_CREATE:
+
+	tmp							= coSession'GetParameter("SYS","CreditCardEnable$",CreditCardEnable$)
+
+	IF CreditCardEnable$		= isNO$ {
+		coSession'LastErrorNum$	= "SY_OptionNotAvail"
+		coSession'LastErrorMsg$ =  MSG(coSession'LastErrorNum$)
+		EXIT errOBJECT
+	}
+
+	compCode$					= coSession'CompanyCode$
+	tmp							= coSession'GetParameter("SYS","CreditCardTransTimeout",cCreditCardTransTimeout)
+	cCreditCardTransTimeout		= MAX(cCreditCardTransTimeout, 90)
+
+	coCreditCard				= NEW("AR_CreditCard",coSession)
+
+	! RCS #226904 2017-07-21
+	! add .NET communications objects
+	!
+	_obj'ResetDotNet() ! activate the .NET assembly
+	
+	cTmp$						= "wrk.TransNumber$,wrk.Ticket$,wrk.Auth$,wrk.CardNumber$,wrk.Issuer$,"
+	cTmp$						+="wrk.Action,wrk.Amount,wrk.Date$,wrk.Time$,wrk.SettlementNumber$,"
+	cTmp$						+="wrk.CompanyCode$,wrk.TransactionType$,wrk.BankAccount$,wrk.BankAccountType$"
+	cTransMemIOL$				= CPL("IOLIST "+cTmp$)
+	cTmp$						= $$
+
+RETURN
+!
+
+ON_DELETE:
+
+	DROP OBJECT coCreditCard; coCreditCard=0
+	IF AR_PayTypeFH { 
+		CLOSE (AR_PayTypeFH)
+		AR_PayTypeFH			= 0 
+	}
+	IF SY_CcpXrefFH { 
+		CLOSE (SY_CcpXrefFH) 
+		SY_CcpXrefFH			= 0 
+	}
+
+	! RCS #226904 2017-07-21
+	IF coSPM {
+		DELETE OBJECT coSPM, ERR=*NEXT ! #230282 - 2017-11-13 RCS
+		coSPM					= 0
+	}
+	IF coHTTP {
+		DELETE OBJECT coHTTP, ERR=*NEXT  ! PLW 2015-09-22 Ticket #149035
+		coHTTP					= 0
+	}
+	IF coNET {
+		DELETE OBJECT coNET, ERR=*NEXT ! PLW 2017-06-13
+		coNET					= 0
+	}
+
+	if oXML {
+		delete object oXML, ERR=*NEXT ! RCS 2017-07-21
+		oXML					= 0
+	}
+
+RETURN
+!
+
+ADD_TAG_TO_IOLIST:
+	ENTER IOLIST$,cTag$
+	counter						= 0
+	TagRoot$					= cTag$(1,LEN(cTag$)-1)
+	WHILE POS(UCS(cTag$)			= IOLIST$)
+		counter					++
+		cTag$					= TagRoot$ + STR(counter)+"$"
+	WEND
+	IOLIST$						+= ","+cTag$
+RETURN retSUCCESS
+!
+
+BUILD_TRANSACTION_TABLE:
+
+ENTER startDate$,endDate$
+
+	cTransMemFH					= HFN
+	OPEN(cTransMemFH)"*MEMORY*"
+	retVal						= _obj'FindQueryURL()
+	IF retVAL {
+		queryBase$				= cAPSQuery$+"?username="+cMerchantID$+"&password="+cMerchantKey$+"&condition=complete"
+	}
+	IF NUL(endDate$) {
+		endDate$				= TBL(startDate$>DTE(0:"%Yl%Mz%Dz"),DTE(0:"%Yl%Mz%Dz"),startDate$)
+	}
+	endYear						= NUM(MID(endDate$,1,4))
+	endMonth					= NUM(MID(endDate$,5,2))
+	endDay						= NUM(MID(endDate$,7,2))
+	IF NUL(startDate$) {
+		startYear				= endYear-1
+		startMonth				= endMonth
+		startDay				= endDay
+		IF startMonth = 2 {
+			startDay			= MIN(startDay,28)	! if it's 29, make it 28
+		}
+	} ELSE {
+		startYear				= NUM(MID(startDate$,1,4))
+		startMonth				= NUM(MID(startDate$,5,2))
+		startDay				= NUM(MID(startDate$,7,2))
+	}
+	startJul					= JUL(startYear,startMonth,startDay)
+	endJul						= JUL(endYear,endMonth,endDay)
+	IF retVal {
+		FOR singleDate = startJul to endJul
+			singleDate$			= DTE(singleDate:"%Yl%Mz%Dz")
+			retVal				= _obj'RetrieveOneDay(singleDate$)
+			IF NOT(retVal) {
+				BREAK
+			}
+		NEXT singleDate
+	}
+
+RETURN retVal
+!
+
+FIND_CARD_TYPE_BY_BIN:
+	ENTER tmpBIN$
+
+	type$						= "N/A"
+	SWITCH MID(tmpBIN$,1,1)
+		CASE "4"
+			type$				= "VISA"
+		BREAK
+		CASE "5","2"
+			type$				= "MC"
+		BREAK
+		CASE "3"
+			type$				= "Amex"
+		BREAK
+		CASE "6"
+			type$				= "Disc"
+		BREAK
+		DEFAULT
+	END SWITCH
+
+RETURN type$
+!
+
+FIND_QUERY_URL:
+	retVal						= retSUCCESS
+	urlMaintFH=coSession'OpenTable("SY_URLMaintenance","SYSTEM",ERR=*NEXT)
+	IF urlMaintFH {
+		APSURL.URL$				= $$
+		READ (urlMaintFH,REC=APSURL$,KEY="APS QUERY",DOM=*NEXT)
+		cAPSQuery$				= APSURL.URL$
+		CLOSE (urlMaintFH,ERR=*NEXT)
+ 	}
+	IF NOT(coCreditCard'ValidURL(cAPSQuery$)) {
+		retVal					= retFAILURE
+		LastErrorNum$			= "CI_Missing"
+		LastErrorMsg$			= MSG("CI_Missing","the APS Secure Credit Card Gateway Query URL")
+		cAPSQuery$				= $$
+ 	}
+
+RETURN retVal
+!
+
+GET_APS_TRANSACTION_DETAIL:
+
+	SELECT IOL=cTransMemIOL$ FROM cTransMemFH BEGIN $$ END $FE$
+		! Read SY_CreditCardProcessXref
+		PaymentType$			= $$
+		cTempCompany$			= wrk.CompanyCode$
+		READ DATA FROM $$ TO IOL=syCcpXrefDst$
+
+		SELECT * FROM SY_CcpXrefFH, KNO="kTRANSID" BEGIN wrk.TransNumber$:compCode$ END wrk.TransNumber$:compCode$:$FE$
+
+			IF NOT(_OBJ'PostTableRead("SY_CreditCardProcessXref:001")) { CONTINUE }
+			READ DATA FROM REC(syCcpXrefSrc$) TO IOL=syCcpXrefDst$
+			_OBJ'PreNextRecord("SY_CreditCardProcessXref:001")
+
+		NEXT RECORD
+
+		if nul(wrk.CompanyCode$) { wrk.CompanyCode$ = cTempCompany$ } ! pass around the xref file if the data was in the settlement tran.
+
+		sequenceNo$				= STR(++sequenceNo:"00000000000000")
+		wrk.SortField$			= PAD(STR(wrk.BatchNumber), cBatchNumberLen, 0, "0") \
+								+ PAD(wrk.CompanyCode$, cCompanyCodeLen) \
+								+ sequenceNo$
+
+		! Read AR_PaymentType
+		IF (currentPayType$ 	<> wrk.PaymentType$) {
+			currentPayType$		= wrk.PaymentType$
+			READ DATA FROM $$ TO IOL=arPayTypeSrc$
+			FIND (AR_PayTypeFH, KEY=STP(wrk.PaymentType$), DOM=*NEXT)
+			_OBJ'PostTableRead("AR_PaymentType:003")
+
+			READ DATA FROM REC(arPayTypeSrc$) TO IOL=arPayTypeDst$
+		}
+
+		wrk.ProcessingFee		= wrk.Amount * (wrk.DiscountPercentage/100) + wrk.PerTransactionFee
+
+		! ACH logic RCS 2018-05-31
+		if wrk.TransactionType$	= "ck" {
+			wrk.CardNumber$		= "*" + MID(wrk.BankAccount$, -4)
+			wrk.Auth$			= "APPROVED"
+			wrk.Issuer$			= isNULL$
+		} else {
+			wrk.BankAccountType$	= isNULL$
+			wrk.CardNumber$		= SUB(wrk.CardNumber$, "x", ".") ! to match Sage.
+			wrk.CardNumber$		= "." + mid(wrk.CardNumber$,2)
+		}
+				
+				
+		IF _OBJ'PreWorkTableWrite() {
+			WRITE (cWorkFileFH)
+			noDataToPrint		= isFALSE
+		}
+		IF coSession'UI AND progressCounter++>20 {
+			progressBarOption$	= "update"
+			progressBarTitle$	= "Building work file"
+			progressBarMessage$	= _OBJ'ReportCaption$
+			coSession'UI'ProgressBar(progressBarOption$, progressBarTitle$, progressBarMessage$, 0)
+			progressCounter		= 0
+		}
+		wrk.ProcessingFee 		= 0
+		wrk.Amount				= 0
+		wrk.PerTransactionFee	= 0
+	NEXT RECORD
+
+	CLOSE(cTransMemFH)
+	cTransMemFH					= 0
+RETURN
+!
+
+GET_DATE_TIME:
+	ENTER zulu$,newDate$,newTime$
+
+	newDate$					= zulu$(1,8)
+	newYear						= NUM(newDate$(1,4))
+	newMonth					= NUM(newDate$(5,2))
+	newDay						= NUM(newDate$(7,2))
+	newJul						= JUL(newYear,newMonth,newDay)
+	tmpTime$					= zulu$(9)
+	newHour						= NUM(tmpTime$(1,2))
+	newMin						= NUM(tmpTime$(3,2))
+	newSec						= NUM(tmpTime$(5,2))
+
+	! calculate current time
+	newSec						-=TCB(44) ! adjust for Zulu
+	minAdj						= 0
+	hourAdj						= 0
+	dayAdj						= 0
+	WHILE newSec < 0
+		newSec					+=60
+		minAdj					++
+	WEND
+	newMin						-=minAdj
+	WHILE newMin  <0
+		newMin					+= 60
+		hourAdj					++
+	WEND
+	newHour						-= hourAdj
+	WHILE newHour < 0
+		newHour					+= 24
+		dayAdj					++
+	WEND
+	newJul						-= dayAdj
+	newDate$					= DTE(newJul:"%Yl%Mz%Dz")
+	newTime$					= STR(newHour:"00")+":"+STR(newMin:"00")
+RETURN
+!
+
+GET_NEXT_TAG:
+ENTER XML$,cTag$,DATA$
+	cTag$						= isNULL$
+	%cTag$						= isNULL$
+	DATA$						= isNULL$
+	StartTag					= POS("<"=XML$); EndTag=POS(">"=XML$)
+	IF NOT(StartTag) OR NOT(EndTag) OR EndTag<StartTag {
+		XML$					= isNULL$ ! PLW 2015-06-02 if we have not < or > we cannot process this XML any more
+		RETURN 0
+	}
+	cTag$						= UCS(XML$(StartTag,EndTag-StartTag))+" "
+	XML$						= XML$(EndTag+1)
+	cTag$						= cTag$(2)
+	cTag$						= cTag$(1,POS(" "=cTag$)-1)
+	endcTag$						= "</"+cTag$
+	XML$						= STP(XML$,2)
+	endTagPos					= POS(endcTag$+">"=UCS(XML$))
+	IF NOT(endTagPos) {
+		endTagPos				= POS(endcTag$+" "=UCS(XML$))
+	}
+	IF NOT(endTagPos) {
+		endTagPos				= POS(endcTag$+","=UCS(XML$))
+	}
+	IF NOT(endTagPos) {
+		endTagPos				= POS(endcTag$+":"=UCS(XML$))
+	}
+	IF endTagPos {
+		DATA$					= XML$(1,endTagPos-1)
+		XML$					= STP(XML$(endTagPos),2)
+	}
+
+	IF POS("/"=cTag$)=1 { 
+		cTag$					= isNULL$ 
+	} ! we have an ending tag so no data to return
+	cTag$						= SUB(cTag$,"/",isNULL$)
+	tmpColon					= POS(":"=cTag$)
+	IF tmpColon { 
+		cTag$					= cTag$(tmpColon+1) 
+	}
+	IF NOT(NUL(cTag$)) { 
+		cTag$					= STP(cTag$,2)+"$" 	! Create string variable
+	}
+	%cTag$						= cTag$
+
+RETURN retSUCCESS
+!
+
+GET_REPORT_OPTIONS:
+
+	DIM cReportOptions$[3]
+
+	cReportOptions$[1]			= "Merchant ID: " + cMerchantID$
+	cReportOptions$[2]			= "Print Transaction Detail: " + TBL(cPrintDetail$=isYES$,"No","Yes")
+	cReportOptions$[3]			= "Settlement Date: " + cDateRange$
+
+RETURN
+!
+
+GET_SOURCE_TABLES:
+
+	ENTER table$, ERR=*NEXT		! for Reports table$ will always be the cWorkFile$
+								! just return source table list
+
+RETURN "AR_PaymentType"+SEP+"SY_CreditCardProcessXref"+SEP
+!
+
+Parse_It: ! converts XMLBody$ to records
+ENTER XMLBody$,fldPrefix$,fldIOLIST$,fldRecord$
+	if LEN(fldIOLIST$) AND LEN(fldRecord$) {
+		READ DATA FROM fldRecord$ to IOL = fldIOLIST$
+		tmpIOLtxt$		= LST(fldIOLIST$)
+		tmpIOLtxt$		= tmpIOLtxt$(8)
+	}
+	WHILE LEN(XMLBody$)
+		IF _obj'GetNextTag(XMLBody$,cTag$,Data$) {
+			cTag$		= %cTag$		! get the value to pass!
+			IF MID(UCS(cTag$),1,1)<"A" OR MID(UCS(cTag$),1,1)>"Z" {
+				cTag$	= isNULL$
+			}
+			IF NOT(NUL(cTag$)) {
+				IF POS("<"=Data$) AND POS(">"=Data$) AND POS("/"=Data$) {
+					fldPrefix$		= fldPrefix$+cTag$(1,LEN(cTag$)-1)+"."
+					prefixCtr		= 0
+					fldPrefixRoot$	= fldPrefix$(1,LEN(fldPrefix$)-1)
+					WHILE POS(UCS(fldPrefix$)=UCS(tmpIOLtxt$))
+						prefixCtr	++
+						fldPrefix$	= fldPrefixRoot$+STR(prefixCtr)+"."
+					WEND
+					if MID(tmpIOLTxt$,1,1)="," {
+						tmpIOLTxt$	= tmpIOLTxt$(2)
+					}
+					IF LEN(tmpIOLTxt$) {
+						fldIOLIST$	= CPL("IOLIST "+tmpIOLTxt$)
+						fldRecord$	= REC(fldIOLIST$)
+					}
+					_OBJ'ParseIt(Data$,fldPrefix$,fldIOLIST$,fldRecord$)
+					fldPrefix$=fldPrefix$(1,POS("."=fldPrefix$,-1,2))
+					IF LEN(fldIOLIST$) {
+						READ DATA FROM fldRecord$ to IOL=fldIOLIST$
+						tmpIOLtxt$	= LST(fldIOLIST$)
+						tmpIOLtxt$	= tmpIOLtxt$(8)
+					}
+				} ELSE {
+					cTag$			= fldPrefix$+cTag$
+					cTag$			= SUB(cTag$,"-","_") ! PLW 2018-08-21 Ticket #236076 can't handle dashes.
+					_OBJ'AddTagToIOLIST(tmpIOLtxt$,cTag$)
+					DATA$			= SUB(DATA$,"&#xD;&#xD;",$0A$)
+					DATA$			= SUB(DATA$,"&#xD;",$0A$)
+					VIA cTag$ 		= DATA$
+				}
+			}
+		}
+	WEND
+	IF LEN(tmpIOLTxt$) {
+		IF tmpIOLTxt$(1,1) = "," { 
+			tmpIOLtxt$				= tmpIOLtxt$(2) 
+		}
+		fldIOLIST$					= CPL("IOLIST "+tmpIOLTxt$)
+		fldRecord$					= REC(fldIOLIST$)
+	}
+RETURN retSUCCESS
+!
+
+PARSE_XML:
+	ENTER response$,tmpIOL$,tmpREC$,status$
+		retVal			= retSUCCESS
+		statusCode$		= isNULL$
+		tmpIOL$			= CPL("IOLIST errorMsg$,response$")
+		tmpRec$			= isNULL$
+		tmpIOLtxt$		= isNULL$
+		BodyStart		= POS($0D0A0D0A$=response$)+4
+		response$		= response$(MAX(BodyStart,1)) ! PLW 2018-08-21 Ticket #237076 Avoid error 47 with MAX()
+		IF POS(">" = response$)<POS("<" = response$) AND POS(">" = response$)>0 {
+			response$	= response$(POS(">"=response$)+1) ! remove the remainder of the SOAP Body begin tag
+		}
+		XMLBody$		= response$
+		XMLBody$		= SUB(XMLBody$,$0A$,$$)
+		XMLBody$		= SUB(XMLBody$,$0D$,$$)
+
+		fldPrefix$		= isNULL$
+		fldIOLIST$		= isNULL$
+		fldRecord$		= isNULL$
+		_obj'ParseIt(XMLBody$,fldPrefix$,fldIOLIST$,fldRecord$)
+		IF LEN(fldIOLIST$) {
+			read data from fldRecord$ to IOL=fldIOLIST$
+			tmpIOLtxt$	= LST(fldIOLIST$)
+			tmpIOLTxt$	= tmpIOLTxt$(8)
+			tmpIOL$		= fldIOLIST$
+			tmpREC$		= REC(tmpIOL$)
+
+			IF POS("RESULT_TEXT" = UCS(tmpIOLTxt$)) { ! per the EasyPay design doc. 2018-09-28
+				LastErrorMsg$		= Response.Result_Text$ ! errorDescription$
+				Response.Status$	= "FAILED" ! PLW 2018-08-21 Ticket #236076
+			}
+			if NOT(NUL(Response.Status$)) { ! PLW 2018-08-21 Ticket #236076
+				status$		= Response.Status$ ! Status will return "FAILED" unless we get one back in SOAP response
+			}
+			retVal=1
+		} ELSE {
+			LastErrorMsg$	= "No fields found"
+			errorMsg$		= LastErrorMsg$
+			tmpREC$			= REC(tmpIOL$)
+			retVal			= 0
+		}
+
+RETURN retVal
+!
+
+POPULATE_WORKTABLE:
+
+	retVal        				= retSUCCESS
+	noDataToPrint 				= isTRUE
+
+	EXECUTE cOptionsString$		! extract options string for report
+
+	cMerchantID$    			= STP(VIRTUALTERMINALID$)
+
+	cPrintDetail$   			= PRINTTRANSDETAIL$
+	dateStart$      			= TRANS_DATE_START$
+	dateEnd$        			= TRANS_DATE_END$
+
+	cDateRange$  				= $$
+	APSDateStart$				= $$
+	APSDateEnd$  				= $$
+	IF NOT(NUL(dateStart$)) {
+		sqlDateStart$			= "#"+dateStart$(1,4)+"-"+dateStart$(5,2)+"-"+dateStart$(7,2)+"#"
+		APSDateStart$			= dateStart$+"000000"
+		cDateRange$				= "From " + coSession'FormatDate$(dateStart$) + " "
+	}
+	IF NOT(NUL(dateEnd$)) {
+		sqlDateEnd$				= "#"+dateEnd$(1,4)+"-"+dateEnd$(5,2)+"-"+dateEnd$(7,2)+"#"
+		APSDateEnd$				= dateEnd$+"235959"
+		cDateRange$				+= "To " + coSession'FormatDate$(dateEnd$)
+	}
+	IF NUL(cDateRange$) { 
+		cDateRange$				= "All Dates"
+	}
+
+	! Open files
+	AR_PayTypeFH				= _OBJ'OpenTable("AR_PaymentType","COMPANY")
+	SY_CcpXrefFH				= _OBJ'OpenTable("SY_CreditCardProcessXref","SYSTEM")
+
+	! Get lengths of values from AR_CreditCardSettlementWrk in the dictionary
+	cBatchNumberLen      		= coSession'FileObj'GetColumnInfo("AR_CreditCardSettlementWrk", "BatchNumber")'Length
+	cCompanyCodeLen      		= coSession'FileObj'GetColumnInfo("AR_CreditCardSettlementWrk", "CompanyCode")'Length
+
+	SELECT * FROM AR_PayTypeFH BEGIN $$		\
+		WHERE pos(PaymentMethod$ = "AR")	\
+		AND NOT(NUL(D531APSMerchantID$))	\
+		AND NOT(NUL(D531APSPassword$))
+
+		IF NOT(_OBJ'PostTableRead("AR_PaymentType:001")) { 
+			CONTINUE 
+		}
+
+		_OBJ'DecryptPassword((D531APSMerchantID$), VirtualTerminalID$)
+
+		IF cMerchantID$ = VirtualTerminalID$ {
+			_OBJ'DecryptPassword((D531APSPassword$), cMerchantKey$)
+			BREAK
+		}
+		_OBJ'PreNextRecord("AR_PaymentType:001")
+	NEXT RECORD
+
+	dstRecID$					= "wrk$"	! REC= clause for report worktable
+	cWorkfileFH					= _OBJ'CreateWorkTable(cWorkFile$, dstRecID$)
+
+	! Define record field mapping
+	syCcpXrefSrc$				= "CompanyCode$,JournalCode$,JournalNo$,PaymentType$,SalesOrderNo$"
+	syCcpXrefDst$				= "wrk.CompanyCode$,wrk.JournalCode$,wrk.JournalNo$,wrk.PaymentType$,wrk.SalesOrderNo$"
+
+	arPayTypeSrc$				= "DiscountPercentage,PerTransactionFee"
+	arPayTypeDst$				= "wrk.DiscountPercentage,wrk.PerTransactionFee"
+
+	! Get UDF fields or other customizations and compile into IOLIST
+	_OBJ'GetCustomizations(cWorkFile$, "SY_CreditCardProcessXref", _OBJ'_Class$, syCcpXrefSrc$, syCcpXrefDst$, $$, dstRecID$)
+	_OBJ'GetCustomizations(cWorkFile$, "AR_PaymentType", _OBJ'_Class$, arPayTypeSrc$, arPayTypeDst$, $$, dstRecID$)
+
+	compCode$					= coSession'CompanyCode$
+
+	dateStart$					= TBL(dateStart$=$$, dateStart$(5,2) + "/" + dateStart$(7,2) + "/" + dateStart$(1,4), "01/01/2000")
+	dateEnd$					= TBL(dateEnd$=$$, dateEnd$(5,2) + "/" + dateEnd$(7,2) + "/" + dateEnd$(1,4), "01/01/9999")
+
+	julianDateEnd				= JUL(NUM(dateEnd$(7,4)),NUM(dateEnd$(1,2)),NUM(dateEnd$(4,2)),ERR=*NEXT)
+	julianDateEnd				+= 1 ! add a day to end date
+	dateEnd$					= DTE(julianDateEnd:"%M/%D/%Y")
+
+	retVal						= _obj'BuildTransactionTable(APSdateStart$,APSdateEnd$)
+	IF retVal {
+		_OBJ'GetAPSTransactionDetail()
+	} ELSE {
+		retVal					= retFAILURE
+		noDataToPrint			= isFALSE
+	}
+
+	IF (PrintReportSettings$	= isYES$) {
+		_OBJ'GetReportOptions()
+		noDataToPrint			= isFALSE
+	}
+
+	IF noDataToPrint {
+		LastErrorNum$			= "CI_NoReportData"
+		LastErrorMsg$			= MSG(LastErrorNum$)
+		retVal					= retFAILURE
+	}
+
+RETURN retVal
+!
+
+RESET_DOT_NET: ! flush .NET
+
+	IF coSPM {
+		DELETE OBJECT coSPM, ERR=*NEXT
+		coSPM					= 0
+	}
+	if coHTTP {
+		z						= coHTTP'PvxFree()
+		DELETE OBJECT coHTTP, ERR=*NEXT
+	}
+	if coNET {
+		z						= coNET'PvxFree()
+ 		DELETE OBJECT coNET, ERR=*NEXT
+	}
+	if oXML {
+		delete object oXML, ERR=*NEXT
+		oXML					= 0
+	}
+
+	coSPM						= 0
+	coHTTP						= 0
+	coNET						= 0
+	oXML						= 0
+	tlsChk						= 0
+	retVal						= retFAILURE
+
+	DEF OBJECT coNET,"[.NET]"
+	ok							= isFALSE
+	coNET'Add("System",ERR=*NEXT); ok		= isTRUE
+	IF NOT(ok) {
+		coSession'LastErrorMsg$	= msg(-1)
+		RETURN retFAILURE
+	}
+	ok							= isFALSE
+	coNet'Add("System.Net",ERR=*NEXT); ok	= isTRUE
+	IF NOT(ok) {
+		coSession'LastErrorMsg$	= msg(-1)
+		RETURN retFAILURE
+	}
+
+	tmpNameSpace$				= "System,System.Net"
+	coNET'NameSpace$			= tmpNameSpace$
+
+	! Set TLS level #230282
+	tlsChk						= 0
+	coSPM						= EVN("coNet'Create("+quo+"ServicePointManager"+quo+")",0,err=*next)	! part of System.Net
+
+	if coSPM {
+		tlsChk					= isFALSE
+		coSPM'set_SecurityProtocol("Tls12",err=*next); tlsChk	= isTRUE
+
+		IF NOT(tlsChk) {
+			seterr TlsSkip
+			coSPM'SecurityProtocol	= 3072 ! direct cast
+			tlschk				= isTRUE
+			TlsSkip:
+			seterr 0
+		}
+	}
+
+	if NOT(tlsChk) {
+		retVal					= retWARNING
+	} ELSE {
+		retVal					= retSUCCESS
+	}
+
+	ok							= isFALSE
+	coHTTP						= coNET'Create("WebClient",ERR=*NEXT); ok = isTRUE
+	IF NOT(ok) {
+		coSession'LastErrorMsg$	= msg(-1)
+		RETURN retFAILURE
+	}
+
+!	def object oXML,"*XML" ! PLW 2018-03-14
+
+RETURN retVal
+!
+
+RETRIEVE_ONE_DAY:
+ENTER thisDate$
+	retVal						= retSUCCESS
+	DispDate$					= thisDate$(1,4)+"-"+thisDate$(5,2)+"-"+thisDate$(7)
+	IF coSession'UI {
+		progressBarOption$		= "update"
+		progressBarTitle$		= "Retrieving transactions from gateway"
+		progressBarMessage$		= "APSPays Settlement Report for "+DispDate$
+		coSession'UI'ProgressBar(progressBarOption$, progressBarTitle$, progressBarMessage$, 0)
+		wait .1
+	}
+	queryString$				= queryBase$+"&start_date="+thisDate$+"000000"+"&end_date="+thisDate$+"235959"
+
+	filepath$					= coSession'PathCompany$
+	cXMLFileCount				++
+	wrkfile$					= FilePath$+"APS"+%C$+coSession'UserCode$+dte(0:"%Yl%Mz%Dz%hz%mz%Sz")+str(cXMLFileCount:"00000")+".xml"
+
+	! #230282 RCS 2018-01-17 - Tell users when security is insufficient.
+	cProgressCount				++
+	if cProgressCount > 50 {
+		tlsChk					= _obj'ResetDotNet()
+		if tlsChk				= retWARNING {
+			coSession'UI'MessageBox$("","TLS security is not available!\"+ \
+										"You must upgrade to .NET 4.0 or above to use this application securely.\"+ \
+										"You may also need to have Windows SP1 in Windows 7 or Server 2008 R2\"+ \
+										"with TLS 1.2 enabled in the registry.  Please consult the APS Manual.\"+ \
+										"Please note that on and after March 31st, 2018, you will not be able to process\"+ \
+										"unsecure transactions with the APS payment gateway.", \
+										"Style=OK,Title=Insecure Connection to APS,Icon=S") ! #230282 RCS 2018-01-17 - date change per Zac.
+		}
+		cProgressCount			= 0
+	}
+	WriteFailed					= isTRUE; 
+	resp						= coHTTP'DownloadFile(queryString$,WrkFile$,ERR=*NEXT); WriteFailed	= isFALSE
+	if WriteFailed { 
+		retVal					= retFAILURE	! no response from server
+		return retVal
+	} 
+	cXmlFH						= hfn
+	trancnt						= 0
+	open lock (cXmlFH)WrkFile$
+	cTmp						= num(FIN(cXmlFH,"FILELENGTH"))
+	
+	if cTmp < 81 {
+		close(cXmlFH)
+		cXmlFH					= 0
+		_obj'XmlCleanup()		! Skip if less than 81 bytes.
+		RETURN retVal
+	}
+	
+	! Get number of transactions
+	WHILE 1
+		READ RECORD (cXmlFH,END=*BREAK)cTmp$
+		if pos("<transaction>" = cTmp$) { trancnt++ }
+	WEND
+	close (cXmlFH)
+	cXmlFH						= 0
+	
+	cXmlFH						= hfn
+
+	open input (cXmlFH)WrkFile$
+	
+	response$					= isNULL$
+	startTran					= isFALSE
+	recordcnt					= 0
+	READ RECORD (cXmlFH)cVersion$
+	READ RECORD (cXmlFH)cNM_Response$
+	Response$					= cVersion$+CRLF$+cNM_Response$+CRLF$
+	
+	! Get transactions
+	WHILE 1
+		READ RECORD (cXmlFH,END=*BREAK)cTmp$
+		if pos("<transaction>" = cTmp$) { 
+			startTran			= isTRUE
+			recordcnt			++
+		}
+		if startTran			= isTRUE {
+			Response$			+= cTmp$+CRLF$
+		}
+		if pos("</transaction>" = cTmp$) { 
+			startTran			= isFALSE
+			Response$			+= "</nm_response>"+CRLF$
+			hldResponse$		= Response$
+			tmpVal				= _obj'ProcessTransactionBlock()
+			Response$			= cVersion$+CR$+cNM_Response$+CR$
+		}
+
+	WEND
+	close (cXmlFH)
+	cXmlFH						= 0
+	
+	_obj'XmlCleanup()
+RETURN retVal
+!
+
+PROCESS_TRANSACTION_BLOCK:
+	
+	tmpRet						= _obj'ParseSOAP(response$, respIOL$, respREC$, status$)
+	READ DATA FROM respREC$ to IOL=respIOL$
+
+	READ DATA FROM $$ TO IOL=cTransMemIOL$
+	
+	cardBin$					= $$
+	wrk.TransNumber$			= nm_response.transaction.transaction_id$
+	wrk.TransactionType$		= nm_response.transaction.transaction_type$
+	wrk.Ticket$					= nm_response.transaction.order_id$
+	wrk.Auth$					= nm_response.transaction.authorization_code$
+	wrk.CardNumber$				= nm_response.transaction.cc_number$
+	! ACH
+	wrk.BankAccount$			= nm_response.transaction.check_account$
+	wrk.BankAccountType$		= nm_response.transaction.account_type$
+	if len(wrk.BankAccountType$) {
+		wrk.BankAccountType$	= ucs(mid(wrk.BankAccountType$,1,1)) ! C or S
+	}
+	wrk.CompanyCode$			= %C$
+	wrk.CompanyCode$			= nm_response.transaction.merchant_defined_field4$ ! merchant field 5 (=4 zero based) should be company code as of 10/10/2017
+	if len(wrk.CompanyCode$)<>cCompanyCodeLen { wrk.CompanyCode$ = %C$ } ! Not a company code. RCS 2018-05-31
+	cardBIN$					= nm_response.transaction.cc_bin$
+	wrk.Issuer$ 				= _obj'FindCardTypeByBIN$(cardBIN$)
+	! action..
+!	escape
+	action_loop					= 0
+	actionSuffix$				= isNULL$
+	WHILE 1
+		actionPrefix$			= "nm_response.transaction.action"+actionSuffix$
+		tstAction$				= EVS(actionPrefix$+".action_Type$")
+		if tstAction$			= isNULL$ {
+			BREAK
+		}
+		
+		if tstAction$			= "settle" {
+			wrk.amount$ 			= EVS(actionPrefix$+".amount$")
+			wrk.amount				= 0
+			wrk.amount				= NUM(wrk.amount$,ERR=*next)
+			zuluDateTime$ 			= EVS(actionPrefix$+".date$")
+			tmpRet 					= _obj'GetDateTime(zuluDateTime$,wrk.Date$,wrk.Time$)
+			wrk.SettlementNumber$   = $$
+			wrk.SettlementNumber$   = EVS(actionPrefix$+".processor_batch_id$")
+			_obj'TestAction()
+
+			IF NOT(NUL(wrk.TransNumber$)) AND NOT(NUL(wrk.SettlementNumber$)) {
+				WRITE(cTransMemFH,KEY=wrk.TransNumber$)IOL=cTransMemIOL$
+			}
+			BREAK
+		}
+			
+		if tstAction$				> isNULL$ {
+			action_loop				++
+			actionSuffix$			= stp(str(action_loop:"##"),2)
+			actionPrefix$			= "nm_response.transaction.action"+actionSuffix$
+		}
+	WEND
+
+	IF coSession'UI {
+		progressBarOption$		= "update"
+		progressBarTitle$		= "Retrieving transactions from gateway"
+		progressBarMessage$		= "APSPays Settlement Report for "+DispDate$+" ("+str(recordcnt)+"/"+str(trancnt)+")"
+		coSession'UI'ProgressBar(progressBarOption$, progressBarTitle$, progressBarMessage$, 0)
+		wait .1
+	}
+
+RETURN retVal
+!
+
+	! *xml processing revised PLW #235345 - 2018-03-14
+	Header						= 0
+	Detail						= 0
+	recordcnt					= 0
+	oXML'Open(wrkFile$,"")			! PLW 2018-03-14
+	Header						= oXML'set_element("transaction","", 2, 2, 0) ! (element name, element value, search for element, set to child, ignore value)
+	if Header {
+		! process transactions
+		WHILE Header <> 0
+			READ DATA FROM $$ TO IOL=cTransMemIOL$
+			recordcnt					+= 1
+			cardBin$					= $$
+			wrk.TransNumber$			= oXML'read_childelement$("transaction_id")
+			wrk.TransactionType$		= oXML'read_childelement$("transaction_type") ! RCS 2018-05-31
+			wrk.Ticket$ 				= oXML'read_childelement$("order_id")
+			wrk.Auth$					= oXML'read_childelement$("authorization_code")
+			wrk.CardNumber$				= oXML'read_childelement$("cc_number")
+			! ACH
+			wrk.BankAccount$			= oXML'read_childelement$("check_account") ! RCS 2018-05-31
+			wrk.BankAccountType$		= oXML'read_childelement$("account_type") ! checking or savings if not null RCS 2018-05-31
+			if len(wrk.BankAccountType$) {
+				wrk.BankAccountType$	= ucs(mid(wrk.BankAccountType$,1,1)) ! RCS 2018-05-31 C or S
+			}
+			
+			wrk.CompanyCode$			= %C$ ! RCS 2018-05-31
+			wrk.CompanyCode$			= oXML'read_childelement$("merchant_defined_field id") ! merchant field 5 (=4 zero based) should be company code as of 10/10/2017
+			if len(wrk.CompanyCode$)<>cCompanyCodeLen { wrk.CompanyCode$ = %C$ } ! Not a company code. RCS 2018-05-31
+			cardBIN$					= oXML'read_childelement$("cc_bin")
+			wrk.Issuer$ 				= _obj'FindCardTypeByBIN$(cardBIN$)
+			!
+			action						= oXML'set_element("action","",2,2,0) ! try to find action.  Doesn't quite work
+			   ! set_element above only sets to first child of 'transaction' so we have to loop through
+			   ! all the elements at this level to find 'action'.
+			WHILE action
+				tstAction$				= oXML'read_childelement$("action_type")
+				IF tstAction$			= "settle" {
+					wrk.amount$ 			= oXML'read_childelement$("amount")
+					wrk.amount				= 0
+					wrk.amount				= NUM(wrk.amount$,ERR=*next)
+					zuluDateTime$ 			= oXML'read_childelement$("date")
+					tmpRet 					= _obj'GetDateTime(zuluDateTime$,wrk.Date$,wrk.Time$)
+					wrk.SettlementNumber$   = $$
+					wrk.SettlementNumber$   = oXML'read_childelement$("processor_batch_id")
+					_obj'TestAction()
+
+					IF NOT(NUL(wrk.TransNumber$)) AND NOT(NUL(wrk.SettlementNumber$)) { ! PLW 2016-12-06
+						WRITE(cTransMemFH,KEY=wrk.TransNumber$)IOL=cTransMemIOL$
+					}
+				}
+				action					= oXML'next_sibling()
+			WEND
+			! Now we have to move back up to the transaction level
+			header						= oXML'set_element("transaction","",2,1,0)
+
+			IF coSession'UI { ! #235345 - 2018-03-14 RCS
+				progressBarOption$		= "update"
+				progressBarTitle$		= "Retrieving transactions from gateway"
+				progressBarMessage$		= "APSPays Settlement Report for "+DispDate$+" ("+str(recordcnt)+"/"+str(trancnt)+")"
+				coSession'UI'ProgressBar(progressBarOption$, progressBarTitle$, progressBarMessage$, 0)
+				wait .1
+			}
+
+			!
+			Header						= oXML'next_sibling()
+		WEND
+	}
+	oXML'Close() ! PLW 2018-03-14
+	_obj'XmlCleanup()
+
+RETURN retVal
+!
+
+SET_FORMULAS:
+
+	! Set local formulas here; Generic formulas are set in SY_ReportCommon
+	tmpRetVal					= _OBJ'SetReportFormula("MerchantID", _OBJ'QUO$(cMerchantID$))
+	tmpRetVal					= _OBJ'SetReportFormula("PrintDetail", _OBJ'QUO$(cPrintDetail$))
+	tmpRetVal					= _OBJ'SetReportFormula("DateRange", _OBJ'QUO$(cDateRange$))
+
+RETURN retSUCCESS
+!
+
+SET_TRANS_DATE_ALL:
+
+ENTER value$
+
+	cTransDateAll$				= value$
+
+RETURN retSUCCESS
+!
+
+SET_TRANS_DATE_START:
+
+ENTER value$
+
+	cTransDateStart$			= value$
+
+RETURN retSUCCESS
+!
+
+SET_TRANS_DATE_END:
+
+ENTER value$
+
+	cTransDateEnd$				= value$
+
+RETURN retSUCCESS
+!
+
+TEST_ACTION: ! RCS #226904 2017-07-21
+	IF lcs(tstAction$) = "settle" {
+		wrk.Action				= 1 ! Settlement amount can be negative, so Sage action method do not work
+	} ELSE {
+		IF NOT(wrk.Action) {  ! translate the APS action to Sage report action
+			SWITCH LCS(tstAction$)
+				CASE "sale"
+					wrk.Action = 1
+					BREAK
+				CASE "auth"
+					wrk.Action = 2
+					BREAK
+				CASE "capture"
+					wrk.Action = 3
+					BREAK
+				CASE "void"
+					wrk.Action = 4
+					BREAK
+				CASE "refund"
+					wrk.Action = 5
+					BREAK
+				CASE "credit"
+					wrk.Action = 6
+					BREAK
+				CASE "validate"
+					wrk.Action = 0
+					BREAK
+				CASE "update"
+					wrk.Action = 0
+					BREAK
+				DEFAULT
+					wrk.Action = 0
+				END SWITCH
+			}
+		}
+RETURN 1
+!
+
+XML_CLEANUP:					! Cleanup
+	cXmlFH						= hfn
+	open lock (cXmlFH)WrkFile$
+	close (cXmlFH)
+	cXmlFH						= 0
+	wait .1 ! force Windows to catch up
+	erase WrkFile$,err=*next
+
+RETURN retSUCCESS
+!

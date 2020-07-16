@@ -1,0 +1,70 @@
+! $Id: SO_531APSSalesOrder_Ui.Pvc $
+! Copyright 2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #232007 - 2019-03-25 - RCS
+
+DEF CLASS "SO_531APSSalesOrder_Ui"	CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+
+	LIKE "SO_SalesOrder_Ui"
+
+	! Public Properties
+
+	! Local Properties
+	LOCAL cEmvEnabled
+	LOCAL cAPSActivated
+	LOCAL doCleanup
+
+	! Local Objects
+	LOCAL coTerminalSvc
+	
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	
+
+	! Defined Elsewhere, but Referenced Locally
+
+
+END DEF
+!
+
+ON_CREATE:
+
+	PRECISION 6 FOR OBJECT
+	! check for activation
+	cEmvEnabled			= isFALSE
+	%EmvEnabled			= isFALSE
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation ()
+		DROP OBJECT coAPSActivation
+		coAPSActivation	= 0
+	}
+
+	if cAPSActivated {
+		coTerminalSvc	= new("SY_531APSTerminal_Svc",coSession)
+		cEmvEnabled		= coTerminalSvc'CheckProcessingPaymentTypesExist()
+		if cEmvEnabled {
+			isEnabled	= coTerminalSvc'CheckTerminalEnabled()
+			if isEnabled {
+				isRunning	= coTerminalSvc'CheckTerminalStatus()
+				if isRunning= retWARNING {
+					bye		! user selected Cancel
+				}
+				%EmvEnabled	= isRunning
+			}
+		}
+	}
+
+RETURN
+!
+
+ON_DELETE:
+	
+	DROP OBJECT coTerminalSvc,ERR=*NEXT
+	coTerminalSvc		= 0
+	
+RETURN
+!
+

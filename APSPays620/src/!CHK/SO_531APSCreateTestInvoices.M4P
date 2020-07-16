@@ -1,0 +1,108 @@
+! SO_531APSCreateTestInvoice.M4P
+! %(copyright)%
+! ** @Author pWhirley
+! ** @Date 2018.01.04 01 at 03:40:37 PM EST 
+! 
+BEGIN
+PRINT 'CS',"This program will create test invoices for every open item customer."
+PRINT "It will loop through the customer file continuously until 900 invoices are created."
+WHILE 1
+	PRINT 'LF',"Enter 'G' to go, 'E' to Escape or 'Q' to quit: ",
+	INPUT Resp$
+	SWITCH UCS(Resp$)
+		CASE "E"; Resp$="G"
+!		PREINPUT -1301; ESCAPE
+		BREAK
+		CASE "G"; BREAK
+		CASE "Q"; BYE
+		DEFAULT
+	END SWITCH
+	IF UCS(Resp$)="G" BREAK
+WEND
+custFH = %SYS_SS'OpenTable("AR_Customer","COMPANY")
+itemFH = %SYS_SS'OpenTable("CI_Item","COMPANY")
+firstItem$ = KEF(itemFH)
+lastItem$ = KEL(itemFH)
+oInvoice = NEW("SO_Invoice_bus",%sys_ss)
+itemsPerInvoice = 3
+totalInvoices = 900
+invoiceCount = 0
+REPEAT
+	SELECT *,REC=cust$ FROM custFH BEGIN $$ END $FE$ WHERE cust.OpenItemCustomer$ = "Y" 
+		IF invoiceCount>=totalInvoices {
+			BREAK
+		}
+		PRINT @(0,8),"Customer: ",cust.ARDivisionNo$+"-"+cust.CustomerNo$,'CE'
+		GOSUB CREATE_INVOICE
+	NEXT RECORD
+UNTIL invoiceCount>=totalInvoices
+CLOSE(custFH)
+CLOSE(itemFH)
+DROP OBJECT oInvoice
+STOP
+
+CREATE_INVOICE:
+	IF NUL(batch$) {
+		tmpRet=oInvoice'SelectNewBatch(batch$,"N","Invoice Test "+DAY)
+		tmpRet=oInvoice'SelectBatch(batch$)
+	}
+	retVal = oInvoice'GetNextInvoiceNo(InvoiceNo$)
+	retVal = oInvoice'SetKey(InvoiceNo$)
+	IF retVal {
+		tmpRet = oInvoice'SetValue("ARDivisionNo$",cust.ARDivisionNo$)
+		tmpRet = oInvoice'SetValue("CustomerNo$",cust.CustomerNo$)
+		tmpRet = oInvoice'GetValue("TaxSchedule$",tax$)
+		IF NUL(tax$) {
+			oInvoice'SetValue("TaxSchedule$","DEFAULT")
+		}
+		Lines = oInvoice'Lines
+		FOR line = 1 to itemsPerInvoice
+			tmpRet = Lines'AddLine()
+			GOSUB GET_NEXT_ITEM
+			tmpRet = Lines'SetValue("ItemCode$",ItemCode$)
+			tmpRet = Lines'GetValue("ItemType$",ItemType$)
+			IF ItemType$="4" {
+				tmpRet = Lines'SetValue("CommentText$",STR(line)+" comment line generated for some reason")
+			} ELSE {
+				tmpRet = Lines'SetValue("QuantityShipped",1)
+			}
+			retVal = Lines'Write()
+			IF NOT(retVal) {
+!				MSGBOX lines'LastErrorMsg$
+			}
+		NEXT
+		retVal = oInvoice'Write()
+		IF NOT(retVal) {
+!			MSGBOX oInvoice'LastErrorMsg$
+		} ELSE {
+			invoiceCount++
+		}
+		PRINT @(0,10),"Invoices created: ",invoiceCount
+	}
+RETURN
+
+GET_NEXT_ITEM:
+/*	SWITCH line
+		CASE 1; ItemCode$ = "VOG-CM-CASTERS"; BREAK
+		CASE 2; ItemCode$ = "VOG-CM-CG"; BREAK
+		CASE 3; ItemCode$ = "VOG-CM-MP-B"; BREAK
+		CASE 4; ItemCode$ = "VOG-CM-MSC"; BREAK
+		DEFAULT; ItemCode$ = "/C"
+	END SWITCH
+*/
+	ItemCode$ = ""
+	REPEAT
+		nextItem$ = KEY(itemFH,END=*NEXT); ItemCode$ = nextItem$
+		IF NUL(ItemCode$) { ! means we've hit the end of the file
+			ItemCode$ = firstItem$
+		}
+		READ(itemFH,KEY=ItemCode$,REC=item$)
+		IF NOT(POS(item.ItemType$="135")) OR NOT(item.UseInSO$="Y") {
+			ItemCode$ = ""
+		} ELSE {
+			IF POS(item.Valuation$="56") {
+				ItemCode$ = ""
+			}
+		}
+	UNTIL NOT(NUL(ItemCode$))
+RETURN

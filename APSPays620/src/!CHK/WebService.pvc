@@ -1,0 +1,576 @@
+!! Web Service
+DEF CLASS "WebService" CREATE REQUIRED DELETE REQUIRED 
+! Inheritance
+
+PROPERTY LastErrorMsg$
+
+! Public Methods
+FUNCTION AuthorizationRequest(cAuthorizationRequestIol$,cAuthorizationRequestRec$,cAuthorizationResponseIol$,cAuthorizationResponseRec$,tmpStatus$)AUTHORIZATION_REQUEST
+FUNCTION CancelAuthorizationRequest(cCancelAuthorizationRequestIol$,cCancelAuthorizationRequestRec$,cCancelAuthorizationResponseIol$,cCancelAuthorizationResponseRec$,tmpStatus$)CANCEL_AUTHORIZATION_REQUEST
+FUNCTION CaptureRequest(cCaptureHeaderIol$,cCaptureHeaderRec$,cCommonDetailIol$,cDetailRec$,cCaptureResponseIol$,cCaptureResponseRec$,tmpStatus$)CAPTURE_REQUEST
+FUNCTION PurchaseRequest(cCaptureHeaderIol$,cCaptureHeaderRec$,cCommonDetailIol$,cDetailRec$,cPurchaseResponseIol$,cPurchaseResponseRec$,tmpStatus$)PURCHASE_REQUEST
+FUNCTION CreditRequest(cCreditHeaderIol$,cCreditHeaderRec$,cCommonDetailIol$,cDetailRec$,cCreditResponseIol$,cCreditResponseRec$,tmpStatus$)CREDIT_REQUEST
+
+! Local Methods
+
+FUNCTION LOCAL FormatSOAPEnv$(Activity$, MessageRequestBody$)				FORMAT_SOAP_ENV
+FUNCTION LOCAL CreateMessageRequestBody$(MessageBodyIOL$, MessageBodyRec$)	CREATE_MESSAGE_REQUEST_BODY
+FUNCTION LOCAL FormatXML$(tmpRec$,tmpIOL$,tmpPrefix$)						FORMAT_XML
+FUNCTION LOCAL DoTransaction(SOAPEnv$, ResponseIOL$, ResponseREC$,Status$)	DO_TRANSACTION
+FUNCTION  ParseSOAP(SOAPXML$,tmpIOL$,tmpREC$,Status$)					PARSE_SOAP
+FUNCTION LOCAL GetNextTag(XML$,TAG$,DATA$)									GET_NEXT_TAG
+FUNCTION LOCAL FormatDetailLines(DetailRec$, DetailReturnREC$)				FORMAT_DETAIL_LINES
+FUNCTION LOCAL LogXML(XMLText$)												LOG_XML
+FUNCTION LOCAL ScrubXML$(tmpText$)											SCRUB_XML  ! PLW 2010/05/03
+
+! Local Variables
+local cCompanyCode$
+local cFarmPlanSetupFH ! SY_531FP1FarmPlanSetup
+local cFarmPlanURL$
+local cHTTPHost$
+local cHTTPFile$
+local cHTTPType$
+local cMerchantNo$
+local cTerminalNo$
+local Service$
+local SourceSystem$
+local SourceID$
+local ISFMsgVersion$
+local Locale$
+local ActivityMsgVersion$
+local CommonDetailIOL$
+
+local Activity$
+local XMLPrefix$ = "POS:"
+local ProductLine$ = "Farm Plan"
+
+local cLogXML = 1 ! Flag to indicate whether we want to add to the XML Log
+
+
+! Local Variables - Defined Elsewhere, but Referenced Locally
+LOCAL coSession
+END DEF
+
+ON_CREATE:
+RETURN 
+
+ON_DELETE:
+RETURN
+
+AUTHORIZATION_REQUEST:
+	ENTER AuthorizationRequestIol$,AuthorizationRequestRec$,AuthorizationResponseIol$,AuthorizationResponseRec$,Status$
+		!AuthorTotalAmount,FarmPlanAccount$,CreditPlanNo$,DescriptiveBillCode$,MerchantNo$,TerminalNo$
+		READ DATA FROM $$ to iol=AuthorizationRequestIol$
+		READ DATA FROM $$ to iol=AuthorizationResponseIol$
+		AuthorizationResponseRec$=$$
+		Status$="FAILED"
+		StatusCode$=""
+		READ DATA FROM AuthorizationRequestRec$ to iol=AuthorizationRequestIol$
+		AuthIOL$=CPL("IOLIST amount$,saleDate$,productLine$,XML_merchant$,XML_customer$,XML_creditPlan$")
+		merchantIOL$ = CPL("IOLIST terminalNumber$, merchantNumber$, invoiceNumber$, purchaseOrderNumber$")
+		customerIOL$ = CPL("IOLIST XML_card$,patronNumber$")
+		cardIOL$ = CPL("IOLIST cardNumber$, cardType$")
+		creditPlanIOL$ = CPL("IOLIST creditPlanNumber$, descriptiveBillingCode$, serialNumber$, modelNumber$")
+		amount$ = STR(AuthorTotalAmount) ! from ENTER IOLIST
+		saleDate$ = DTE(0:"%Yl-%Mz-%DzT%Hz:%mz:%sz")
+		terminalNumber$ = TBL(NUL(terminalNo$),terminalNo$,cTerminalNo$) ! from ENTER IOLIST
+		merchantNumber$ = TBL(NUL(merchantNo$),merchantNo$,cMerchantNo$) ! from ENTER IOLIST
+		invoiceNumber$ = "" ! we don't have it at the authorization point
+		! purchaseOrderNumber$ = "" ! we don't have a PO number - not required
+		XML_merchant$ = _OBJ'FormatXML$(merchantIOL$,REC(merchantIOL$),XMLPrefix$)
+		! patronNumber$ = "" ! PLWhirley 2009/11/16 should come in with the Authorization IOL
+		cardNumber$ = FarmPlanAccount$ ! from ENTER IOLIST
+		cardType$ = "Farm Plan"
+		creditPlanNumber$ = CreditPlanNo$ ! from ENTER IOLIST
+		descriptiveBillingCode$ = DescriptiveBillCode$ ! from ENTER IOLIST
+		serialNumber$ = ""
+		modelNumber$ = ""
+		XML_Card$ = _OBJ'FormatXML$(cardIOL$,REC(cardIOL$),XMLPrefix$)
+		XML_customer$ = _OBJ'FormatXML$(customerIOL$,REC(customerIOL$),XMLPrefix$)
+		XML_creditPlan$ = _OBJ'FormatXML$(creditPlanIOL$,REC(creditPlanIOL$),XMLPrefix$)
+		MessageRequestBody$ = _Obj'CreateMessageRequestBody$(AuthIOL$,REC(AuthIOL$))
+		SOAPEnv$ = _OBJ'FormatSOAPEnv$("Authorization",MessageRequestBody$)
+		!send request
+		retVal = _OBJ'DoTransaction(SOAPEnv$,AuthorizationResponseIOL$,AuthorizationResponseRec$,Status$)
+
+RETURN retVal
+
+CANCEL_AUTHORIZATION_REQUEST:
+	ENTER CancelAuthorizationRequestIol$,CancelAuthorizationRequestRec$,CancelAuthorizationResponseIol$,CancelAuthorizationResponseRec$,Status$
+		!AuthorizationNo$,TotalAmount,FarmPlanAccount$,CreditPlanNo$,DescriptiveBillCode$,MerchantNo$,TerminalNo$,TransactionDate$,Status$
+		READ DATA FROM $$ to iol=CancelAuthorizationRequestIol$
+		READ DATA FROM $$ to iol=CancelAuthorizationResponseIol$
+		CancelAuthorizationResponseRec$=$$
+		Status$="FAILED"
+		StatusCode$=""
+		READ DATA FROM CancelAuthorizationRequestRec$ to iol=CancelAuthorizationRequestIol$
+		CancelAuthIOL$=CPL("IOLIST amount$,saleDate$,productLine$,XML_merchant$,XML_customer$,XML_creditPlan$,XML_authorization$")
+		merchantIOL$ = CPL("IOLIST terminalNumber$, merchantNumber$, invoiceNumber$")
+		customerIOL$ = CPL("IOLIST XML_card$,patronNumber$")
+		cardIOL$ = CPL("IOLIST cardNumber$, cardType$")
+		creditPlanIOL$ = CPL("IOLIST creditPlanNumber$, descriptiveBillingCode$, serialNumber$, modelNumber$")
+		authorizationIOL$ = CPL("IOLIST authorizationNumber$")
+		amount$ = STR(AuthorTotalAmount) ! from ENTER IOLIST
+		saleDate$ = MID(TransactionDate$,1,4)+"-"+MID(TransactionDate$,5,2)+"-"+MID(TransactionDate$,7,2)+"T"+DTE(0:"%Hz:%mz:%sz")
+		terminalNumber$ = TBL(NUL(terminalNo$),terminalNo$,cTerminalNo$) ! from ENTER IOLIST
+		merchantNumber$ = TBL(NUL(merchantNo$),merchantNo$,cMerchantNo$) ! from ENTER IOLIST
+		invoiceNumber$ = "" ! we don't have it at the authorization point
+		! purchaseOrderNumber$ = "" ! we don't have a PO number - not required
+		XML_merchant$ = _OBJ'FormatXML$(merchantIOL$,REC(merchantIOL$),XMLPrefix$)
+		! patronNumber$ = ""
+		cardNumber$ = FarmPlanAccount$ ! from ENTER IOLIST
+		cardType$ = "Farm Plan"
+		creditPlanNumber$ = CreditPlanNo$ ! from ENTER IOLIST
+		descriptiveBillingCode$ = DescriptiveBillCode$ ! from ENTER IOLIST
+		serialNumber$ = ""
+		modelNumber$ = ""
+		authorizationNumber$ = authorizationNo$
+		XML_Authorization$ = _OBJ'FormatXML$(authorizationIOL$,REC(authorizationIOL$),XMLPrefix$)
+		XML_Card$ = _OBJ'FormatXML$(cardIOL$,REC(cardIOL$),XMLPrefix$)
+		XML_customer$ = _OBJ'FormatXML$(customerIOL$,REC(customerIOL$),XMLPrefix$)
+		XML_creditPlan$ = _OBJ'FormatXML$(creditPlanIOL$,REC(creditPlanIOL$),XMLPrefix$)
+		MessageRequestBody$ = _Obj'CreateMessageRequestBody$(CancelAuthIOL$,REC(CancelAuthIOL$))
+		SOAPEnv$ = _OBJ'FormatSOAPEnv$("CancelAuthorization",MessageRequestBody$)		
+		!send request
+		retVal = _OBJ'DoTransaction(SOAPEnv$,CancelAuthorizationResponseIOL$,CancelAuthorizationResponseRec$,Status$)
+
+RETURN retVal
+
+CAPTURE_REQUEST:
+	ENTER CaptureHeaderIol$,CaptureHeaderRec$,CommonDetailIol$,DetailRec$,CaptureResponseIol$,CaptureResponseRec$,Status$
+		READ DATA FROM $$ to iol=CaptureHeaderIol$
+		READ DATA FROM $$ to iol=CommonDetailIol$
+		READ DATA FROM $$ to iol=CaptureResponseIol$
+		CaptureResponseRec$=$$
+		Status$="FAILED"
+		StatusCode$=""
+		READ DATA FROM CaptureHeaderRec$ to iol=CaptureHeaderIol$
+		CaptureIOL$=CPL("IOLIST amount$,saleDate$,productLine$,XML_merchant$,XML_customer$,XML_creditPlan$,XML_authorization$,XML_lineItems$")
+		merchantIOL$ = CPL("IOLIST terminalNumber$, merchantNumber$, invoiceNumber$,purchaseOrderNumber$") ! PLWhirley 2009/11/18 added purchaseOrderNumber$
+		customerIOL$ = CPL("IOLIST XML_card$,patronNumber$")
+		cardIOL$ = CPL("IOLIST cardNumber$, cardType$")
+		creditPlanIOL$ = CPL("IOLIST creditPlanNumber$, descriptiveBillingCode$, serialNumber$, modelNumber$")
+		authorizationIOL$ = CPL("IOLIST authorizationNumber$")
+		amount$ = STR(AuthorizedAmount) ! from ENTER IOLIST
+		saleDate$ = MID(TransactionDate$,1,4)+"-"+MID(TransactionDate$,5,2)+"-"+MID(TransactionDate$,7,2)+"T"+DTE(0:"%Hz:%mz:%sz")
+		terminalNumber$ = TBL(NUL(terminalNo$),terminalNo$,cTerminalNo$) ! from ENTER IOLIST
+		merchantNumber$ = TBL(NUL(merchantNo$),merchantNo$,cMerchantNo$) ! from ENTER IOLIST
+		invoiceNumber$ = InvoiceNo$
+		! purchaseOrderNumber$ = "" ! we don't have a PO number - not required
+		XML_merchant$ = _OBJ'FormatXML$(merchantIOL$,REC(merchantIOL$),XMLPrefix$)
+		! patronNumber$ = ""
+		cardNumber$ = FarmPlanAccount$ ! from ENTER IOLIST
+		cardType$ = "Farm Plan"
+		creditPlanNumber$ = CreditPlanNo$ ! from ENTER IOLIST
+		descriptiveBillingCode$ = DescriptiveBillCode$ ! from ENTER IOLIST
+		serialNumber$ = ""
+		modelNumber$ = ""
+		authorizationNumber$ = AuthorizationNo$
+		XML_Authorization$ = _OBJ'FormatXML$(authorizationIOL$,REC(authorizationIOL$),XMLPrefix$)
+		XML_Card$ = _OBJ'FormatXML$(cardIOL$,REC(cardIOL$),XMLPrefix$)
+		XML_customer$ = _OBJ'FormatXML$(customerIOL$,REC(customerIOL$),XMLPrefix$)
+		XML_creditPlan$ = _OBJ'FormatXML$(creditPlanIOL$,REC(creditPlanIOL$),XMLPrefix$)
+!		Do Line records here
+		tmpRetVal=_OBJ'FormatDetailLines(DetailRec$,XML_LineItems$)
+		if tmpRetVal=0 {
+			lastErrorMsg$ = "Unable to create valid detail lines format"
+		}
+		MessageRequestBody$ = _Obj'CreateMessageRequestBody$(CaptureIOL$,REC(CaptureIOL$))
+		SOAPEnv$ = _OBJ'FormatSOAPEnv$("Capture",MessageRequestBody$)		
+		!send request
+		retVal = _OBJ'DoTransaction(SOAPEnv$,CaptureResponseIOL$,CaptureResponseRec$,Status$)
+
+RETURN retVal
+
+FORMAT_DETAIL_LINES:
+	ENTER DetailRec$, XML_LineItems$ 
+		tmpDetailRec$=DetailRec$
+!		XML_LineItems$="<"+XMLPrefix$+"lineItems>"
+		WHILE NOT(NUL(tmpDetailRec$))
+			tmpPos=POS("|"=tmpDetailRec$)
+			IF tmpPos {
+				DetailLineRec$=MID(tmpDetailRec$,1,tmpPos-1)
+				tmpDetailRec$=MID(tmpDetailRec$,tmpPos+1)
+				IF NOT(NUL(DetailLineRec$)) {
+					! LineItemCode$,LineItemDescription$,LineItemTotal,NumberOfUnits,LineUnitPrice,PricingUOM$
+					READ DATA FROM DetailLineRec$ to iol=CommonDetailIOL$
+!!					LineItemCode$=SUB(LineItemCode$,QUO,"&quot;")
+!					LineItemCode$=SUB(LineItemCode$,"<","&lt;")
+!					LineItemCode$=SUB(LineItemCode$,">","&gt;")
+					XML_LineItems$+="<"+XMLPrefix$+"lineItem "
+					XML_LineItems$+=XMLPrefix$+"description="+QUO+_OBJ'ScrubXML$(LineItemDescription$)+QUO+" " ! PLW 2010/05/03 added ScrubXML$
+					XML_LineItems$+=XMLPrefix$+"manufactureName="+QUO+QUO+" "
+					XML_LineItems$+=XMLPrefix$+"mfgPartNumber="+QUO+_OBJ'ScrubXML$(LineItemCode$)+QUO+" "! PLW 2010/05/03 added ScrubXML$
+					XML_LineItems$+=XMLPrefix$+"numberOfUnits="+QUO+STR(NumberOfUnits)+QUO+" "
+					XML_LineItems$+=XMLPrefix$+"unitOfMeasure="+QUO+_OBJ'ScrubXML$(PricingUOM$)+QUO+" "! PLW 2010/05/03 added ScrubXML$
+					XML_LineItems$+=XMLPrefix$+"unitPrice="+QUO+STR(LineUnitPrice)+QUO+" "
+					XML_LineItems$+=XMLPrefix$+"pricingUnitOfMeasure="+QUO+_OBJ'ScrubXML$(PricingUOM$)+QUO+" "! PLW 2010/05/03 added ScrubXML$
+					XML_LineItems$+=XMLPrefix$+"skuNumber="+QUO+QUO+" "
+					XML_LineItems$+=XMLPrefix$+"upc="+QUO+QUO+" "
+					XML_LineItems$+=XMLPrefix$+"lineItemTotal="+QUO+STR(LineItemTotal)+QUO
+					XML_LineItems$+="/>"
+				}
+			} 
+		WEND
+!		XML_LineItems$+="</"+XMLPrefix$+"lineItems>"
+		
+	return 1
+
+SCRUB_XML: ! PLW 2010/05/03 remove invalid characters from XML
+	ENTER tmpText$
+		tmpText$=SUB(tmpText$,"&","&amp;")
+		tmpText$=SUB(tmpText$,QUO,"&quot;")
+		tmpText$=SUB(tmpText$,"<","&lt;")
+		tmpText$=SUB(tmpText$,">","&gt;")
+		
+		RETURN tmpText$
+
+
+PURCHASE_REQUEST:
+	ENTER CaptureHeaderIol$,CaptureHeaderRec$,CommonDetailIol$,DetailRec$,PurchaseResponseIol$,PurchaseResponseRec$,Status$
+		READ DATA FROM $$ to iol=CaptureHeaderIol$
+		READ DATA FROM $$ to iol=CommonDetailIol$
+		READ DATA FROM $$ to iol=PurchaseResponseIol$
+		PurchaseResponseRec$=$$
+		Status$="FAILED"
+		READ DATA FROM CaptureHeaderRec$ to iol=CaptureHeaderIol$
+		CaptureIOL$=CPL("IOLIST amount$,saleDate$,productLine$,XML_merchant$,XML_customer$,XML_creditPlan$,XML_lineItems$")
+		merchantIOL$ = CPL("IOLIST terminalNumber$, merchantNumber$, invoiceNumber$,purchaseOrderNumber$") ! PLWhirley 2009/11/18 added purchaseOrderNumber$
+		customerIOL$ = CPL("IOLIST XML_card$,patronNumber$")
+		cardIOL$ = CPL("IOLIST cardNumber$, cardType$")
+		creditPlanIOL$ = CPL("IOLIST creditPlanNumber$, descriptiveBillingCode$, serialNumber$, modelNumber$")
+		amount$ = STR(AuthorizedAmount) ! from ENTER IOLIST
+		saleDate$ = DTE(0:"%Yl-%Mz-%DzT%Hz:%mz:%sz")
+		terminalNumber$ = TBL(NUL(terminalNo$),terminalNo$,cTerminalNo$) ! from ENTER IOLIST
+		merchantNumber$ = TBL(NUL(merchantNo$),merchantNo$,cMerchantNo$) ! from ENTER IOLIST
+		invoiceNumber$ = InvoiceNo$
+		! purchaseOrderNumber$ = "" ! we don't have a PO number - not required
+		XML_merchant$ = _OBJ'FormatXML$(merchantIOL$,REC(merchantIOL$),XMLPrefix$)
+		! patronNumber$ = ""
+		cardNumber$ = FarmPlanAccount$ ! from ENTER IOLIST
+		cardType$ = "Farm Plan"
+		creditPlanNumber$ = CreditPlanNo$ ! from ENTER IOLIST
+		descriptiveBillingCode$ = DescriptiveBillCode$ ! from ENTER IOLIST
+		serialNumber$ = ""
+		modelNumber$ = ""
+		XML_Card$ = _OBJ'FormatXML$(cardIOL$,REC(cardIOL$),XMLPrefix$)
+		XML_customer$ = _OBJ'FormatXML$(customerIOL$,REC(customerIOL$),XMLPrefix$)
+		XML_creditPlan$ = _OBJ'FormatXML$(creditPlanIOL$,REC(creditPlanIOL$),XMLPrefix$)
+!		Do Line records here
+		tmpRetVal=_OBJ'FormatDetailLines(DetailRec$,XML_LineItems$)
+		if tmpRetVal=0 {
+			lastErrorMsg$ = "Unable to create valid detail lines format"
+		}
+		MessageRequestBody$ = _Obj'CreateMessageRequestBody$(CaptureIOL$,REC(CaptureIOL$))
+		SOAPEnv$ = _OBJ'FormatSOAPEnv$("Purchase",MessageRequestBody$)		
+		!send request
+		retVal = _OBJ'DoTransaction(SOAPEnv$,PurchaseResponseIOL$,PurchaseResponseRec$,Status$)
+
+RETURN retVal
+
+CREDIT_REQUEST:
+	ENTER CreditHeaderIol$,CreditHeaderRec$,CommonDetailIol$,DetailRec$,CreditResponseIol$,CreditResponseRec$,Status$
+		READ DATA FROM $$ to iol=CreditHeaderIol$
+		READ DATA FROM $$ to iol=CommonDetailIol$
+		READ DATA FROM $$ to iol=CreditResponseIol$
+		CreditResponseRec$=$$
+		Status$="FAILED"
+		READ DATA FROM CreditHeaderRec$ to iol=CreditHeaderIol$
+		CreditIOL$=CPL("IOLIST amount$,saleDate$,productLine$,XML_merchant$,XML_customer$,XML_creditPlan$,XML_lineItems$")
+		merchantIOL$ = CPL("IOLIST terminalNumber$, merchantNumber$, invoiceNumber$,originalInvoiceNumber$,purchaseOrderNumber$")
+		customerIOL$ = CPL("IOLIST XML_card$,patronNumber$")
+		cardIOL$ = CPL("IOLIST cardNumber$, cardType$")
+		creditPlanIOL$ = CPL("IOLIST creditPlanNumber$, descriptiveBillingCode$, serialNumber$, modelNumber$")
+		amount$ = STR(CapturedAmount) ! from ENTER IOLIST
+		saleDate$ = DTE(0:"%Yl-%Mz-%DzT%Hz:%mz:%sz") !MID(TransactionDate$,1,4)+"-"+MID(TransactionDate$,5,2)+"-"+MID(TransactionDate$,7,2)+"T"+DTE(0:"%Hz:%mz:%sz")
+		terminalNumber$ = TBL(NUL(terminalNo$),terminalNo$,cTerminalNo$) ! from ENTER IOLIST
+		merchantNumber$ = TBL(NUL(merchantNo$),merchantNo$,cMerchantNo$) ! from ENTER IOLIST
+		invoiceNumber$ = InvoiceNo$
+		originalInvoiceNumber$=OriginalInvoiceNumber$
+		! purchaseOrderNumber$ = "" ! we don't have a PO number - not required
+		XML_merchant$ = _OBJ'FormatXML$(merchantIOL$,REC(merchantIOL$),XMLPrefix$)
+		! patronNumber$ = ""
+		cardNumber$ = FarmPlanAccount$ ! from ENTER IOLIST
+		cardType$ = "Farm Plan"
+		creditPlanNumber$ = CreditPlanNo$ ! from ENTER IOLIST
+		descriptiveBillingCode$ = DescriptiveBillCode$ ! from ENTER IOLIST
+		serialNumber$ = ""
+		modelNumber$ = ""
+		XML_Card$ = _OBJ'FormatXML$(cardIOL$,REC(cardIOL$),XMLPrefix$)
+		XML_customer$ = _OBJ'FormatXML$(customerIOL$,REC(customerIOL$),XMLPrefix$)
+		XML_creditPlan$ = _OBJ'FormatXML$(creditPlanIOL$,REC(creditPlanIOL$),XMLPrefix$)
+!		Do Line records here
+		tmpRetVal=_OBJ'FormatDetailLines(DetailRec$,XML_LineItems$)
+		if tmpRetVal=0 {
+			lastErrorMsg$ = "Unable to create valid detail lines format"
+		}
+		MessageRequestBody$ = _Obj'CreateMessageRequestBody$(CreditIOL$,REC(CreditIOL$))
+		SOAPEnv$ = _OBJ'FormatSOAPEnv$("Credit",MessageRequestBody$)		
+		!send request
+		retVal = _OBJ'DoTransaction(SOAPEnv$,CreditResponseIOL$,CreditResponseRec$,Status$)
+
+RETURN retVal
+
+DO_TRANSACTION:
+	ENTER SOAPEnv$,ResponseIOL$,ResponseREC$,Status$
+		coSession'UI'ProgressBar("update")
+		ResponseIOL$ = CPL("IOLIST errorMsg$")
+		ResponseREC$ = ""
+		ContentLength = LEN(SUB(SOAPEnv$,$0D0A$,""))
+		errorMsg$ = "Connection to host "+cHTTPHost$ + " failed"
+		HostCH=HFN
+		OPEN(HostCH,ERR=*NEXT)"[tcp]"+cHTTPHost$+";"+TBL(CSE(cHTTPType$,"http","https"),"80","80","443;secure"); errorMsg$=""
+		IF LEN(errorMsg$) {
+			LastErrorMsg$ = errorMsg$
+			responseREC$=REC(responseIOL$)
+			return 0
+		}
+		ErrorMsg$ = "Unable to send request to HTTP Host"
+		PostText$ = "POST "+cHTTPFile$+" HTTP/1.0"+$0D0A$
+		PostText$ += "Host: "+cHTTPHost$+$0D0A$
+		PostText$ += "Content-Type: text/xml"+$0D0A$
+		PostText$ += "Content-Length: "+STR(ContentLength)+$0D0A$+$0D0A$
+		PostText$ += SUB(SOAPEnv$,$0D0A$,"")
+		_OBJ'LogXML(SOAPEnv$)
+		WRITE RECORD(HostCH,ERR=*NEXT)PostText$; errorMsg$=""
+		IF LEN(errorMsg$) {
+			LastErrorMsg$ = errorMsg$
+			CLOSE(HostCH)
+			HostCH=0
+			responseREC$=REC(responseIOL$)
+			return 0
+		}
+		response$ = ""
+		rawResponse$ = "" ! PLW 2011/02/22
+		header$="" ! PLW 2011/02/22
+		errorMsg$ = "Error reading from HTTP host"
+		READ RECORD(HostCH,TIM=30,END=*NEXT,BSY=*NEXT)tmp$; response$+=tmp$; GOTO *SAME
+		rawResponse$ = response$ ! PLW 2011/02/22 save response$ in case it's not clean
+		P=POS($0D0A0D0A$=response$)
+		if P {  ! PLW 2011/02/22  Moved all header and response logic inside this IF in case we don't get a proper response
+			header$=response$(1,p-1)
+			response$=response$(P+2)
+			P=POS(" "=header$)
+			IF P { ! PLW 2011/02/22  changed to IF so we don't get error 47 if there are no spaces in Header$
+				HTTP_STATUS$=header$(P+1)
+				P=POS(" "+$0D0A$:HTTP_STATUS$)
+				IF P { ! PLW 2011/02/22 change to IF so we don't get error if there is response$ is not properly formed
+					HTTP_STATUS$=HTTP_STATUS$(1,P-1)
+				}
+			}
+			IF HTTP_STATUS$<>"200" {
+				LastErrorMsg$ = "Http status "+HTTP_STATUS$+" received on response"
+				errorMsg$ = LastErrorMsg$
+				CLOSE(HostCH)
+				HostCH=0
+				responseREC$=REC(responseIOL$)
+				return 0
+			}
+			LET P=POS("CONTENT-LENGTH: "=UCS(header$)),CONTENT_LENGTH=0
+			IF P>0 {
+				LENGTH$=header$(P+16)
+				P=POS($0D0A$=LENGTH$)
+				IF P { ! PLW 2011/02/22 added IF in case header$ is not properly formed.
+					LENGTH$=MID(LENGTH$,1,P-1)
+					CONTENT_LENGTH=NUM(LENGTH$,ERR=*NEXT)
+				}
+			}
+			IF CONTENT_LENGTH=0 OR NUL(header$) {
+				response$=""
+			}
+		}  ! PLW 2011/02/22 change IF to include all the header$ and response$ parsing.
+STOP_HERE:
+		CLOSE(HostCH,ERR=*NEXT)
+		HostCH=0
+		IF NUL(response$) {
+			LastErrorMsg$ = errorMsg$
+			responseREC$=REC(responseIOL$)
+			IF NOT(NUL(rawResponse$)) {
+				_OBJ'LogXML(rawResponse$) ! PLW 2011/02/22 log dirty response if it exists.
+			}
+			RETURN 0
+		} ELSE {
+			errorMsg$="Error parsing response"
+			_OBJ'LogXML(response$)
+			retVal = _OBJ'ParseSOAP(response$,responseIOL$,responseREC$,Status$)
+			if retVal = 0 {
+				errorMsg$ = "Unable to parse response$"
+				LastErrorMsg$ = errorMSG$
+				responseIOL$=CPL("IOLIST errorMsg$,response$")
+				responseREC$=REC(responseIOL$)
+			}
+		}
+	return retVal
+
+FORMAT_SOAP_ENV:
+	ENTER Activity$, MessageRequestBody$
+		EnvIOL$ = CPL("IOLIST Service$,Activity$,SourceSystem$,SourceID$,ISFMsgVersion$,ActivityMsgVersion$,Locale$, TimeStamp$")
+		
+		SOAPEnv$ = "<?xml version="+QUO+"1.0"+QUO+" encoding="+QUO+"UTF-8"+QUO+"?>"+$0D0A$
+		SOAPEnv$ += "<SOAP-ENV:Envelope xmlns:SOAP-ENV="+QUO+"http://schemas.xmlsoap.org/soap/envelope/"+QUO+">"+$0D0A$
+		SOAPEnv$ += "<SOAP-ENV:Header>"+$0D0A$
+		SOAPEnv$ += _OBJ'FormatXML$(EnvIOL$,REC(EnvIOL$),"")
+		SOAPEnv$ += "</SOAP-ENV:Header>"+$0D0A$
+		SOAPEnv$ += "<SOAP-ENV:Body>"+$0D0A$
+		SOAPEnv$ += MessageRequestBody$
+		SOAPEnv$ += "</SOAP-ENV:Body>"+$0D0A$
+		SOAPEnv$ += "</SOAP-ENV:Envelope>"
+
+	return SOAPEnv$
+	
+CREATE_MESSAGE_REQUEST_BODY:
+	ENTER tmpIOL$,tmpRec$
+		messageRequestBody$ = "<"+XMLPrefix$+Service$+" xmlns:POS="+QUO+"http://pos.jdc.deere.com/xml"+QUO+" POS:version="+QUO+"4.0"+QUO+" POS:vendor="+QUO+"ASI Additions"+QUO+">"+$0D0A$
+		messageRequestBody$ += _obj'FormatXML$(tmpIOL$,tmpRec$,XMLPrefix$)
+		messageRequestBody$ += "</"+XMLPrefix$+Service$+">"+$0D0A$
+	return messageRequestBody$
+
+FORMAT_XML:
+	ENTER tmpIOL$,tmpREC$,tmpPrefix$
+		! tmpRec$ is the REC(IOL=XXX)
+		! tmpIOL$ is the actual IOLIST in compiled format.
+		XML$=""
+		READ DATA FROM tmpRec$ TO IOL=tmpIOL$
+		lstIOL$=LST(tmpIOL$)
+		lstIOL$=lstIOL$(8)+","
+		WHILE POS(","=lstIOL$) !  We walk through the listed IOLIST parsing out each field, using the comma as the separator
+			tmpFLD$=lstIOL$(1,POS(","=lstIOL$)-1)
+			lstIOL$=lstIOL$(POS(","=lstIOL$)+1)
+			IF NOT(NUL(tmpFLD$)) {
+				! Tags in XML are surrounded by '<' and '>'.  There is always a beginning and an ending tag.
+				! The ending tag is identical to the beginning, except it has '/' in front.
+				stripPrefix = TBL(POS("XML_"=tmpFLD$)=1,0,4) ! Set this variable to substring field label if it starts with XML_
+				XMLStart$="<"+tmpPrefix$+SUB(tmpFLD$(stripPrefix+1),"$","")+">" ! We strip the $ because that is not valid in XML
+				! We might want to add an attribute in side the XMLStart tag to tell us if it is string or numeric.
+				! for example, <CustomerNo type=STR> or <Quantity type=NUM>.
+				XMLEnd$=XMLStart$(1,1)+"/"+XMLStart$(2)
+				XMLVal$=TBL(POS("$"=tmpFLD$)>0,STR(VIN(tmpFLD$)),VIS(tmpFLD$))
+				IF NOT(stripPrefix)  {
+					XMLVal$=_OBJ'ScrubXML$(XMLVal$) ! PLW 2010/05/03
+!					XMLVal$=SUB(XMLVal$,"&","&amp;")
+!					XMLVal$=SUB(XMLVal$,QUO,"&quot;")
+!					XMLVal$=SUB(XMLVal$,"<","&lt;")
+!					XMLVal$=SUB(XMLVal$,">","&gt;")
+				}
+				XML$+=XMLStart$+XMLVal$+XMLEnd$+$0D0A$
+			}
+		WEND
+	RETURN XML$
+		
+PARSE_SOAP:
+	ENTER response$,tmpIOL$,tmpREC$,status$
+		retVal=1
+		statusCode$ = ""
+		tmpIOL$=CPL("IOLIST errorMsg$,response$")
+		tmpRec$=""
+		tmpIOLtxt$=""
+		BodyStart=POS("<SOAP-ENV:BODY"=UCS(response$)); offset=14
+		IF NOT(BodyStart) {
+			BodyStart=POS("<SOAPENV:BODY"=UCS(response$)); offset=13
+		}
+		IF NOT(BodyStart) {
+			BodyStart=POS("<ENV:BODY"=UCS(response$)); offset=10
+		}
+		IF NOT(BodyStart) {
+			LastErrorMsg$ = "No response body found"
+			errorMSG$ = LastErrorMsg$
+			tmpREC$=REC(tmpIOL$)
+			return 0
+		}
+		response$=response$(BodyStart+offset)
+		IF POS(">"=response$)<POS("<"=response$) AND POS(">"=response$)>0 {
+			response$=response$(POS(">"=response$)+1) ! remove the remainder of the SOAP Body begin tag
+		}
+		BodyEnd=POS("</SOAP-ENV:BODY>"=UCS(response$))
+		IF NOT(BodyEnd) {
+			BodyEnd=POS("</SOAPENV:BODY>"=UCS(response$))
+		}
+		IF NOT(BodyEnd) {
+			BodyEnd=POS("</ENV:BODY>"=UCS(response$))
+		}
+		IF NOT(BodyEnd) {
+			LastErrorMsg$ = "Invalid XML response - no body end"
+			errorMsg$=LastErrorMsg$
+			tmpREC$=REC(tmpIOL$)
+			return 0
+		}
+		response$=response$(1,BodyEnd-1)
+		WHILE LEN(response$)
+			IF _obj'GetNextTag(response$,Tag$,Data$) {
+				IF NOT(NUL(TAG$)) {
+					tmpIOLtxt$+=","+TAG$
+					DATA$=SUB(DATA$,"&#xD;&#xD;",$0A$)
+					DATA$=SUB(DATA$,"&#xD;",$0A$)
+					VIA TAG$ = DATA$
+				}
+			}
+		WEND
+		IF LEN(tmpIOLtxt$) {
+			tmpIOLtxt$=tmpIOLtxt$(2) ! get rid of starting comma
+			tmpIOL$=CPL("IOLIST "+tmpIOLtxt$)
+			tmpREC$ = REC(tmpIOL$)
+			IF POS("FAULTCODE$"=UCS(tmpIOLTxt$)) {
+				LastErrorMsg$ = errorDescription$
+				StatusCode$ = "FAILED"
+			}
+			if NOT(NUL(statusCode$)) {
+				status$ = StatusCode$ ! Status will return "FAILED" unless we get one back in SOAP response
+			}
+			retVal=1
+		} ELSE {
+			LastErrorMsg$ = "No fields found"
+			errorMsg$=LastErrorMsg$
+			tmpREC$=REC(tmpIOL$)
+			retVal=0
+		}
+		
+	RETURN retVal
+	
+GET_NEXT_TAG:
+	ENTER XML$,TAG$,DATA$
+		TAG$=""
+		DATA$=""
+		StartTag=POS("<"=XML$); EndTag=POS(">"=XML$)
+		IF NOT(StartTag) OR NOT(EndTag) OR EndTag<StartTag {
+			RETURN 0
+		}
+		TAG$ = UCS(XML$(StartTag,EndTag-StartTag))+" "
+		XML$=XML$(EndTag+1)
+		TAG$ = TAG$(2)
+		TAG$=TAG$(1,POS(" "=TAG$)-1)
+		XML$ = STP(XML$,2)
+		WHILE LEN(XML$) AND MID(XML$,1,1)<>"<"
+			IF XML$(1,1)>CHR(32) OR XML$(1,1)<CHR(127) {
+				DATA$+=XML$(1,1)
+				XML$=XML$(2)
+			}
+		WEND
+		IF POS("/"=TAG$)=1 {
+			TAG$="" ! we have an ending tag so no data to 
+		} 
+		TAG$=SUB(TAG$,"/","")
+		tmpColon=POS(":"=Tag$)
+		IF tmpColon {
+			Tag$=Tag$(tmpColon+1)
+		}		
+		IF NOT(NUL(TAG$)) {
+			TAG$=STP(TAG$,2)+"$" ! Create string variable
+		}
+
+	RETURN 1
+	
+LOG_XML:
+	ENTER XMLText$
+	if NOT(cLogXML) {
+		RETURN 1
+	}
+	XMLLogName$=coSession'pathCompany$+"\FarmPlan.XML"
+	SERIAL XMLLogName$,ERR=*NEXT
+	LogCHN=HFN
+	OPEN(LogCHN)XMLLogName$
+	WRITE(LogCHN)"<TimeStamp>"+DTE(0:"%Y/%Mz/%Dz %Hz:%mz:%sz")+"</TimeStamp>"
+	WRITE(LogCHN)XMLText$
+	WRITE(LogCHN)$0D0A0D0A$
+	CLOSE(LogCHN)
+	LogCHN=0
+	RETURN 1

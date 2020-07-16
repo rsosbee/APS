@@ -1,0 +1,186 @@
+! $Id: SY_531APSCompany_SVC.pvc $
+! Copyright 2017-2020 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #232007 - Moving URL properties from the various programs to the company SVC object. RCS
+
+DEF CLASS "SY_531APSCompany_SVC" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "SY_Company_SVC"
+
+	! Public Properties
+	PROPERTY D531_APSIOList$ GET getD531_APSIOList SET ERR
+
+	! APS
+	PROPERTY cHTTPHost$
+	PROPERTY cHTTPFile$
+	PROPERTY cHTTPType$
+	PROPERTY cHTTPQueryType$
+	PROPERTY cHTTPQueryHost$
+	PROPERTY cHTTPQueryFile$
+	PROPERTY cAPSCreditCardLog$
+
+	! C2P
+	PROPERTY C2PDomain$
+	PROPERTY C2PPrimary$
+	PROPERTY C2PEnabled
+	PROPERTY C2POption
+	PROPERTY C2PCCPaymentType$
+	PROPERTY C2PACHPaymentType$
+
+	! Local/Private Properties
+	LOCAL cD531_APSCompanyFH
+
+	! Public Functions (Methods)
+	FUNCTION FindURLs()											FIND_URLS
+	FUNCTION ValidURL(tmpURL$)									VALID_URL
+	FUNCTION GetWebInvoice(InvoiceNo$,HeaderSeqNo$,coSession)	GET_WEB_INVOICE
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL ReadRec(APSkey$)								READ_REC
+	FUNCTION LOCAL SetChildColl()								SET_CHILD_COLL
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+	if not(coSession) { coSession = %sys_ss }
+	cD531_APSCompanyFH		= coSession'openTable("SY_531APSCompany", pthSYSTEM$)
+	STATIC IOL				= IOL(cD531_APSCompanyFH)
+	cIOLIst$				+= SUB(MID(LST(IOL(cD531_APSCompanyFH)), 8), ",", SEP)+SEP
+	_obj'FindURLs()
+RETURN
+!
+
+ON_DELETE:
+	if cD531_APSCompanyFH { 
+		close(cD531_APSCompanyFH,err=*next)
+		cD531_APSCompanyFH	= 0
+	}
+RETURN
+!
+
+SET_CHILD_COLL:
+	retVal				= _OBJ'setChildColl(FROM "SY_531APSCompany_SVC_BASE")
+	tmpRtn				= _OBJ'InitChildCollection("companyKey","SY_531APSCompany_SVC","companyKey$",$$, $$)
+
+RETURN retVal
+!
+
+getD531_APSIOList:
+RETURN IOL(cD531_APSCompanyFH)
+!
+
+READ_REC:
+ENTER (APSkey$)
+	retVal				= _OBJ'ReadRec(FROM "SY_531APSCompany_SVC_BASE", APSkey$)
+	IF retVal { 
+		READ (cD531_APSCompanyFH, KEY=companyKey$, ERR=*NEXT)
+	}
+
+	_obj'FindURLs()
+
+	C2PEnabled			= D531_C2PEnabled$	= "Y"
+	C2POption			= D531_C2POptOut$	<> "Y" ! RCS - fix to reverse the logic. #232007
+	cAPSCreditCardLog$	= D531_APSCreditCardLog$
+	C2PCCPaymentType$	= D531_C2PCCPaymentType$ ! default CC payment type for import
+	C2PACHPaymentType$	= D531_C2PACHPaymentType$! default ACH payment type for import.
+
+RETURN retVal
+!
+
+FIND_URLS: ! #232007 - make available to all APS programs.
+	retVal				= retSUCCESS
+	APSPrimary$			= $$
+	urlMaintFH			= coSession'OpenTable("SY_URLMaintenance","SYSTEM",ERR=*NEXT)
+	C2PPrimary$			= $$
+	IF urlMaintFH {
+		APSURL.URL$		= $$
+		READ (urlMaintFH,REC = APSURL$,KEY="APS PRIMARY",DOM=*NEXT)
+		APSPrimary$		= APSURL.URL$
+
+		APSURL.URL$		= $$
+		READ (urlMaintFH,REC = APSURL$,KEY="APS QUERY",DOM=*NEXT)
+		APSQuery$		= APSURL.URL$
+
+		APSURL.URL$		= $$
+		READ (urlMaintFH,REC = APSURL$,KEY="APS C2P EASYPAY",DOM=*NEXT)
+		APSEasyPay$		= APSURL.URL$								! #236076 2018-09-07 RCS
+
+		APSURL.URL$		= $$
+		READ (urlMaintFH,REC = APSURL$,KEY="APS C2P EMV",DOM=*NEXT)
+		APSEMVPay$		= APSURL.URL$								! #236076 2018-12-26 RCS
+
+		! C2P URLs
+		C2PURL.URL$		= $$
+		READ (urlMaintFH,REC = C2PURL$,KEY="APS C2P PORTAL",DOM=*NEXT)
+		C2PPrimary$		= C2PURL.URL$
+
+		C2PURL.URL$		= $$
+		READ (urlMaintFH,REC = C2PURL$,KEY="APS C2P GATEWAY",DOM=*NEXT)
+		C2PDomain$		= C2PURL.URL$
+
+		CLOSE (urlMaintFH,ERR=*NEXT)
+		urlMaintFH		= 0
+ 	}
+
+	IF NOT(_obj'ValidURL(APSPrimary$)) OR NOT(_obj'ValidURL(APSQuery$)) {
+		retVal			= retFAILURE
+		LastErrorNum$	= "CI_Missing"
+		LastErrorMsg$	= MSG("CI_Missing","the APS Secure Credit Card Gateway URL")
+		APSPrimary$ 	= $$
+		APSQuery$ 		= $$
+ 	} ELSE {
+ 		p				= POS("//"=APSPrimary$)
+		cHttpType$		= LCS(APSPrimary$(1,p-2))
+		cHttpHost$		= APSPrimary$(P+2)
+		p				= POS("/" = cHttpHost$)
+		cHttpFile$		= cHttpHost$(p)
+		cHttpHost$		= LCS(cHttpHOst$(1,p-1))
+
+		p				= POS("//" = APSQuery$)
+		cHttpQueryType$	= LCS(APSQuery$(1,p-2))
+		cHttpQueryHost$	= APSQuery$(P+2)
+		p				= POS("/"=cHttpQueryHost$)
+		cHttpQueryFile$	= cHttpQueryHost$(p)
+		cHttpQueryHost$	= LCS(cHttpQueryHost$(1,p-1))
+ 	}
+
+  	IF NOT(_obj'ValidURL(C2PPrimary$)) OR NOT(_obj'ValidURL(C2PDomain$)) {
+		retVal			= retFAILURE
+		LastErrorNum$	= "CI_Missing"
+		LastErrorMsg$	= MSG("CI_Missing","the APS Click to Pay Gateway URL")
+		C2PPrimary$		= $$
+		C2PDomain$		= $$
+ 	}
+
+! 	APSEasyPay$			= "http://dev.portal.apsclicktopay.com/EasyPay"	! *****
+ 	cHttpStepOneUrl$	= APSEasyPay$	+ "/PollStep1"					! #236076 2018-09-07 RCS
+ 	cHttpStepTwoUrl$	= APSEMVPay$	+ "?transactionId="				! #236076 2018-12-26 RCS - for EMV device access
+ 	cHttpStepThreeUrl$	= APSEasyPay$	+ "/Poll?pollToken="			! #236076 2018-09-07 RCS
+  	cHttpStep3EmvUrl$	= APSEasyPay$	+ "/ErpPoll?pollToken="			! #236076 2018-12-26 RCS
+ 	
+RETURN retVal
+!
+
+VALID_URL: ! #232007 - used in FindURL()
+ENTER (URL$)
+	URL$				= UCS(URL$)
+	retVAL				= retFAILURE
+	IF POS("APSPAYMENT"	= URL$)	OR POS("FIRSTLOOK.TRANSACTIONGATEWAY.COM" = URL$) { 
+ 		retVAL			= retSUCCESS									! APS
+ 	}
+	IF POS("CLICKTOPAY"	= URL$) {
+		retVAL			= retSUCCESS									! C2P
+	}
+
+RETURN retVal
+!
+
+GET_WEB_INVOICE: ! for calling from scripts.
+ENTER (InvoiceNo$),(HeaderSeqNo$),coSession,err=*next
+	call "AR_531APSGetWebInvoice.m4p",err=*next,InvoiceNo$,HeaderSeqNo$,coSession
+RETURN retSuccess
+!

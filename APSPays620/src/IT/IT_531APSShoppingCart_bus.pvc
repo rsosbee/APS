@@ -1,0 +1,502 @@
+! $Id: IT_531APSShoppingCart_bus.pvc 
+! Sage 100 ERP Business Object / I/T Shopping Cart Business Class
+! Copyright 2013-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+
+! Irina Kouptsova, PLWhirley, Bob Sosbee
+!
+DEF CLASS "IT_531APSShoppingCart_bus" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the Following Class(es)
+	LIKE "IT_ShoppingCart_bus"
+	
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL cAPSActivated
+	LOCAL cAPSCreditCardLog$
+	LOCAL cSY_CompanyFH
+	LOCAL coCompany ! #232007
+	LOCAL cCI_ItemFH
+	LOCAL coUnitOfMeasureSvc
+	LOCAL APSProcIOL$
+	LOCAL defaultIOL$
+
+	
+	! Public Functions (Methods)
+	! ** Submit Shopping Cart, includes processing pre-authorization request
+	! ** @param tmpStatus$ [input, string] Shopping Cart status
+	! ** @param encryptedCVV$ {optional} [input, string] Encrypted CVV number included on shopping cart submission
+	! ** @returns [boolean] Success or Failure.
+	FUNCTION SubmitShoppingCart(APSStatus$) 							SUBMIT_SHOPPING_CART
+	FUNCTION SubmitShoppingCart(APSStatus$, APSencryptedCVV$) 			SUBMIT_SHOPPING_CART
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	! ARCreditCard														AR_CreditCardCommon
+
+	LOCAL coSession
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	! set precision for entire object
+	PRECISION 6 FOR OBJECT
+	
+	! check for activation
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation () ! #227159 - RCS - 2017-09-14
+		tmpRetVal		= coAPSActivation'RetrieveVersionInfo(APSVersion$,APSAdditional$) ! #227159 - RCS - 2017-09-14
+		DROP OBJECT coAPSActivation
+	}
+	coCompany 			= NEW("SY_Company_SVC",coSession) ! 232007 - RCS
+RETURN
+!
+
+ON_DELETE:
+	CLOSE (cSY_CompanyFH,	ERR=*PROCEED); cSY_CompanyFH	= 0
+	CLOSE (cCI_ItemFH,		ERR=*PROCEED); cCI_ItemFH		= 0
+	
+	DROP OBJECT coUnitOfMeasureSvc,	ERR=*PROCEED; coUnitOfMeasureSvc	= 0
+RETURN
+!
+
+SUBMIT_SHOPPING_CART:
+ENTER (tmpStatus$), (encryptedCVV$), ERR=*NEXT
+
+	IF cAPSActivated AND cPaymentMethod$ = "R" {
+
+		retVal			= retSUCCESS
+		tmpStatus$		= $$
+
+		IF NOT(EditState) {
+			retVal			= retFAILURE
+			LastErrorNum$	= "CI_RecNotEditable"
+			LastErrorMsg$	= MSG(LastErrorNum$)
+		} ELSE {
+			! Credit card payment
+			IF NUL(cPerformCreditCardAuth$) {
+				coSession'GetParameter("I/T", "PerformCreditCardAuthoriz$", cPerformCreditCardAuth$)
+			}
+
+			IF cPerformCreditCardAuth$ <> isYES$ {
+				tmpStatus$	= "P"
+			} ELSE {
+				tmpRet		= coPaymentTypeChild'FIND(PaymentType$)
+				
+				IF NOT(tmpRet) {
+					! coPaymentTypeChild'FIND(PaymentType$) should never fail since it should be selected from a drop down box 
+					! on the shopping cart pages filed only with the valid codes.  Included here for insurance.
+					! This will move update to Manual Accept / Reject for web master to resolve.
+					tmpStatus$	= "P"
+				} ELSE {
+					tmpIOL$		= CPL("IOLIST CreditCardSetupTested$, D531APSMerchantID$, D531APSPassword$, D531APSApiKey$")	! DB# 1310 - 2020-03-12 - RCS
+					coPaymentTypeChild'GetPartialRecord(tmpRec$, tmpIOL$)
+					READ DATA FROM tmpRec$, REC=pmt$ TO IOL = tmpIOL$
+					D531APSUseEmvDevice$				= isNO$		! hard code to NO.  DB# 1310 - 2020-03-12 - RCS
+					_OBJ'ArCreditCard'isXML				= isFALSE	! DB# 1310 - 2020-03-12 - RCS
+					_OBJ'ArCreditCard'ProcessHostedForm	= isFALSE	! DB# 1310 - 2020-03-12 - RCS
+					
+					! get credit card number, CVV cardholder info DB# 1310 - 2020-03-12 - RCS
+					! 
+					service$			= "RETRIEVE"
+					CCnumber$			= $$
+					CCexp$				= $$
+					APSRoutingNo$ 		= $$ 
+					APSAcctNo$ 			= $$ 
+					APSAcctType$ 		= $$ 
+					APSaccountName$		= $$
+					sourceRef$			= $$
+					amount				= TaxableAmt + NonTaxableAmt + SalesTaxAmt + FreightAmt - DiscountAmt
+					taxAmount			= SalesTaxAmt
+					tmpShipping			= FreightAmt
+					last4Nos$			= Last4UnencryptedCreditCardNos$
+					last4RoutingNo$		= Last4BankRoutingNos$
+					last4AcctNo$		= Last4BankAccountNos$
+					D531APSValidated$	= isNO$
+					%APSRetailAcct$		= isNO$
+					%PaymentType$		= PaymentType$
+		
+					IF service$ = "UPDATE" or service$ = "RETRIEVE" {
+						SWITCH cPaymentMethod$
+							CASE "R" ! Credit card
+								IF NOT(NUL(last4Nos$)) AND NOT(last4Nos$="****") {
+									CCnumber$		= "************"+last4Nos$
+									CCexp$			= ExpirationDateMonth$+mid(ExpirationDateYear$,-2)
+									OLD.CCexp$		= CCexp$
+									last4RoutingNo$	= $$
+									last4AcctNo$	= $$
+								} ELSE {
+									last4Nos$		= $$
+								}
+								BREAK
+							CASE "A" ! ACH
+								IF NOT(NUL(last4RoutingNo$)) AND NOT(last4RoutingNo$ = "****") {
+									APSRoutingNo$	= "*****"+last4RoutingNo$
+									APSAcctNo$		= "*****"+last4AcctNo$
+									APSAcctType$ 	= BankAccountType$
+									APSAccountName$	= BankName$
+									APSSecType$		= "B" !D531APSAchAccountType$
+								} ELSE {
+									APSRoutingNo$	= $$
+									APSAcctNo$		= $$
+									last4RoutingNo$	= $$
+									last4AcctNo$	= $$
+								}
+								BREAK
+							DEFAULT
+								BREAK
+						END SWITCH
+					}
+		
+					IF cPaymentMethod$ = "R" {
+						!
+						APSRoutingNo$		= $$
+						APSAcctNo$			= $$
+						last4RoutingNo$		= $$
+						last4AcctNo$		= $$
+					} ELSE {
+						!
+						CCnumber$			= $$
+						CCexp$				= $$
+						last4Nos$			= $$
+					}
+
+					IF pmt.CreditCardSetupTested$ <> isYES$ {
+						tmpStatus$ = "P"
+					} ELSE {
+						tmpRet		= _OBJ'ARCreditCard'ConnectToPaymentServer(HostCH)
+						
+						IF tmpRet {
+							tmpRet	= _OBJ'ARCreditCard'CreateRequestStrings(pmt.D531APSMerchantID$,pmt.D531APSPassword$,MainRequestString$,QueryRequestString$)
+						
+							IF tmpRet {
+								vaultService$	= "RETRIEVE"
+								CustomerVaultRequestString$			= $$
+								IF NOT(NUL(CardholderName$)) {
+									CustomerVaultRequestString$		+= "&firstname="+ARCreditCard'APSURLEncoding$(CardholderName$)
+								}
+								IF NOT(NUL(AVSAddressLine1$)) {
+									CustomerVaultRequestString$		+= "&address1="+ARCreditCard'APSURLEncoding$(AVSAddressLine1$)
+								}
+								IF NOT(NUL(AVSZipCode$)) {
+									CustomerVaultRequestString$		+= "&zip="+ARCreditCard'APSURLEncoding$(AVSZipCode$)
+								}
+								IF NOT(NUL(AVSCity$)) {
+									CustomerVaultRequestString$		+= "&city="+ARCreditCard'APSURLEncoding$(AVSCity$)
+								}
+								IF NOT(NUL(AVSState$)) {
+									CustomerVaultRequestString$		+= "&state="+ARCreditCard'APSURLEncoding$(AVSState$)
+								}
+								IF NOT(NUL(AVSCountryCode$)) {
+									childObj	= _OBJ'GetChildHandle("AVSCountryCode")
+									childObj'SetIndex(idxPRIMARY$)
+									tmpRet		= childObj'Find(AVSCountryCode$)
+									IF tmpRet {
+										childObj'GetValue("CountryName$", Country$)
+									}
+								}
+								IF NOT(NUL(Country$)) {
+									CustomerVaultRequestString$		+= "&country="+ARCreditCard'APSURLEncoding$(Country$)
+								}
+								CustomerVaultRequestString$			+= "&customer_vault=update_customer"
+							
+								RequestString$			= MainRequestString$+CustomerVaultRequestString$
+								RequestString$			+= "&type=auth"
+								RequestString$			+= "&orderid="+(PAD(UserID$, 7) + "SC")
+								RequestString$			+= "&orderdescription="+ARCreditCard'APSURLEncoding$("Web based purchases") ! (PAD(UserID$, 7) + "SC")
+								_OBJ'GetValue("EMailAddress$",tmpEMailAddress$)
+								IF NOT(NUL(tmpEMailAddress$)) {
+									RequestString$		+= "&email="+ARCreditCard'APSURLEncoding$(tmpEMailAddress$)
+								}
+	
+								! Level II #229496 - 2017-09-26
+								! shipping amt
+								_OBJ'GetValue("FreightAmt",tmpFreightAmt)
+								RequestString$			+= "&shipping="+STR(tmpFreightAmt)
+								
+								! PO Number, tax #229496 - 2017-09-26
+								_OBJ'GetValue("CustomerPONo$",tmpCustPo$)
+								IF nul(tmpCustPo$) { 
+									tmpCustPo$			= "Verbal" 
+								}
+								
+								IF NOT(NUL(CorporateCustIDPurchOrder$)) {
+									RequestString$		+= "&ponumber="+CorporateCustIDPurchOrder$
+									RequestString$		+= "&tax="+STR(IT_ShoppingCartHeader.SalesTaxAmt)
+									_OBJ'SetValueNoValidate("CorporateSalesTax", SalesTaxAmt)										
+								} ELSE {
+									IF CorporateSalesTax {
+										_OBJ'SetValueNoValidate("CorporateSalesTax", 0)
+									}
+									RequestString$		+= "&ponumber="+tmpCustPo$
+									RequestString$		+= "&tax=" + STR(IT_ShoppingCartHeader.SalesTaxAmt)
+
+								}
+								
+								! version info #227159 - RCS - 2017-09-14
+								cSql					= (coSession'CS>0)														! #252143 - 2019-05-28 - RCS - Fix for coSession'SQL returning object number.
+								sType$					= TBL(coSession'CS+cSql,"S","A","P")									! Sage 100 Standard, Advanced, SQL
+								IF NOT(NUL(CreditCardID$)) {
+									CustomerVaultRequestString$	+= "&merchant_defined_field_1="+CreditCardID$ 
+								}
+								RequestString$			+= "&merchant_defined_field_2="+ARCreditCard'APSURLEncoding$(APSVersion$)		! APS version level
+								RequestString$			+= "&merchant_defined_field_3="+ARCreditCard'APSURLEncoding$(APSAdditional$)	! APS Addtional information
+								RequestString$			+= "&merchant_defined_field_4="+ARCreditCard'APSURLEncoding$("Sage 100-"+sType$+" "+LMversionNo$)	! Sage type and revision
+								RequestString$			+= "&merchant_defined_field_5="+ARCreditCard'APSURLEncoding$(%C$)				! Sage company code
+								
+								! Level III
+								! we are going to add Level III data if Level III Processing is checked in the Company Maintenance
+								SummaryCommodityCode$	= $$
+								ItemCommodityCode$		= $$
+								ShipFromPostal$			= $$
+								
+								IF NOT(cSY_CompanyFH) { cSY_CompanyFH=coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT) }
+ 								IF cSY_CompanyFH {
+									CurCompanyKey$		= coSession'CompanyKey$
+									CompFound			= isFALSE
+									CompFound			= CoCompany'Find(CurCompanyKey$) ! #232007 - RCS
+									coCompany'GetValue("D531APSLevelIIIProcessing$", TMP.D531APSLevelIIIProcessing$)
+
+									IF CompFound {
+										IF TMP.D531APSLevelIIIProcessing$="Y" {
+											coCompany'GetValue("D531APSSummaryCommodityCode$",	SummaryCommodityCode$)
+											coCompany'GetValue("D531APSItemCommodityCode$",		ItemCommodityCode$)
+											coCompany'GetValue("D531ShipFromPostal$",			ShipFromPostal$)
+										}
+									}
+								}
+ 								IF NOT(NUL(SummaryCommodityCode$)) AND NOT(NUL(ItemCommodityCode$)) AND NOT(NUL(ShipFromPostal$)) {
+									! get Level III specific Order Fields
+									! shipping amt - moved to level II #229496 - 2017-09-26
+									! additional shipping info
+									_OBJ'GetValue("ShipToName$",tmpShipToName$)
+									IF NOT(NUL(tmpShipToName$)) {
+										SendName$			= tmpShipToName$
+									} ELSE {
+										_OBJ'GetValue("BillToName$",tmpBillToName$)
+										IF NOT(NUL(tmpBillToName$)) {
+											SendName$		= tmpBillToName$
+										} ELSE {
+											_OBJ'GetValue("CardholderName$",tmpCardholderName$)
+											SendName$		= tmpCardholderName$
+										}
+									}
+									ARCreditCard'FindNames(SendName$,ReturnFirstName$,ReturnLastName$)
+									RequestString$			+= "&shipping_firstname="+ARCreditCard'APSURLEncoding$(ReturnFirstName$)
+									RequestString$			+= "&shipping_lastname="+ARCreditCard'APSURLEncoding$(ReturnLastName$)
+									_OBJ'GetValue("ShipToAddress1$",tmpShipToAddress1$)
+									IF NOT(NUL(tmpShipToAddress1$)) {
+										RequestString$		+= "&shipping_address1="+ARCreditCard'APSURLEncoding$(tmpShipToAddress1$)
+									} ELSE {
+										_OBJ'GetValue("BillToAddress1$",tmpBillToAddress1$)
+										IF NOT(NUL(tmpBillToAddress1$)) {
+											RequestString$	+= "&shipping_address1="+ARCreditCard'APSURLEncoding$(tmpBillToAddress1$)
+										} ELSE {
+											_OBJ'GetValue("AVSAddressLine1$",tmpAVSAddressLine1$)
+											RequestString$	+= "&shipping_address1="+ARCreditCard'APSURLEncoding$(tmpAVSAddressLine1$)
+										}
+									}
+									_OBJ'GetValue("ShipToAddress2$",tmpShipToAddress2$)
+									IF NOT(NUL(tmpShipToAddress2$)) {
+										RequestString$		+= "&shipping_address2="+ARCreditCard'APSURLEncoding$(tmpShipToAddress2$)
+									} ELSE {
+										_OBJ'GetValue("BillToAddress2$",tmpBillToAddress2$)
+										IF NOT(NUL(tmpBillToAddress2$)) {
+											RequestString$	+= "&shipping_address2="+ARCreditCard'APSURLEncoding$(tmpBillToAddress2$)
+										} ELSE {
+											_OBJ'GetValue("AVSAddressLine2$",tmpAVSAddressLine2$)
+											RequestString$	+= "&shipping_address2="+ARCreditCard'APSURLEncoding$(tmpAVSAddressLine2$)
+										}
+									}
+									_OBJ'GetValue("ShipToCity$",tmpShipToCity$)
+									IF NOT(NUL(tmpShipToCity$)) {
+										RequestString$		+= "&shipping_city="+ARCreditCard'APSURLEncoding$(tmpShipToCity$)
+									} ELSE {
+										_OBJ'GetValue("BillToCity$",tmpBillToCity$)
+										IF NOT(NUL(tmpBillToCity$)) {
+											RequestString$	+= "&shipping_city="+ARCreditCard'APSURLEncoding$(tmpBillToCity$)
+										} ELSE {
+											_OBJ'GetValue("AVSCity$",tmpAVSCity$)
+											RequestString$	+= "&shipping_city="+ARCreditCard'APSURLEncoding$(tmpAVSCity$)
+										}
+									}
+									_OBJ'GetValue("ShipToState$",tmpShipToState$)
+									IF NOT(NUL(tmpShipToState$)) {
+										RequestString$		+= "&shipping_state="+ARCreditCard'APSURLEncoding$(tmpShipToState$)
+									} ELSE {
+										_OBJ'GetValue("BillToState$",tmpBillToState$)
+										IF NOT(NUL(tmpBillToState$)) {
+											RequestString$	+= "&shipping_state="+ARCreditCard'APSURLEncoding$(tmpBillToState$)
+										} ELSE {
+											_OBJ'GetValue("AVSState$",tmpAVSState$)
+											RequestString$	+= "&shipping_state="+ARCreditCard'APSURLEncoding$(tmpAVSState$)
+										}
+									}
+									_OBJ'GetValue("ShipToCountryCode$",tmpShipToCountryCode$)
+									IF NOT(NUL(tmpShipToCountryCode$)) {
+										RequestString$		+= "&shipping_country="+ARCreditCard'APSURLEncoding$(tmpShipToCountryCode$)
+									} ELSE {
+										_OBJ'GetValue("BillToCountryCode$",tmpBillToCountryCode$)
+										IF NOT(NUL(tmpBillToCountryCode$)) {
+											RequestString$	+= "&shipping_country="+ARCreditCard'APSURLEncoding$(tmpBillToCountryCode$)
+										} ELSE {
+											_OBJ'GetValue("AVSCountryCode$",tmpShipToCountryCode$)
+											RequestString$	+= "&shipping_country="+ARCreditCard'APSURLEncoding$(tmpShipToCountryCode$)
+										}
+									}
+									_OBJ'GetValue("ShipToZipCode$",tmpShipToZipCode$)
+									IF NOT(NUL(tmpShipToZipCode$)) {
+										RequestString$		+= "&shipping_postal="+ARCreditCard'APSURLEncoding$(tmpShipToZipCode$)
+										RequestString$		+= "&shipping_zip="+ARCreditCard'APSURLEncoding$(tmpShipToZipCode$)
+									} ELSE {
+										_OBJ'GetValue("BillToZipCode$",tmpBillToZipCode$)
+										IF NOT(NUL(tmpBillToZipCode$)) {
+											RequestString$	+= "&shipping_postal="+ARCreditCard'APSURLEncoding$(tmpBillToZipCode$)
+											RequestString$	+= "&shipping_zip="+ARCreditCard'APSURLEncoding$(tmpBillToZipCode$)
+										} ELSE {
+											_OBJ'GetValue("AVSZipCode$",tmpShipToZipCode$)
+											RequestString$	+= "&shipping_postal="+ARCreditCard'APSURLEncoding$(tmpShipToZipCode$)
+											RequestString$	+= "&shipping_zip="+ARCreditCard'APSURLEncoding$(tmpShipToZipCode$)
+										}
+									}
+									! shipping from postal
+									RequestString$			+= "&ship_from_postal="+ARCreditCard'APSURLEncoding$(ShipFromPostal$)
+									! summary commodity code
+									RequestString$			+= "&summary_commodity_code="+ARCreditCard'APSURLEncoding$(SummaryCommodityCode$)
+				
+									! get Level III specific Line Item Detail Fields
+									ItemNumber				= 0
+									_OBJ'Lines'MoveFirst()
+									WHILE NOT(_OBJ'Lines'eof)
+										_OBJ'Lines'GetValue("ItemType$",tmpItemType$)
+										_OBJ'Lines'GetValue("Quantity",tmpQuantity)
+										IF tmpItemType$		= "3" {
+											tmpQuantity		= 1
+										}
+										IF tmpItemType$<>"4" AND tmpQuantity<>0 {
+											ItemNumber		++
+											ItemNumber$		= STR(ItemNumber)
+											! item code
+											_OBJ'Lines'GetValue("ItemCode$",tmpItemCode$)
+											RequestString$	+= "&item_product_code_"+ItemNumber$+"="+ARCreditCard'APSURLEncoding$(tmpItemCode$)
+											! item description
+											IF NOT(cCI_ItemFH) {
+												cCI_ItemFH=coSession'OpenTable("CI_Item","COMPANY",ERR=*NEXT)
+											}
+											ItemFound		= 0
+											READ (cCI_ItemFH,KEY=tmpItemCode$,REC=ITEM$,DOM=*NEXT);ItemFound=1
+											IF ItemFound {
+												IF NOT(NUL(ITEM.ItemCodeDesc$)) {
+													RequestString$	+= "&item_description_" + ItemNumber$ + "=" + ARCreditCard'APSURLEncoding$(ITEM.ItemCodeDesc$)
+												} ELSE {
+													RequestString$	+= "&item_description_" + ItemNumber$ + "=" + ARCreditCard'APSURLEncoding$(tmpItemCode$)
+												}
+											} ELSE {
+												RequestString$		+= "&item_description_" + ItemNumber$ + "=" + "Line Item"
+											}
+											! item commodity code
+											RequestString$			+= "&item_commodity_code_" + ItemNumber$ + "=" + ARCreditCard'APSURLEncoding$(ItemCommodityCode$)
+											! unit of measure
+											_OBJ'Lines'GetValue("UnitOfMeasure$",tmpUnitOfMeasure$)
+											RequestString$			+= "&item_unit_of_measure_" + ItemNumber$ + "=" + ARCreditCard'APSURLEncoding$(tmpUnitOfMeasure$)
+											! quantity
+											tmpQuantity$=STR(tmpQuantity)
+											RequestString$			+= "&item_quantity_" + ItemNumber$ + "=" + tmpQuantity$
+											! unit cost
+											IF tmpItemType$="3" {
+												_OBJ'Lines'GetValue("ExtensionAmt",tmpUnitCost)
+											} ELSE {
+												_OBJ'Lines'GetValue("UnitPrice",tmpUnitCost)
+											}
+											tmpUnitCost				= PRC(tmpUnitCost,4)
+											tmpUnitCost$			= STR(tmpUnitCost)
+											RequestString$			+= "&item_unit_cost_" + ItemNumber$ + "=" + tmpUnitCost$
+											! item total amount - item_unit_cost_# x item_quantity_# rounded to the nearest penny
+											tmpTotalAmt				= tmpUnitCost*tmpQuantity
+											tmpTotalAmt				= PRC(tmpTotalAmt,2)
+											tmpTotalAmt$			= STR(tmpTotalAmt)
+											RequestString$			+= "&item_total_amount_" + ItemNumber$ + "=" + tmpTotalAmt$
+											! item tax amount
+											RequestString$			+= "&item_tax_amount_" + ItemNumber$ + "=0.00"
+											! item tax rate
+											RequestString$			+= "&item_tax_rate_" + ItemNumber$ + "=0.00"
+										}
+										_OBJ'Lines'MoveNext()
+									WEND
+								}
+								RequestString$			+= "&amount=" + STR(TaxableAmt + NonTaxableAmt + SalesTaxAmt + FreightAmt - DiscountAmt)
+								RequestString$			+= "&customer_vault_id=" + CreditCardGUID$
+								IF NOT(NUL(encryptedCVV$)) {
+									_OBJ'DecryptPassword(encryptedCVV$, cvvNo$)
+								} ELSE {
+									cvvNo$ 				= $$
+								}
+								IF NOT(NUL(cvvNo$)) {
+									CustomerVaultRequestString$		+= "&cvv="+cvvNo$
+								}
+								
+								! DB# 1310 - 2020-03-12 - RCS
+								APSProcIOL$				= CPL("IOLIST APSStatus$, ResponseCode$, ResponseText$, CreditCardAuthorizationNo$, CreditCardTransactionID$, vaultID$, AVSResult$, CVVResult$, D531APSApiKey$, VaultService$, CCNumber$, CCexp$, cardType$, amount, taxAmount, tmpShipping, UseEmvDevice$,sourceRef$") ! PLW 2018-08-214 Ticket #236076
+								defaultIOL$				= CPL("IOLIST CardHolderName$, AVSAddress1$, AVSAddress2$, AVSZipCode$, AVSCity$, AVSState$, AVSCountryCode$, EMailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")
+								defaultRec$				= rec(defaultIOL$)
+								APSProcRec$				= rec(APSProcIOL$)
+								
+								! tmpRet = _OBJ'ARCreditCard'ProcessAPSTransaction(RequestString$,APSStatus$,ResponseCode$,ResponseText$,CreditCardAuthorizationNo$,CreditCardTransactionID$,vaultID$,AVSResult$,CVVResult$)
+								tmpRet					= _OBJ'ARCreditCard'ProcessAPSTransaction(RequestString$, APSProcRec$, APSProcIOL$, defaultRec$, defaultIOL$)
+								read data from APSProcRec$ to iol = APSProcIOL$
+								read data from defaultRec$ to iol = defaultIOL$
+
+								IF tmpRet {
+									IF UCS(APSStatus$)<>"SUCCESS" {
+										tmpStatus$ = "P"
+										coSession'WriteLog$("WE", "Credit card transaction request failed, Error Message: " 					\
+												+ STP(ResponseText$) + "; Error Code: " + STP(ResponseCode$), 0, "IT_ShoppingCart_bus", 0)
+									} ELSE {
+										! Success
+										tmpStatus$ = "A"
+										_OBJ'SetValueNoValidate("CreditCardTransactionID$", STP(CreditCardTransactionID$))
+										_OBJ'SetValueNoValidate("CreditCardAuthorizationNo$", STP(CreditCardAuthorizationNo$))
+										_OBJ'SetValueNoValidate("CreditCardPreAuthorizationAmt",  TaxableAmt+NonTaxableAmt+SalesTaxAmt+FreightAmt-DiscountAmt)
+										DAY_FORMAT READ saveMask$
+										DAY_FORMAT "YYYYMMDD"
+										_OBJ'SetValueNoValidate("AuthorizationDate$", DAY)
+										_OBJ'SetValueNoValidate("AuthorizationTime$", STR(TME:"00.000"))
+										DAY_FORMAT saveMask$
+										if nul(CreditCardGUID$) and not(nul(vaultID$)) {	! #254297 - 2019-07-09 - RCS set new GUID
+											_OBJ'SetValueNoValidate("CreditCardGUID$", vaultID$)
+										}
+									}
+								} ELSE {
+									tmpStatus$ = "P"
+									coSession'WriteLog$("WE", "Credit card transaction request failed. No Response.", 0, "IT_ShoppingCart_bus", 0)
+								}
+							} ELSE {
+								! invalid Merchant ID or password
+								tmpStatus$ = "P"
+								coSession'WriteLog$("WE", _OBJ'ARCreditCard'LastErrorMsg$, 0, "IT_ShoppingCart_bus", 0)
+							}
+							_OBJ'ARCreditCard'ClosePaymentServerConnection()
+							HostCH=0
+							_OBJ'ARCreditCard'CloseLogFile()
+						} ELSE {
+							! no internet connection
+							tmpStatus$ = "P"
+							coSession'WriteLog$("WE", "Cannot connect to Payment server. "+ _OBJ'ARCreditCard'LastErrorMsg$, 0, "IT_ShoppingCart_bus", 0)
+						}
+					}
+				}
+			}
+		}
+		IF retVal {
+			_OBJ'SetValueNoValidate("Status$", tmpStatus$)
+		}
+	} ELSE {
+		! PLW 2015-12-29 Next line changed to use proper paramaters
+		retVal=_OBJ'SubmitShoppingCart(FROM "IT_531APSShoppingCart_bus_BASE", tmpStatus$, encryptedCVV$) ! APSStatus$, APSencryptedCVV$)
+	}
+
+RETURN retVal
+!

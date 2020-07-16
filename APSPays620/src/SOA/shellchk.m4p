@@ -1,0 +1,21 @@
+! $Id: shellchk.m4p $
+! Copyright 2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! ** @Author Bsosbee
+! 
+!
+Main:
+	While 1
+		coSession			= %sys_ss
+		oCreditCardSubmit	= NEW("AR_531APSCreditCardSubmit_ui",coSession)
+		retval				= oCreditCardSubmit'GetUrlForTesting(testUrl$,testAction$)
+		retval				= oCreditCardSubmit'GetHostedForm(testUrl$, UserAction$)
+		DROP OBJECT oCreditCardSubmit
+		oCreditCardSubmit	= 0
+		msgbox "User Action returned: "+UserAction$	! *SC-OK*
+		answer$				= coSession'UI'Messagebox$("","Try Again?","style=Y,title=Shell Testing,icon=?")
+		If answer$ <> "YES" {
+			break
+		}
+	wend
+stop
+!

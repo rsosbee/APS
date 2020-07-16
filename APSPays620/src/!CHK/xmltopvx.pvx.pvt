@@ -1,0 +1,469 @@
+! xmltopvx.pvx - Convert an xml file (created by pvxtoxml.pvx) back to a pvx file
+! $Id: xmltopvx.pvx.pvt 84 2009-04-07 20:09:08Z fred.mcguirk $
+! Original code courtesy of J. Wilder - Megasys Hospitality Systems, Inc.
+! 
+CreateData:
+ENTER (TextFile$),(datafile$),status,ERR=Done
+ENTER *,*,*,(aMonitor),ERR=*NEXT
+ENTER *,*,*,*,(ignoreFilename),ERR=*NEXT
+ENTER *,*,*,*,*,(add2File),ERR=*NEXT
+status=-1
+! Remove the .xml extension if it exists.
+IF LCS(MID(datafile$,-4))=".xml" THEN {
+datafile$=MID(datafile$,1,LEN(datafile$)-4)
+ }
+IF %debug_list_box THEN {
+LIST_BOX LOAD %debug_list_box,0,TextFile$+SEP+datafile$+SEP
+ }
+decodingcount=5
+DIM decodinglist$[1:2,1:decodingcount]
+decodinglist$[1,1]="&amp;",decodinglist$[2,1]="&"
+decodinglist$[1,2]="&quot;",decodinglist$[2,2]=QUO
+decodinglist$[1,3]="&lt;",decodinglist$[2,3]="<"
+decodinglist$[1,4]="&gt;",decodinglist$[2,4]=">"
+decodinglist$[1,5]="&apos;",decodinglist$[2,5]="'"
+OPEN LOCK (UNT,ERR=OpenError)TextFile$; TextFile=LFO
+IF add2File THEN {
+OPEN (HFN,ERR=*NEXT)datafile$; datafile=LFO; GOTO CreateData_Done
+ }
+ERASE datafile$,ERR=*NEXT
+system=NEW("system")
+x=system'makeserial(datafile$)
+DELETE OBJECT system
+IF x THEN {
+ERASE datafile$
+GOSUB DefineDataFile
+IF datafile THEN {
+status=0
+ }
+ } ELSE {
+status=15
+ }
+CreateData_Done:
+CLOSE (TextFile)
+IF datafile THEN CLOSE (datafile)
+Done:
+EXIT 
+! 
+OpenError:
+IF TextFile>0 THEN CLOSE (TextFile)
+status=ERR; IF status=0 THEN status=15
+GOTO Done
+! 
+DefineDataFile:
+LOCAL xmldata$,tablename$,schematype$,filetype$,keysize$,maxrecords$
+LOCAL recordsize$,keysdef$,keyscount$,ddheader$,ddheaderiol$
+xmldata$=$FF$
+READ (TextFile,END=*NEXT)xmldata$; xmldata$=CVS(STP(xmldata$,0,$09$),1)
+WHILE xmldata$<>$FF$
+IF POS("<table "=xmldata$) THEN {
+tablename$=FNxmlgetattrvalue$("table","name",xmldata$)
+IF NUL(tablename$) THEN BREAK
+IF NOT(ignoreFilename) AND MID(SUB("/"+datafile$,"\","/"),-(LEN(tablename$)+1))<>"/"+tablename$ THEN BREAK
+ }
+IF POS("<schema "=xmldata$) THEN {
+schematype$=FNxmlgetattrvalue$("schema","type",xmldata$)
+IF schematype$<>"providex" THEN BREAK
+IF aMonitor THEN aMonitor'setTaskDetail("Creating dictionary definition...")
+GOSUB GetSchema
+IF NOT(datafile) THEN BREAK
+ }
+IF POS("<rows>"=xmldata$) THEN {
+GOSUB GetRows
+ }
+xmldata$=$FF$
+READ (TextFile,END=*NEXT)xmldata$; xmldata$=CVS(STP(xmldata$,0,$09$),1)
+WEND 
+! If Embedded IO Program then write it now that the file's been built
+IF NOT(NUL(ddheader$)) THEN {
+READ DATA FROM ddheader$ TO IOL=ddheaderiol$
+DICTIONARY WRITE (datafile,IND=0)IOL=ddheaderiol$
+ }
+IF aMonitor THEN aMonitor'setTaskDetail("File creation complete...")
+RETURN 
+! 
+! 
+GetSchema:
+LOCAL dictxml$
+WHILE xmldata$<>$FF$
+IF POS("<type>"=xmldata$) THEN {
+filetype$=FNxmlgettagvalue$("type",xmldata$)
+IF filetype$<>"K" AND filetype$<>"2" THEN BREAK
+ }
+IF POS("<keysize>"=xmldata$) THEN {
+keysize$=FNxmlgettagvalue$("keysize",xmldata$)
+IF NOT(FNisnumeric(keysize$)) THEN BREAK
+keysdef$=keysize$
+ }
+IF POS("<maxrecords>"=xmldata$) THEN {
+maxrecords$=FNxmlgettagvalue$("maxrecords",xmldata$)
+IF NOT(FNisnumeric(maxrecords$)) THEN BREAK
+ }
+IF POS("<recordsize>"=xmldata$) THEN {
+recordsize$=FNxmlgettagvalue$("recordsize",xmldata$)
+IF NOT(FNisnumeric(recordsize$)) THEN BREAK
+ }
+IF POS("<externalkey>"=xmldata$) THEN {
+externalkey$=FNxmlgettagvalue$("externalkey",xmldata$)
+IF NOT(FNisnumeric(externalkey$)) THEN BREAK
+ }
+IF POS("<password "=xmldata$) THEN {
+password_type$=FNxmlgetattrvalue$("password","type",xmldata$)
+IF NOT(FNisnumeric(password_type$)) THEN BREAK
+password$=FNxmlgettagvalue$("password",xmldata$)
+ }
+IF POS("<keys "=xmldata$) THEN {
+keysdef$=""
+keyscount$=FNxmlgetattrvalue$("keys","count",xmldata$)
+IF NOT(FNisnumeric(keyscount$)) THEN BREAK
+GOSUB GetKeyDefinitions
+IF NOT(NUL(keysize$)) THEN {
+keysdef$=keysize$+keysdef$
+ } ELSE {
+keysdef$=MID(keysdef$,2)
+ }
+IF NUL(keysdef$) AND NUL(externalkey$) THEN BREAK
+ }
+IF POS("<dictionary>"=xmldata$) THEN {
+GOSUB GetDictionary
+ }
+IF POS("</schema>"=xmldata$) THEN {
+IF physicalfiledefined THEN BREAK
+GOSUB CreatePhysicalFile
+IF physicalfiledefined THEN {
+OPEN LOCK (UNT)datafile$
+datafile=LFO
+IF NOT(NUL(dictxml$)) THEN {
+GOSUB WriteDictionary
+CLOSE (datafile)
+datafile=0,dictxml$=""
+OPEN LOCK (UNT,IOL=*,REC=datapfx$,ERR=*BREAK)datafile$
+datafile=LFO,hasiolist=1
+GOSUB CreateDataFile_IOL
+ }
+ }
+! If password protected, assign the password now
+IF NOT(NUL(password$)) THEN {
+GOSUB SetPassword
+ }
+BREAK
+ }
+xmldata$=$FF$
+READ (TextFile,END=*NEXT)xmldata$; xmldata$=CVS(STP(xmldata$,0,$09$),1)
+WEND 
+RETURN 
+! 
+! 
+GetKeyDefinitions:
+LOCAL keyscount,keydef$
+WHILE xmldata$<>$FF$
+IF POS("<key id="=xmldata$) THEN {
+FOR keyscount=0 TO NUM(keyscount$)
+keydef$=FNxmlgettagvaluebyattr$("key","id="+QUO+STR(keyscount)+QUO,xmldata$)
+IF NOT(NUL(keydef$)) THEN {
+keysdef$+=","+keydef$
+ }
+NEXT keyscount
+ }
+IF POS("</keys>"=xmldata$) THEN BREAK
+xmldata$=$FF$
+READ (TextFile,END=*NEXT)xmldata$; xmldata$=CVS(STP(xmldata$,0,$09$),1)
+WEND 
+RETURN 
+! 
+! 
+CreatePhysicalFile:
+LOCAL optval$
+SWITCH filetype$
+CASE "K"
+ERASE datafile$,ERR=*NEXT
+IF SSN>"0600" THEN {
+optval$="0"
+ }
+IF NUM(recordsize$) THEN {
+IF NUL(keysdef$) THEN {
+KEYED datafile$,NUM(externalkey$),NUM(maxrecords$),NUM(recordsize$),OPT=optval$,ERR=*BREAK
+ } ELSE {
+KEYED datafile$,keysdef$,NUM(maxrecords$),NUM(recordsize$),OPT=optval$,ERR=*BREAK
+ }
+ } ELSE {
+SORT datafile$,NUM(keysdef$,ERR=*BREAK),NUM(maxrecords$),ERR=*BREAK
+ }
+physicalfiledefined=1
+BREAK
+CASE "2"
+ERASE datafile$,ERR=*NEXT
+CREATE TABLE datafile$,keysdef$,NUM(maxrecords$),NUM(recordsize$),ERR=*BREAK
+physicalfiledefined=1
+BREAK
+DEFAULT 
+END SWITCH 
+RETURN 
+! 
+! 
+GetDictionary:
+LOCAL x
+x=POS("<dictionary>"=xmldata$),xmldata$=xmldata$(x+12)
+WHILE xmldata$<>$FF$
+x=POS("</dictionary>"=xmldata$)
+IF x THEN {
+dictxml$+=xmldata$(1,x-1)
+BREAK
+ } ELSE {
+dictxml$+=xmldata$
+ }
+xmldata$=$FF$
+READ (TextFile,END=*NEXT)xmldata$; xmldata$=CVS(STP(xmldata$,0,$09$),1)
+WEND 
+RETURN 
+WriteDictionary:
+LOCAL x,elementsxml$,ddf_iol$,dde_iol$,elementscount$,elementscount
+LOCAL elementxml$,nelementsxml$
+x=POS("<elements count="=dictxml$)
+IF NOT(x) THEN RETURN 
+elementsxml$=dictxml$(x),dictxml$=dictxml$(1,x-1)
+x=POS("<nelements count="=elementsxml$)
+IF x THEN {
+nelementsxml$=elementsxml$(x),elementsxml$=elementsxml$(1,x-1)
+ }
+ddf_iol$=FNxmlgetiolflds$(dictxml$,"ddf.")
+IF NUL(ddf_iol$) THEN RETURN 
+! If Embedded IO Program then it will be written once the file's been built
+IF NOT(NUL(ddf.file_proc$)) THEN {
+ddheader$=REC(ddf_iol$)
+ddheaderiol$=ddf_iol$
+ddf.file_proc$=""
+ }
+! write dictionary header information for this file
+DICTIONARY WRITE (datafile,IND=0)IOL=ddf_iol$
+READ DATA FROM "" TO IOL=ddf_iol$
+! write the dictionary information for each field
+elementscount$=FNxmlgetattrvalue$("elements","count",elementsxml$)
+IF NOT(FNisnumeric(elementscount$)) THEN RETURN 
+FOR elementscount=1 TO NUM(elementscount$)
+elementxml$=FNxmlgettagcontentbyattr$("element","id="+QUO+STR(elementscount)+QUO,elementsxml$)
+dde_iol$=FNxmlgetiolflds$(elementxml$,"dde.")
+IF NUL(dde_iol$) THEN BREAK
+IF MID(dde.iolobj$,1,3)<>"EXT" THEN DICTIONARY WRITE (datafile,IND=elementscount)IOL=dde_iol$
+READ DATA FROM "" TO IOL=dde_iol$
+NEXT elementscount
+! 
+IF NOT(NUL(nelementsxml$)) THEN {
+elementscount$=FNxmlgetattrvalue$("nelements","count",nelementsxml$)
+IF NOT(FNisnumeric(elementscount$)) THEN RETURN 
+FOR elementscount=-1 TO -NUM(elementscount$) STEP -1
+elementxml$=FNxmlgettagcontentbyattr$("nelement","id="+QUO+STR(elementscount)+QUO,nelementsxml$)
+dde_iol$=FNxmlgetiolflds$(elementxml$,"dde.")
+IF NUL(dde_iol$) THEN BREAK
+DICTIONARY WRITE (datafile,IND=elementscount)IOL=dde_iol$
+READ DATA FROM "" TO IOL=dde_iol$
+NEXT elementscount
+ }
+RETURN 
+! 
+CreateDataFile_IOL:
+LOCAL c,b,tempiol$
+tempiol$=LST(IOL(datafile))
+WHILE POS(","=tempiol$)
+c=POS(","=tempiol$),b=POS(":["=tempiol$)
+IF b AND b<c THEN {
+c=POS("],"=tempiol$)+1
+ }
+datafile_iol$+=tempiol$(1,c-1),tempiol$=tempiol$(c+1)
+IF NOT(POS(MID(datafile_iol$,-1,1)="$]")) THEN datafile_iol$+="$"
+datafile_iol$+=","
+WEND 
+datafile_iol$+=tempiol$
+IF NOT(POS(MID(datafile_iol$,-1,1)="$]")) THEN datafile_iol$+="$"
+datafile_iol$=CPL(datafile_iol$)
+RETURN 
+! 
+GetRows:
+LOCAL rowsxml$,rowxml$,x,rowkey$,row_iol$,rowsep$
+x=POS("<rows>"=xmldata$),xmldata$=xmldata$(x)
+x=POS(">"=xmldata$),xmldata$=xmldata$(x+1)
+rowsxml$=xmldata$
+IF aMonitor THEN aMonitor'setTaskDetail("Write data records...")
+WHILE POS($FF$=xmldata$)=0
+IF POS("</rows>"=rowsxml$)=1 THEN BREAK
+IF POS("</row>"=rowsxml$) THEN {
+rowkey$=FNxmlgetattrvalue$("row","key",rowsxml$)
+rowsep$=FNxmlgetattrvalue$("row","sep",rowsxml$)
+rowxml$=FNxmlgettagcontent$("row",rowsxml$)
+IF NOT(NUL(rowxml$)) THEN {
+row_iol$=FNxmlgetiolflds$(rowxml$,"DataPfx.")
+ }
+GOSUB WriteRow
+count++
+IF aMonitor AND MOD(count,10)=0 THEN aMonitor'setTaskDetail("Write data records ("+STR(count)+")...")
+x=POS("</row>"=rowsxml$)
+rowsxml$=rowsxml$(x+6)
+ }
+xmldata$=$FF$
+READ (TextFile,END=*NEXT)xmldata$; xmldata$=CVS(STP(xmldata$,0,$09$),1)
+rowsxml$+=xmldata$
+WEND 
+RETURN 
+! 
+! 
+WriteRow:
+LOCAL rowrec$
+IF POS(filetype$="K2",1)=0 THEN RETURN 
+IF hasiolist THEN {
+IF NUM(keysize$) THEN {
+WRITE (datafile,KEY=rowkey$)IOL=datafile_iol$
+ } ELSE {
+WRITE (datafile)IOL=datafile_iol$
+ }
+ } ELSE {
+IF NUM(recordsize$) THEN {
+IF rowsep$="N" THEN {
+rowrec$=REC(row_iol$),rowrec$=MID(rowrec$,1,LEN(rowrec$)-1)
+IF NUM(keysize$) THEN {
+WRITE RECORD (datafile,KEY=rowkey$)rowrec$
+ } ELSE {
+WRITE RECORD (datafile)rowrec$
+ }
+ } ELSE {
+IF NUM(keysize$) THEN {
+WRITE (datafile,KEY=rowkey$)IOL=row_iol$
+ } ELSE {
+WRITE (datafile)IOL=row_iol$
+ }
+ }
+ } ELSE {
+WRITE (datafile,KEY=rowkey$)
+ }
+ }
+RETURN 
+! 
+SetPassword:
+SWITCH password_type$
+CASE "0"
+PASSWORD (datafile)password$ REQUIRED FOR OPEN 
+BREAK
+CASE "1"
+PASSWORD (datafile)password$ REQUIRED FOR WRITE 
+BREAK
+CASE "2"
+PASSWORD (datafile)password$ REQUIRED FOR OPEN AND ON DATA 
+BREAK
+CASE "3"
+PASSWORD (datafile)password$ REQUIRED FOR WRITE AND ON DATA 
+BREAK
+END SWITCH 
+RETURN 
+Functions:
+DEF FNxmlgettagopen$(LOCAL tag$, LOCAL xmldata$)
+LOCAL retval$,x,y
+x=POS("<"+tag$+">"=xmldata$)
+IF NOT(x) THEN x=POS("<"+tag$+" "=xmldata$)
+IF x THEN {
+y=POS(">"=xmldata$(x))
+IF y THEN retval$=xmldata$(x,y)
+ }
+RETURN retval$
+END DEF
+DEF FNxmlgettagvalue$(LOCAL tag$, LOCAL xmldata$)=FNdecoding$(FNxmlgettagcontent$(tag$,xmldata$))
+DEF FNxmlgettagcontent$(LOCAL tag$, LOCAL xmldata$)
+LOCAL retval$,x,y
+x=POS("<"+tag$+">"=xmldata$)
+IF NOT(x) THEN x=POS("<"+tag$+" "=xmldata$)
+IF x THEN {
+y=POS(">"=xmldata$(x))
+IF y THEN {
+x+=y,y=POS("</"+tag$+">"=xmldata$(x))
+IF y THEN retval$=xmldata$(x,y-1)
+ }
+ }
+RETURN retval$
+END DEF
+DEF FNxmlgettagvaluebyattr$(LOCAL tag$, LOCAL attr$, LOCAL xmldata$)=FNdecoding$(FNxmlgettagcontentbyattr$(tag$,attr$,xmldata$))
+DEF FNxmlgettagcontentbyattr$(LOCAL tag$, LOCAL attr$, LOCAL xmldata$)
+LOCAL retval$,x,y
+x=POS("<"+tag$+" "+attr$+">"=xmldata$)
+IF NOT(x) THEN x=POS("<"+tag$+" "+attr$+" "=xmldata$)
+IF x THEN {
+y=POS(">"=xmldata$(x))
+IF y THEN {
+x+=y,y=POS("</"+tag$+">"=xmldata$(x))
+IF y THEN retval$=xmldata$(x,y-1)
+ }
+ }
+RETURN retval$
+END DEF
+DEF FNxmlgetattrvalue$(LOCAL tag$, LOCAL attr$, LOCAL xmldata$)
+LOCAL retval$,tagopen$,x,y
+tagopen$=FNxmlgettagopen$(tag$,xmldata$)
+IF NOT(NUL(tagopen$)) THEN {
+x=POS(attr$+"="+QUO=tagopen$)
+IF x THEN {
+x+=LEN(attr$)+2
+y=POS(QUO=tagopen$(x))
+IF y THEN retval$=FNdecoding$(tagopen$(x,y-1))
+ }
+ }
+RETURN retval$
+END DEF
+DEF FNdecoding$(LOCAL value$)
+LOCAL decodedtext$,decodingchar,x,x$
+decodedtext$=value$
+FOR decodingchar=1 TO decodingcount
+decodedtext$=SUB(decodedtext$,decodinglist$[1,decodingchar],decodinglist$[2,decodingchar])
+NEXT 
+WHILE POS("^#x"=decodedtext$)
+x=POS("^#x"=decodedtext$),x$=""
+x$=ATH(MID(decodedtext$,x+3,2),ERR=*NEXT)
+IF MID(decodedtext$,x+5,1)=";" AND LEN(x$)=1 THEN {
+decodedtext$=SUB(decodedtext$,"^#x"+HTA(x$)+";",x$)
+ } ELSE {
+decodedtext$(x,3)="?#x"
+ }
+WEND 
+decodedtext$=SUB(decodedtext$,"?#x","^#x")
+RETURN decodedtext$
+END DEF
+DEF FNisnumeric(LOCAL value$)
+LOCAL retval,x
+IF NOT(NUL(value$)) THEN {
+x=NUM(value$,ERR=*NEXT),retval=1
+ }
+RETURN retval
+END DEF
+DEF FNxmlgetiolflds$(LOCAL xmldata$, LOCAL datapfx$)
+LOCAL x,y,s,tag$,retval$
+WHILE NOT(NUL(xmldata$))
+x=POS("<"=xmldata$)
+IF NOT(x) THEN {
+BREAK
+ } ELSE {
+xmldata$=xmldata$(x)
+ }
+y=POS(">"=xmldata$)
+IF NOT(y) THEN BREAK
+IF MID(xmldata$,2,1)="/" THEN {
+xmldata$=xmldata$(y+1)
+CONTINUE
+ }
+s=POS(" "=xmldata$)
+IF s AND s<y THEN y=s
+IF y>2 THEN tag$=xmldata$(2,y-2)
+retval$+=","+datapfx$+tag$+"$"
+VIA (datapfx$+tag$)=FNxmlgettagvalue$(tag$,xmldata$)
+xmldata$=xmldata$(y+1)
+WEND 
+IF NOT(NUL(retval$)) THEN retval$=CPL("iolist "+retval$(2))
+RETURN retval$
+END DEF
+RETURN 
+! 
+! ------------------------------------------------------------------------------
+! 
+FNUTC2DateTime:
+DEF FNUTC2DateTime$(LOCAL seconds)
+LOCAL days,hours,minutes
+days=INT(seconds/86400),seconds-=days*86400
+hours=INT(seconds/3600),seconds-=hours*3600
+minutes=INT(seconds/60),seconds-=minutes*60
+RETURN DTE(JUL(1970,1,1)+days:"YYYYMMDD")+STR(hours:"00")+STR(minutes:"00")+STR(seconds:"00")
+END DEF

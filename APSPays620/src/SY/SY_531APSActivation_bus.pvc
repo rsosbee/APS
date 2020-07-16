@@ -1,0 +1,276 @@
+! $Id$: SY_531APSActivation_bus.PVC $
+! Activate APS Credit Card
+! Accounting Systems, Inc. 2013-2018. Irina Kouptsova, Robert Sosbee.
+! 
+DEF CLASS "SY_531APSActivation_bus" CREATE REQUIRED DELETE REQUIRED 
+	! Inherits from the following class(es)
+	 LIKE "SY_Maint"
+	 LIKE "SY_531APSTableCreation" ! PLW 2019-04-17  Ticket #250723 moved table creation to separate library so it can be shared.
+
+	 
+	! Public Properties
+	
+	! Local/Private Properties
+	LOCAL cMainTable$		= "SY_531APSActivation"
+	LOCAL cIsSysDB			= isTRUE
+	LOCAL cMainTableFh
+	LOCAL isNULL$			= ""
+	
+	! Public Functions (Methods)
+	FUNCTION CheckActivatedCompanies(CurAct,AllAct)				CHECK_ACTIVATED_COMPANIES
+	FUNCTION CheckAPSActivation() 								CHECK_APS_ACTIVATION
+	FUNCTION CheckAPSActivation(CompCode$) 						CHECK_APS_ACTIVATION
+	FUNCTION CheckIfActivated(APSActivated)						CHECK_IF_ACTIVATED
+	FUNCTION UpdateAPSAllCompanies(UpdateFlag$)					UPDATE_APS_ALL_COMPANIES
+	FUNCTION UpdateAPSCurrentCompany(UpdateFlag$)				UPDATE_APS_CURRENT_COMPANY
+	FUNCTION RetrieveVersionInfo(Version$,Additional$)			RETRIEVE_VERSION_INFO		! #227159 - RCS - 2017-09-14
+ 	FUNCTION UpdatesURLs()										UPDATE_URLS 				! #232007 - RCS - 2017-11-20
+ 	FUNCTION UpdateURLs()										UPDATE_URLS					! #232007 - RCS - 2018-11-21
+ 	FUNCTION UpdateAPSFiles(cCompany$)							UPDATE_APS_FILES
+ 	
+	! Local/Private Functions (Methods)
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession 
+END DEF
+
+ON_CREATE:
+
+ENTER coSession
+
+	testFH					= coSession'OpenTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
+	if not(testFH) {
+		tmpRet				= coSession'CreateTable("SY_531APSActivation","SYSTEM",ERR=*NEXT) ! PLW 2018-04-18 Ticket #236884 changed to not use a constant for results
+	}
+	if testFH {
+		close (testFH,err=*next)
+		testFH				= 0
+	}
+
+	cMainTableFh			= coSession'OpenTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
+	IF NOT(cMainTableFh) {
+		coSession'CreateTable("SY_531APSActivation","SYSTEM")
+		cMainTableFh		= coSession'OpenTable("SY_531APSActivation", "SYSTEM")
+	}
+
+RETURN 
+!
+
+ON_DELETE:
+	CLOSE (cMainTableFh,ERR=*NEXT)
+	cMainTableFh			= 0
+RETURN
+!
+
+CHECK_ACTIVATED_COMPANIES:
+ENTER CurrentCompanyActivated,AllCompaniesActivated
+
+	retVal					= retSUCCESS
+	CurrentCompanyActivated	= 0
+	AllCompaniesActivated	= 1
+	CurrentCompanyKey$		= coSession'CompanyKey$
+
+	tmpSY_CompanyFH=coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+	IF tmpSY_CompanyFH {
+		SELECT *, REC=COMPANY$ FROM tmpSY_CompanyFH BEGIN $$ END $FE$
+			TMP.APSActivated$			= "N"
+			FIND (cMainTableFh,KEY=COMPANY.CompanyKey$,REC=TMP$,DOM=*NEXT)
+			IF TMP.APSActivated$		= "Y" {
+				IF COMPANY.CompanyKey$	= CurrentCompanyKey$ { CurrentCompanyActivated = 1 }
+			} ELSE {
+				AllCompaniesActivated	= 0
+				BREAK
+			}
+		NEXT RECORD
+		IF NOT(CurrentCompanyActivated) {
+			TMP.APSActivated$			= isNO$
+			FIND (cMainTableFh,KEY=CurrentCompanyKey$,REC=TMP$,DOM=*NEXT)
+			CurrentCompanyActivated		= (TMP.APSActivated$ = isYES$)
+		}
+		CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+	} ELSE {
+		retVal				= retFAILURE
+		LastErrorNum$		= "SY_531APSCannotOpen"
+		LastErrorMsg$		= MSG("SY_531APSCannotOpen","SY_Company")
+	}
+RETURN retVal
+!
+
+UPDATE_APS_ALL_COMPANIES:
+ENTER UpdateFlag$
+
+	retVal=retSUCCESS
+
+	tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+	IF tmpSY_CompanyFH {
+		SELECT *, REC=COMPANY$ FROM tmpSY_CompanyFH BEGIN $$ END $FE$
+			ACTIVATE.CompanyKey$	= COMPANY.CompanyKey$
+			ACTIVATE.CompanyCode$	= COMPANY.CompanyCode$
+			ACTIVATE.CompanyName$	= COMPANY.CompanyName$
+			ACTIVATE.APSActivated$	= UpdateFlag$
+			WRITE (cMainTableFh,REC	= ACTIVATE$)
+		NEXT RECORD
+		CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+	} ELSE {
+		retVal				= retFAILURE
+		LastErrorNum$		= "SY_531APSCannotOpen"
+		LastErrorMsg$		= MSG("SY_531APSCannotOpen","SY_Company")
+	}
+
+RETURN retVal
+!
+
+UPDATE_APS_CURRENT_COMPANY:
+	
+ENTER UpdateFlag$
+
+	retVal					= retSUCCESS
+
+	ACTIVATE.CompanyKey$	= coSession'CompanyKey$
+	ACTIVATE.CompanyCode$	= coSession'CompanyCode$
+	ACTIVATE.CompanyName$	= coSession'CompanyName$
+	ACTIVATE.APSActivated$	= UpdateFlag$
+	WRITE (cMainTableFh,REC	= ACTIVATE$)
+
+RETURN retVal
+!
+
+CHECK_APS_ACTIVATION:
+
+ENTER CurrentCompanyKey$,ERR=*NEXT
+	
+	retVal					= retSUCCESS
+	IF NUL(CurrentCompanyKey$) { 
+		CurrentCompanyKey$	= coSession'CompanyKey$
+	}
+	TMP.APSActivated$		= isNO$
+	
+	FIND (cMainTableFh,KEY	= CurrentCompanyKey$,REC=TMP$,DOM=*NEXT)
+	IF TMP.APSActivated$	<> isYES$ {
+		retVal				= retFAILURE
+		LastErrorNum$		= "SY_531APSNotActivated"
+		LastErrorMsg$		= MSG("SY_531APSNotActivated")
+	}
+	%APSActivated 			= retVal				! PLW 2016-09-29 
+RETURN retVal
+!
+
+CHECK_IF_ACTIVATED:
+ENTER APSActivated
+	
+	APSActivated			= isFALSE
+	retVal					= retSUCCESS
+		
+	tmpSY_CompanyFH=coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+ 	IF tmpSY_CompanyFH {
+		SELECT *, REC=COMPANY$ FROM tmpSY_CompanyFH BEGIN $$ END $FE$
+			TMP.APSActivated$	= isNO$
+			FIND (cMainTableFh,KEY=COMPANY.CompanyKey$,REC=TMP$,DOM=*NEXT)
+			IF TMP.APSActivated$= isYES$ { 
+				APSActivated	= isTRUE
+				BREAK
+			}
+		NEXT RECORD
+		CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+	} ELSE {
+		retVal					= retFAILURE
+		LastErrorNum$			= "SY_531APSCannotOpen"
+		LastErrorMsg$			= MSG("SY_531APSCannotOpen","SY_Company")
+	}
+RETURN retVal
+!
+
+RETRIEVE_VERSION_INFO:  							! #227159 - RCS - 2017-09-14 - moved to bus to make available to any APS program.
+ENTER cAPSVersion$,cAPSAdditionalInfo$,err=*next
+	retVal=retSUCCESS
+	
+	ModCode$				= "ASIAPS"
+	ModuleCode$				= "A/R"
+	DeveloperCode$			= "531"
+	cAPSVersion$			= isNULL$
+	cAPSAdditionalInfo$ 	= isNULL$
+	cEnhancementFh			= 0
+	cEnhancementFh			= coSession'OpenTable("SY_Enhancement","SYSTEM",ERR=*NEXT)
+		
+	IF cEnhancementFh  {
+		SELECT *,REC=ENH$ FROM cEnhancementFh BEGIN ModuleCode$ END ModuleCode$:$FE$ WHERE ENH.DeveloperCode$=DeveloperCode$ AND ENH.EnhancementCode$=ModCode$
+			cAPSVersion$		= STR(ENH.EnhancementLevel)
+			cAPSVersion$		= STR(ENH.EnhancementLevel:"###.00",ERR=*NEXT)
+			cAPSVersion$		= "rev "+STP(cAPSVersion$,2)
+			P					= POS(" "=STP(ENH.EnhancementName$),-1)
+			IF P { 
+				cAPSVersion$	+= "."+STP(MID(STP(ENH.EnhancementName$),P),2) 
+			}
+			revDate$			= ENH.ReleaseDate$
+			revDate$			= MID(revDate$,5,2)+"/"+MID(revDate$,7,2)+"/"+MID(revDate$,1,4)
+			cAPSAdditionalInfo$	= ENH.EnhancementName$+" Date: "+revDate$
+			BREAK
+		NEXT RECORD
+		! close files
+		CLOSE (cEnhancementFh,ERR=*NEXT)
+		cEnhancementFH = 0
+	}
+RETURN retVal
+!
+
+UPDATE_URLS: 										! #232007 - Moved to BUS for C2P processing.
+
+	URLMaintObj			= NEW("SY_URLMaintenance_bus",coSession)
+	
+	! APS primary URL
+	tmpRet				= URLMaintObj'SetKey("APS PRIMARY")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS Primary URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/transact.php") }
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	if not(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	! APS query URL
+	tmpRet				= URLMaintObj'SetKey("APS Query")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS Query URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/query.php") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+	
+	! C2P Primary URL #232007
+	tmpRet				= URLMaintObj'SetKey("APS C2P PORTAL")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS C2P Portal URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://portal.apsclicktopay.com/Invoices/ClickToPay") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	! C2P Gateway URL #232007
+	tmpRet				= URLMaintObj'SetKey("APS C2P GATEWAY")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS C2P Gateway URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://api.apsclicktopay.com") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	! APS EasyPay Portal URL #236076 - 2018-09-26 RCS
+	tmpRet				= URLMaintObj'SetKey("APS C2P EASYPAY")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS C2P Gateway URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://portal.apsclicktopay.com/EasyPay") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	! APS EMV Portal URL #236076 - 2018-12-26 RCS
+	tmpRet				= URLMaintObj'SetKey("APS C2P EMV")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS C2P EMV Gateway URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","http://localhost:3000/emv/startNewTransaction") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	DROP OBJECT URLMaintObj,ERR=*NEXT
+	URLMaintObj			= 0
+	
+RETURN retSUCCESS
+!
+
+UPDATE_APS_FILES: ! Used to insure that all APS files are updated.
+ENTER (cCompanyCode$),err=*next
+	if nul(cCompanyCode$) { 
+		cCompanyCode$ = coSession'CompanyCode$ 
+	}
+	retVal = _obj'UpdateC2PFiles(cCompanyCode$)   ! PLW 2019-04-17 Ticket #250723
+
+RETURN retVal
+!

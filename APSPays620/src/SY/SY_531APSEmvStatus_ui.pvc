@@ -1,0 +1,176 @@
+! $Id: SY_531APSEmvStatus_ui.pvc $
+! Copyright 2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! ** @Author Bsosbee
+! ** @Date 2019.03.22 12 at 03:14:57 PM EDT
+! #236076 - 2019-03-22 RCS
+! 
+DEF CLASS "SY_531APSEmvStatus_ui" CREATE REQUIRED DELETE REQUIRED
+	! Inherits from the following class(es)
+	LIKE "SY_CommonUI"
+	LIKE "SY_Constant"
+	
+	
+	! Public Properties
+	
+	! Local/Private Properties
+	LOCAL cEmvEnabled
+	LOCAL cAPSActivated
+	LOCAL cTermIOL$	= cpl("IOLIST TerminalKey$, TerminalCode$, WorkstationID$, WorkstationDesc$, *,*,*, TerminalPosID$")
+	LOCAL EmvEnabled
+	LOCAL iol$
+	LOCAL isRunning
+	LOCAL ML_Status$
+	LOCAL rec$
+	LOCAL TerminalKey$
+	LOCAL TerminalCode$
+	LOCAL Wdx$
+	LOCAL WorkstationID$
+	LOCAL WorkstationDesc$
+	LOCAL TerminalPosID$
+	
+	! file handles...
+	
+	! object handles
+	LOCAL coTerminalSvc
+	
+	! Public Functions (Methods)
+	
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL BT_Cancel()										BT_CANCEL
+	FUNCTION LOCAL BT_Enable()										BT_ENABLE
+	FUNCTION LOCAL BT_Start()										BT_START
+	FUNCTION LOCAL BT_Stop()										BT_STOP
+	FUNCTION LOCAL OnExit() 										ON_EXIT
+	FUNCTION LOCAL GetStatus()										GET_STATUS
+	FUNCTION LOCAL PostLoad()										POST_LOAD
+	FUNCTION LOCAL PreLoad()										PRE_LOAD
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+	! check for activation
+
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation ()
+		DROP OBJECT coAPSActivation
+		coAPSActivation	= 0
+	}
+	if not(cAPSActivated) {
+		coSession'UI'MessageBox$("","APS Payments is not activated for this company.","Style=OK,Title=APS Payments,Icon=!")
+		exit
+	}
+
+	Wdx$				= coSession'Wdx$
+	coTerminalSvc		= new("SY_531APSTerminal_Svc",coSession)
+	SCREEN_LIB$			= "SY_531APSEmvStatus.M4L"
+	SCREEN_ID$			= "DMain"
+	retVal				= coTerminalSvc'GetWorkstationKey(val$,Termkey$)
+	retVal				= coTerminalSvc'GetTerminalData(Termkey$,rec$,iol$)
+	if retVal {
+		read data from rec$ to iol=cTermIOL$
+		tFound			= isTRUE
+	} else {
+		read data from isNULL$ to iol=cTermIOL$
+		tFound			= isFALSE
+	}
+
+	! check for activation
+	cEmvEnabled			= isFALSE
+	isRunning			= isFALSE
+	ML_Status$			= "Not Running..."
+	cEmvEnabled			= coTerminalSvc'CheckProcessingPaymentTypesExist()
+	if not(cEmvEnabled) {
+		coSession'UI'MessageBox$("","No EMV Payment types set up for this company.","Style=OK,Title=APS Payments,Icon=!")
+	}
+
+RETURN
+!
+
+ON_DELETE:
+	
+	! file channels
+	
+	! objects
+	if coTerminalSvc {
+		DROP OBJECT coTerminalSvc,ERR=*NEXT
+		coTerminalSvc		= 0
+	}
+	
+RETURN 
+!
+
+ON_EXIT:
+	
+RETURN retSUCCESS
+!
+
+BT_CANCEL:
+	CMD_STR$		= "End"
+RETURN retSUCCESS
+!
+
+BT_ENABLE:
+	_OBJ'SetControlState("BUTTON.GRP$",	ctlDISABLE)
+	isRunning	= _obj'GetStatus()
+	refresh_flg = isTRUE
+	SWITCH isRunning
+		CASE isTRUE
+			_OBJ'SetControlState("STOP.GRP$",	ctlENABLE)
+			_OBJ'SetControlState("START.GRP$",	ctlDISABLE)
+			BREAK
+		DEFAULT
+			_OBJ'SetControlState("STOP.GRP$",	ctlDISABLE)
+			_OBJ'SetControlState("START.GRP$",	ctlENABLE)
+			BREAK
+	END SWITCH
+RETURN retSUCCESS
+!
+
+BT_START:
+	cTermVal$		= coSession'WorkstationName$
+	retVal			= coTerminalSvc'GetWorkstationKey(cTermVal$, TerminalCode$)	! find by workstation ID
+	retVal			= coTerminalSvc'RestartServices(TerminalCode$)
+	_obj'BT_Enable()
+	
+RETURN retVal
+!
+
+BT_STOP:
+	retVal			= coTerminalSvc'StopServices()
+	_obj'BT_Enable()
+RETURN retVal
+!
+
+GET_STATUS:
+	isRunning		= isFALSE
+	if cEmvEnabled {
+		isRunning	= coTerminalSvc'CheckEmvServicesRunning()
+		EmvEnabled	= isRunning
+		ML_Status$	= tbl(isRunning,"Not Running...","Running...")
+		refresh_flg = isTRUE
+		retVal		= isRunning
+	}
+	
+RETURN retVal
+!
+
+PRE_LOAD:
+	retVal			= _obj'GetStatus()
+RETURN retVal
+!
+
+POST_LOAD:
+	
+	refresh_flg = isTRUE
+	tmp = _OBJ'AppendTitleBar(FROM "SY_CommonUI")
+	_obj'BT_Enable()
+
+RETURN retSUCCESS
+!
+

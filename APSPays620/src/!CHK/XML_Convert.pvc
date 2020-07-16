@@ -1,0 +1,147 @@
+! 
+! (c) Copyright 2006, Sage Software Canada Ltd. (Ontario, Canada)
+! $Id: XML_Convert.pvc.pvt 1823 2013-03-25 11:31:39Z fmcguirk $
+! 
+DEF CLASS "XML_Convert"
+LIKE "EventManagerObserver"
+LIKE "AbstractActionListener"
+! Override values for description / NotificationFlag
+LOCAL theDescription$="Convert ProvideX keyed files to/from XML"
+LOCAL theNotificationFlag=_pvxConstants'_idePostProcess
+FUNCTION actionPerformed(inActionEventID)do_ActionPerformed
+! ** The logic to be executed when the observer is triggered.  This logic must check the major and minor codes to determine the current event and then decide what action is to be performed.
+! **
+! ** @param initPvxState A reference to an object of class %PvxClass(PvxState)%
+FUNCTION update(initPvxState)update
+FUNCTION LOCAL data2xml(aFile$)data2xml
+FUNCTION LOCAL xml2data(theSource$)xml2data
+FUNCTION LOCAL xml2data(theSource$,theDest$)xml2data
+END DEF
+do_ActionPerformed:
+ENTER IExtCommand
+LOCAL resPath$,_TMP,_TMP$
+DEF OBJECT resManager,"[wdx]com.pvx.ooadide.eventmanager.ResourceManager"
+_eventLog=NEW("ErrorLogBuilder",_pvxConstants,ViewManager)
+_eventLog'bufferInit()
+_eventLog'bufferAddText("Contributed action: "+_obj'getDescription$()+$0A$)
+resource=resManager'getSelectedResourceInNavigator()
+IF resource<>0 THEN {
+resPath$=resManager'getPathToSelectedResourceInNavigator$()
+IF resource'getType()<>resource'FOLDER THEN {
+_TMP$="",_TMP=0; OPEN INPUT (HFN,ISZ=1,ERR=*NEXT)resPath$; _TMP=LFO; READ RECORD (_TMP,IND=0,SIZ=8,ERR=*NEXT)_TMP$
+IF _TMP>0 THEN CLOSE (_TMP)
+IF POS(_TMP$="[Pvxkey][Pvxky2]",8)>0 THEN {
+_obj'data2xml(resPath$)
+ } ELSE {
+IF LCS(MID(resPath$,-4))=".xml" THEN {
+_obj'xml2data(resPath$)
+ }
+ }
+resource'refreshLocal(resource'DEPTH_ONE,*-1)
+ }
+ }
+DROP OBJECT resManager
+DROP OBJECT _eventLog
+RETURN 
+update:
+ENTER aPvxState
+psMajor$=aPvxState'getMajor$(),psMinor$=aPvxState'getMinor$()
+source$=aPvxState'getArgumentValue$(_pvxConstants'SrcFile$),dest$=aPvxState'getArgumentValue$(_pvxConstants'dest$),domFile$=aPvxState'getArgumentValue$(_pvxConstants'domFile$),passwd$=aPvxState'getArgumentValue$(_pvxConstants'pkf_Password$),passwd_type$=aPvxState'getArgumentValue$(_pvxConstants'_iPasswordType$)
+_eventLog=NEW("ErrorLogBuilder",_pvxConstants,ViewManager)
+_eventLog'bufferInit()
+_eventLog'bufferAddText("["+psMajor$+"]"+$0A$+"==>"+psMinor$+"<=="+$0A$)
+SWITCH psMajor$
+CASE _pvxConstants'Incremental_Build$,_pvxConstants'Incremental_Build_Alt_Exe$
+SWITCH psMinor$
+CASE _pvxConstants'BuildType_DataFile$
+_obj'data2xml(source$)
+BREAK
+CASE _pvxConstants'BuildType_OtherFile$
+_obj'xml2data(source$,dest$)
+BREAK
+END SWITCH 
+BREAK
+END SWITCH 
+_eventLog'bufferWriteText()
+DROP OBJECT _eventLog
+RETURN 0
+data2xml:
+ENTER source$,ERR=*RETURN
+LOCAL _eventLog,aMonitor
+_eventLog=NEW("ErrorLogBuilder",_pvxConstants,ViewManager)
+_eventLog'bufferAddText("  Convert ProvideX Keyed file to XML"+$0A$)
+_TMP$="",_TMP=0; OPEN INPUT (HFN,ISZ=1,ERR=*NEXT)source$; _TMP=LFO; READ RECORD (_TMP,IND=0,SIZ=8,ERR=*NEXT)_TMP$
+IF _TMP>0 THEN CLOSE (_TMP)
+IF POS(_TMP$="[Pvxkey][Pvxky2]",8)>0 THEN {
+DEF OBJECT resManager,"[wdx]com.pvx.ooadide.eventmanager.ResourceManager"
+file_obj=resManager'getFile(source$)
+file_name$=file_obj'getName$()
+file_dest$=file_name$+".xml",new_dest$=source$+".xml"
+resManager'addtoPropertyUpdateList$(new_dest$,_pvxConstants'Output_File_Name$,file_name$)
+resManager'addtoPropertyUpdateList$(new_dest$,_pvxConstants'p_Password$,passwd$)
+DROP OBJECT resManager
+isActive=0
+aMonitor=NEW("ProgressMonitor",ERR=*NEXT); isActive=1
+IF NOT(isActive) THEN {
+aMonitor=NEW("ProgressMonitor","Converting "+source$+" to XML",-1)
+aMonitor'setTaskDetail("Processing...")
+ } ELSE {
+aMonitor=0
+ }
+CALL "pvxtoxml.pvx",ERR=*NEXT,source$,new_dest$,passwd$,passwd_type$,status,aMonitor
+IF NOT(status) THEN ERASE source$,ERR=*NEXT; _eventLog'bufferAddText("  ** Success **"+$0A$) ELSE _eventLog'bufferAddText("  ** Failed **"+$0A$+MSG(status)+$0A$)
+! Finished this file.
+IF aMonitor THEN {
+aMonitor'done()
+DROP OBJECT aMonitor
+ }
+ }
+DROP OBJECT _eventLog
+RETURN 
+xml2data:
+ENTER source$,ERR=*NEXT
+ENTER *,dest$,ERR=*NEXT
+LOCAL aKey,aMonitor,aText$,dE,dM,isActive,xDoc,xKeys,xSchema,xTable,_eventLog,_eraseSrc,domFile$
+IF NOT(NUL(source$)) AND LCS(MID(source$,-4))=".xml" THEN {
+_eventLog=NEW("ErrorLogBuilder",_pvxConstants,ViewManager)
+_eventLog'bufferAddText("  Convert XML file to ProvideX Keyed file"+$0A$+source$+" ==> "+dest$+$0A$)
+isActive=0
+aMonitor=NEW("ProgressMonitor",ERR=*NEXT); isActive=1
+IF NOT(isActive) THEN {
+aMonitor=NEW("ProgressMonitor","Convert XML to ProvideX Keyed",-1)
+aMonitor'setTaskDetail("Converting "+source$+"...")
+ } ELSE {
+aMonitor=0
+ }
+IF NUL(dest$) THEN {
+dest$=MID(source$,1,LEN(source$)-4),_eraseSrc=1
+ }
+CALL "xmltopvx.pvx",ERR=*NEXT,source$,dest$,status,aMonitor
+IF NOT(status) THEN {
+_eventLog'bufferAddText("  ** Success **"+$0A$)
+IF aMonitor THEN {
+aMonitor'setTaskDetail("Build DOM information...")
+ }
+_eventLog'bufferAddText("  .. Build DOM information"+$0A$)
+dE=NEW("domEntity",source$,_pvxConstants'_iPvxData)
+dM=NEW("domManager",dE)
+domFile$=dM'getDOMFile$(),domFile$=MID(domFile$,1,LEN(domFile$)-4)
+CALL %_PluginDir$+"get_FileInfo.pvx",ERR=*NEXT,dest$,domFile$,0
+CALL %_PluginDir$+"get_DictInfo.pvx",ERR=*NEXT,dest$,domFile$+".dict",0
+DROP OBJECT dM
+DROP OBJECT dE
+IF _eraseSrc THEN {
+ERASE source$,ERR=*NEXT
+ }
+ } ELSE {
+_eventLog'bufferAddText("  ** Failed **"+$0A$+MSG(status)+$0A$)
+ }
+! Finished this file.
+IF aMonitor THEN {
+aMonitor'done()
+DROP OBJECT aMonitor
+ }
+DROP OBJECT _eventLog
+ }
+RETURN 
+END 

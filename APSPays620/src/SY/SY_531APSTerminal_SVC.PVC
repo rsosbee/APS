@@ -1,0 +1,479 @@
+! $Id: SY_531APSTerminal_Svc.pvc $
+! Terminal Code SVC Object
+! Copyright 2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #236076 - 2019-02-28 RCS
+!
+DEF CLASS "SY_531APSTerminal_Svc" CREATE REQUIRED DELETE REQUIRED 
+	! Inherits from the following class(es)
+	LIKE "SY_Service"
+
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL cMainTable$				= "SY_531APSEmvTerminal"
+	LOCAL cIsSysDB					= isTRUE
+	LOCAL cAPSToolSource$			= "../SY/SY_531APSEmvCsTools.m4p"
+	LOCAL cAPSToolDest$				= %SYS_WDX$+"../SY/SY_531APSEmvCsTools.m4p"
+
+	LOCAL Wdx$
+	
+	! file handles
+	LOCAL cD531_APSTerminalFH
+	LOCAL cAPSlogCH
+	
+	! objects
+	LOCAL coHTTP											! use SECUREHTTP DLL.
+	LOCAL coNET												! use .NET assembly
+	LOCAL coSPM												! use .NET assembly
+	
+	! Public Functions (Methods)
+	! ** @returns retSUCCESS if terminal is enabled for EMV.
+	FUNCTION CheckTerminalEnabled()							CHECK_TERMINAL_ENABLED
+	! ** @returns retSUCCESS if terminal is enabled, active, and services are running for EMV.
+	FUNCTION CheckTerminalStatus()							CHECK_TERMINAL_STATUS
+	! ** checks to see if web services are already running.
+	! ** @returns retSUCCESS if EMV terminal web services are running.
+	FUNCTION PERFORM CheckEmvServicesRunning()				CHECK_EMV_SERVICES_RUNNING
+	! ** Check AR_PaymentType records for Credit Card with valid EMV connections
+	! ** @returns retSUCCESS if there are any payment methods with valid EMV connections
+	FUNCTION CheckProcessingPaymentTypesExist()				CHECK_PROCESSING_PAYMENT_TYPES_EXIST
+	! ** @PARAM rec$ [output, string] SY_531APSEmvTerminal record
+	! ** @PARAM iol$ [output, string] SY_531APSEmvTerminal IOList
+	! ** @value retSUCCESS(1) Always returns success.
+	FUNCTION GetTerminalData(Termkey$,rec$,iol$)			GET_TERMINAL_DATA
+	! return terminal code from workstation ID
+	! ** @PARAM val$ [input, string] workstation name from coSession'WorkstationName$  If null will load from coSession
+	! ** @PARAM TerminalCode$ [output, string] returns the terminal code to read the terminal key for GetTerminalData()
+	FUNCTION GetWorkstationKey(val$, TerminalCode$)			GET_WORKSTATION_KEY
+	! ** Reset the .NET communications objects to insure no memory issues.
+	FUNCTION ResetDotNet()									RESET_DOT_NET
+	FUNCTION RestartServices(TerminalCode$)					RESTART_SERVICES
+	FUNCTION StartServices()								START_SERVICES
+	FUNCTION StopServices()									STOP_SERVICES
+	
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL PERFORM CreateLog()						CREATE_LOG
+	FUNCTION LOCAL ReadRec(Termkey$)						READ_REC
+	FUNCTION LOCAL PERFORM TlsDirectCast()					TLS_DIRECT_CAST
+	FUNCTION LOCAL WriteLog(Type$,Message$)					WRITE_LOG
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	
+	LOCAL coSession
+END DEF
+!
+
+ON_CREATE:
+	IF NOT(coSession) { 
+		coSession			= %sys_ss
+	}
+	cD531_APSTerminalFH		= coSession'openTable("SY_531APSEmvTerminal",pthSYSTEM$)
+	STATIC IOL				= IOL(cD531_APSTerminalFH)
+	cIOLIst$				+= SUB(MID(LST(IOL(cD531_APSTerminalFH)),8),",",SEP)+SEP
+	Wdx$					= coSession'Wdx$
+	! Insure tool is in the workstation folder
+	ToolFound						= isFalse
+	tmpFH							= HFN
+	OPEN (tmpFH,ERR=*NEXT)cAPSToolDest$; ToolFound = isTrue
+	IF NOT(ToolFound) {
+		tmpO						= NEW("*OBJ/pvx_utility")
+		tmpO'CopyFile(cAPSToolSource$,cAPSToolDest$,isFalse,ERR=*NEXT)
+		DROP OBJECT tmpO,ERR=*NEXT
+	} ELSE {
+		CLOSE(tmpFH)
+	}
+	_obj'ResetDotNet()		! activate the .NET assembly - this adds the URL encoding
+RETURN 
+!
+
+ON_DELETE:
+	! files
+	IF cD531_APSTerminalFH {
+		CLOSE (cD531_APSTerminalFH,ERR=*next)
+		cD531_APSTerminalFH			= 0
+	}
+	
+	IF cAPSlogCH {
+		CLOSE (cAPSlogCH,ERR=*NEXT)
+		cAPSlogCH					= 0
+	}
+	
+	! objects
+	IF coSPM {
+		DELETE OBJECT coSPM, ERR=*NEXT ! #230282 - 2017-11-13 RCS
+		coSPM			= 0
+	}
+	if coHTTP {
+		z				= coHTTP'PvxFree()
+		DELETE OBJECT coHTTP, ERR=*NEXT
+		coHTTP			= 0
+	}
+	if coNET {
+		z				= coNET'PvxFree()
+ 		DELETE OBJECT coNET, ERR=*NEXT
+ 		coNET			= 0
+	}
+
+RETURN 
+!
+
+CHECK_PROCESSING_PAYMENT_TYPES_EXIST:
+
+	retVal				= retFAILURE
+	payMethod$			= "R"
+	CompanyCode$		= coSession'CompanyCode$
+	IF coSession'IsSetup("A/R",CompanyCode$) {
+		IF NOT(cAR_PaymentTypeFH) {
+			cAR_PaymentTypeFH	= _OBJ'OpenTable("AR_PaymentType","COMPANY")
+		}
+		SELECT *,REC=pay$ FROM cAR_PaymentTypeFH BEGIN $$	\ 
+			WHERE POS(pay.PaymentMethod$=payMethod$)		\
+				AND pay.CreditCardSetupTested$	= isYES$	\
+				AND pay.D531APSUseEmvDevice$	= isYES$
+			retVal		= retSUCCESS
+			BREAK
+		NEXT RECORD 
+		if tmpAR_PaymentTypeFH {
+			CLOSE (cAR_PaymentTypeFH,err=*next)
+			cAR_PaymentTypeFH	= 0
+		}
+	}
+RETURN retVal
+!
+
+CHECK_EMV_SERVICES_RUNNING:
+
+	retVal				= retFAILURE
+	tmpFH				= HFN
+	serviceCnt			= isFALSE
+	retVal				= _obj'GetWorkstationKey(val$,TerminalCode$)
+	retVal				= _obj'ReadRec(TerminalCode$)
+	if not(retVal) {
+		RETURN retVal
+	}
+
+	! ChipDNA
+	openOK				= isFALSE
+	CALL coSession'Wdx$+"SY_531APSEmvCsTools.m4p;Find_Emv_Chan",Socket$,ServerPort$,OpenOK
+	serviceCnt			+= openOK
+	tmpFH				= HFN
+
+	! web server
+	openOK				= isFALSE
+	CALL coSession'Wdx$+"SY_531APSEmvCsTools.m4p;Find_Emv_Chan",Socket$,EmvWebPort$,OpenOK
+	serviceCnt			+= openOK
+	tmpFH				= 0
+	if serviceCnt		= 2 {
+		retVal			= retSUCCESS
+	} else {
+		retVal			= retFAILURE
+	}
+RETURN retVal
+!
+
+CHECK_TERMINAL_ENABLED:
+	
+	retVal			= retFAILURE
+	cTermVal$		= coSession'WorkstationName$
+	retVal			= _obj'GetWorkstationKey(cTermVal$, TerminalCode$)	! find by workstation ID
+	if retVal {
+		retVal		= _obj'ReadRec(TerminalCode$)						! get terminal data
+	}
+	
+RETURN retVal
+!
+
+CHECK_TERMINAL_STATUS:
+	
+	ServiceActive	= _obj'CheckEmvServicesRunning()
+	if ServiceActive {
+		RETURN retSUCCESS
+	}
+	retVal			= _obj'CheckTerminalEnabled()						! is terminal enabled?
+	if retVal and not(ServiceActive) {
+		answer$		= coSession'UI'MessageBox$("","APS EMV Services are not running.\Start the services?","Style=N,Title=APS Payments,Icon=!")
+		SWITCH answer$
+			CASE "YES"
+				retVal	= _obj'GetWorkstationKey(cTermVal$, TerminalCode$)
+				retVal	= _obj'RestartServices(TerminalCode$)
+				BREAK
+			CASE "NO"
+				retVal	= retFAILURE
+				BREAK
+			CASE "CANCEL"
+				retVal	= retWARNING
+				BREAK
+		END SWITCH
+	}
+		
+RETURN retVal
+!
+
+CREATE_LOG:
+	cAPSlogCH			= HFN
+	log$				= coSession'PathCompany$+"APS_TRAN"+dte(0:"%Yl%Mz")+".log" ! Breaks the logs into monthly chunks to reduce size. 2018-03-30 RCS
+	WHILE 1
+		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+		IF ERR<>12 {
+			CLOSE (cAPSlogCH)
+			OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+ 		}
+		SERIAL log$,ERR=*NEXT
+		CLOSE (cAPSlogCH)
+		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+		cAPSlogCH		= 0
+		BREAK
+	WEND
+RETURN retSUCCESS
+!
+
+GET_TERMINAL_DATA:
+ENTER (Termkey$),rec$,iol$
+	retVal			= retFAILURE
+	READ (cFH,REC	= term$, KEY = Termkey$, kno="kPrimary", ERR=*NEXT); retVal	= retSUCCESS
+	iol$			= IOL(cFH)
+	rec$			= REC(iol$,REC=term$)
+RETURN retVal
+!
+
+GET_WORKSTATION_KEY:
+ENTER val$,Term$
+	retVal			= retFAILURE
+	Term$			= isNULL$
+	if nul(val$) {
+		val$		= coSession'WorkstationName$
+	}
+	select *,rec=chk$ from cD531_APSTerminalFH,kno="kWorkstationID" begin val$
+		retVal		= retSUCCESS
+		Term$		= chk.TerminalKey$
+		BREAK
+	next record
+RETURN retVal
+!
+
+READ_REC:
+ENTER (Termkey$)
+	retVal			= retFAILURE
+	READ (cD531_APSTerminalFH, KEY=TermKey$, kno="kPrimary", ERR=*NEXT); retVal	= retSUCCESS
+
+RETURN retVal
+!
+
+RESTART_SERVICES:
+ENTER TerminalCode$
+	retVal			= retSUCCESS
+
+	coSession'UI'ProgressBar("init", "APS Payments", "Initializing EMV services...", 0)
+	wait .1 ! force screen to update.
+	_OBJ'WriteLog("EMV Initialization ",Dim(50,"="))
+
+	doStart				= isFALSE
+	ServiceActive	= _obj'CheckEmvServicesRunning()
+	if not(ServiceActive) {
+		_OBJ'WriteLog("EMV Initialization ","Services not running, restarting...")
+		_obj'StopServices()
+		wait 1
+		_obj'StartServices()
+		doStart		= isTRUE
+	}
+	
+	! Now we poll for results
+	tryCount			= 0
+	goodResponse		= isFALSE
+	response$			= isNULL$
+	result$				= isNULL$
+!	call Wdx$+"syzfil;get_nid",NID$
+!	cGetURL$			= "http://"+NID$+":"+EmvWebPort$+"/emv/open"
+	cGetURL$			= "http://"+WorkstationID$+":"+EmvWebPort$+"/emv/open"
+
+	ServiceActive	= _obj'CheckEmvServicesRunning()
+	if ServiceActive and doStart {
+		_OBJ'WriteLog("EMV Initialization ","Services running, opening terminal...")
+		REPEAT
+			
+			coSession'UI'ProgressBar("update","APS Payments","Waiting for EMV device initalization response",0,"force")
+			wait .1
+			_OBJ'WriteLog("EMV Initialization ","Try count: "+str(tryCount) + " for EMV restart.")
+
+			response$		= coHTTP'DownloadString$(cGetURL$)
+			_OBJ'WriteLog("EMV Initialization response",Response$)
+	
+			tryCount		++
+			cResponse$		= Response$
+			result$			= Response$
+			IF NUL(Response$) {
+				wait 1
+				result$		= isNULL$
+			} else {
+				SWITCH lcs(result$)
+					CASE "pending"		! Pending EMV
+						goodResponse		= isFALSE	! pending - try again.
+						wait 1
+						BREAK
+					CASE "success" 		! Approved
+						goodResponse		= isTRUE	! approved
+						BREAK
+					CASE "failure"		! Warning/Error
+						goodResponse		= isTRUE	! warnings are considered errors - no point in continuing.
+						BREAK
+					DEFAULT			! null
+						goodResponse		= isFALSE	! no response - try again.
+						WAIT 1
+						BREAK
+				END SWITCH
+			}
+				
+		UNTIL goodResponse or tryCount>60
+		
+	}
+	
+	if NUL(result$) or lcs(result$) = "failure" {		! services failed to start.
+   		retVal					= retFAILURE
+		LastErrorNum$			= "CI_Report_Unable"
+		LastErrorMsg$			= MSG("CI_Report_Unable","to initialize the EMV device")
+  	}
+
+	if retVal {
+		loopCnt					= 0
+		REPEAT
+			loopCnt				++
+			coSession'UI'ProgressBar("update","APS Payments","Waiting for terminal reboot...",0,"force")
+			wait 1
+		UNTIL loopCnt>30
+		
+		loopCnt					= 0
+		REPEAT
+			loopCnt				++
+			coSession'UI'ProgressBar("update","APS Payments","Waiting for terminal ready...",0,"force")
+			wait 1
+		UNTIL loopCnt>30
+
+	}
+
+	if retVal {
+		coSession'UI'ProgressBar("update","APS Payments","Completed activation...",0,"force")
+		_OBJ'WriteLog("EMV Initialization ","Services running and activated.")
+	} else {
+		coSession'UI'ProgressBar("update","APS Payments","Failed activation!",0,"force")
+		_OBJ'WriteLog("EMV Initialization ","Services failed activation.")
+	}
+	wait 1	! force screen to update.
+	coSession'UI'ProgressBar("close")
+	_OBJ'WriteLog("EMV Initialization completed.",Dim(50,"="))
+	
+RETURN retVal
+!
+
+RESET_DOT_NET: ! flush .NET
+
+	IF coSPM {
+		DELETE OBJECT coSPM, ERR=*NEXT
+		coSPM	= 0
+	}
+	if coHTTP {
+		z		= coHTTP'PvxFree()
+		DELETE OBJECT coHTTP, ERR=*NEXT
+	}
+	if coNET {
+		z		= coNET'PvxFree()
+ 		DELETE OBJECT coNET, ERR=*NEXT
+	}
+
+	coSPM		= 0
+	coHTTP		= 0
+	coNET		= 0
+	tlsChk		= 0
+	retVal		= retFAILURE
+
+	DEF OBJECT coNET,"[.NET]"
+	ok			= isFALSE; coNET'Add("System",ERR=*NEXT); ok	= isTRUE
+	IF NOT(ok) {
+		coSession'LastErrorMsg$ = msg(-1)
+		RETURN retFAILURE
+	}
+	ok=isFALSE; coNet'Add("System.Net",ERR=*NEXT); ok=isTRUE
+	IF NOT(ok) {
+		coSession'LastErrorMsg$ = msg(-1)
+		RETURN retFAILURE
+	}
+
+	tmpNameSpace$		= "System,System.Net"
+	coNET'NameSpace$	= tmpNameSpace$
+
+	! Set TLS level #230282
+	coSPM = EVN("coNet'Create("+quo+"ServicePointManager"+quo+")",0,err=*next) ! part of System.Net
+
+	if coSPM {
+		tlsChk			= isFALSE; coSPM'set_SecurityProtocol("Tls12",err=*next); tlsChk = isTRUE
+
+		IF NOT(tlsChk) {
+			tlsChk		= _obj'TlsDirectCast()
+		}
+	}
+
+	if NOT(tlsChk) {
+		retVal			= retWARNING
+	} ELSE {
+		retVal			= retSUCCESS
+	}
+
+	ok					= isFALSE; coHTTP = coNET'Create("WebClient",ERR=*NEXT); ok = isTRUE
+	IF NOT(ok) {
+		coSession'LastErrorMsg$ = msg(-1)
+		RETURN retFAILURE
+	}
+
+RETURN retVal
+!
+
+SET_CHILD_COLL:
+	tmpRtn				= _OBJ'InitChildCollection("TerminalKey","SY_531APSTerminal_SVC","TerminalKey$",$$, $$)
+RETURN retVal
+!
+
+START_SERVICES:
+	startFile$		= "run.bat"
+	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,startFile$,"..\ASI\EMV\" ! + TerminalCode$
+	wait 5
+RETURN retSUCCESS
+!
+
+STOP_SERVICES:
+	stopFile$		= "stop.bat"
+	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV\" ! + TerminalCode$
+	wait 1
+RETURN retSUCCESS
+!
+	
+TLS_DIRECT_CAST: ! Using SETERR because EVN() fails to return the error if the direct cast fails.
+	retVal		= retFAILURE
+	SETERR TLS_DIRECT_CAST_END
+	coSPM'SecurityProtocol	= 3072 ! direct cast
+	retVal		= retSUCCESS
+	
+TLS_DIRECT_CAST_END:
+	seterr 0
+RETURN retVal
+!
+
+WRITE_LOG:
+ENTER LogType$, LogMessage$
+!	IF cAPSCreditCardLog$		= isYES$ {
+		_obj'CreateLog()
+		IF cAPSlogCH {
+			time$				= dte(0:"%Hz:%mz:%Sz")
+			date$				= STR(DAY)
+			stamp$				= "Date: " + date$ + " Time: " + time$ + " " + LogType$ + ": "
+			MaskedRequestLog$	= LogMessage$
+		!	_OBJ'LogMask(LogMessage$,MaskedRequestLog$)
+		!	MaskedRequestLog$	= SUB(MaskedRequestLog$, $0A$, $0A0D$)
+			print (cAPSlogCH)""
+			PRINT (cAPSlogCH)stamp$
+			PRINT (cAPSlogCH)MaskedRequestLog$
+			print (cAPSlogCH)""
+			CLOSE(cAPSlogCH)
+			cAPSlogCH			= 0
+	 	}
+!	}
+RETURN retSUCCESS
+!

@@ -1,0 +1,201 @@
+! SY_531APSDocument_UI.PVC
+! Copyright 2017 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+!
+
+DEF CLASS "SY_531APSDocument_UI" CREATE REQUIRED DELETE REQUIRED
+	LIKE "SY_LineEntry_UI"
+
+	LOCAL cGridCTL
+	LOCAL coModule
+
+	LOCAL cEntityName$			= "APS Click to Pay Document"
+
+	LOCAL cValidModules$		= "A/R" + SEP + "S/O" + SEP
+
+	FUNCTION LOCAL postLoad() postload
+
+	FUNCTION LOCAL changeDocumentCode() 		changeDocumentCode
+	FUNCTION LOCAL changeModuleCode() 			changeModuleCode
+	FUNCTION LOCAL changeDocumentType() 		changeDocumentType
+
+	FUNCTION LOCAL keyChange(keyValue$) 		keyChange
+
+	FUNCTION LOCAL postReadRec() 				postReadRec
+
+	FUNCTION LOCAL rowMods(gridCtl, rowNo) 		rowMods
+
+	FUNCTION LOCAL BT_Cancel() 					BT_Cancel
+	FUNCTION LOCAL BT_Copy() 					BT_Copy
+
+	FUNCTION LOCAL onExit()						onExit
+
+  LOCAL coSession
+END DEF
+
+! ------------------------------------------------------------------------------
+ON_CREATE:
+ENTER coSession
+
+	coBusiness = _OBJ'InitBusinessObject( "MAIN", "SY_531APSDocument_BUS", $$, isFALSE, isFALSE, isFALSE)
+	IF NOT(coBusiness) {
+		EXIT errOBJECT
+	}
+	coHeader = coBusiness
+
+	coHeader'GetValue("cValidModules$", cValidModules$)
+
+	retVal = _obj'InitBusinessObject("SY_531APSDocumentDetail_BUS", "SY_531APSDocumentDetail_BUS", "SET", isFALSE, 	isFALSE, isFALSE,	coHeader'Lines )
+	retVal = coHeader'Lines'SetUIHandle(_obj)
+
+	SCREEN_LIB$ = "SY_531APSDocument.M4L"
+	SCREEN_ID$  = "dMain"
+RETURN
+
+! ------------------------------------------------------------------------------
+ON_DELETE:
+RETURN
+
+! ss SY_531APSDocument_UI
+
+! ------------------------------------------------------------------------------
+postLoad:
+	cGridCTL = GD_Lines.CTL
+	retVal = _OBJ'SetupGrid(cGridCTL, "SY_531APSDocument", "GD_Lines", grdMODEADD)
+RETURN
+
+! ------------------------------------------------------------------------------
+changeDocumentCode:
+	retVal = retSUCCESS
+	! returned from ALE
+	IF LEN(documentCode$)>2 {
+		moduleCode$		= MID(documentCode$, 3)
+		documentCode$ 	= MID(documentCode$, 1, 2)
+		_OBJ'keyChange(documentCode$+moduleCode$+documentType$+documentType$)
+	} ELSE {
+		ENABLE CONTROL moduleCode.CTL
+		ENABLE CONTROL moduleCode.CTL + 3000
+	}
+RETURN retVal
+
+! ------------------------------------------------------------------------------
+changeModuleCode:
+	retVal = retSUCCESS
+	IF NOT(NUL(moduleCode$)) {
+		IF LEN(moduleCode$)=2 {
+			moduleCode$	= MID(moduleCode$, 1, 1) + "/" + MID(moduleCode$, 2, 1)
+		}
+		IF NUL(documentType$) {
+			ENABLE CONTROL documentType.CTL
+		} ELSE {
+			retVal 		= _OBJ'keyChange(documentCode$+moduleCode$+documentType$)
+		}
+	}
+	IF NOT(retVal) { _OBJ'BT_Cancel() }
+RETURN retVal
+
+! ------------------------------------------------------------------------------
+changeDocumentType:
+	IF NOT(NUL(documentType$)) { retVal = _OBJ'keyChange(documentCode$+moduleCode$+documentType$) }
+RETURN retVal
+
+! ------------------------------------------------------------------------------
+keyChange:
+	ENTER keyValue$
+	retVal = _OBJ'keyChange(FROM "SY_LineEntry_UI", keyValue$)
+	IF coHeader'EditState = edtNEW { ENABLE CONTROL BT_Copy.CTL }
+RETURN retVal
+
+! ------------------------------------------------------------------------------
+postReadRec:
+	IF NOT(coModule) { coModule = coHeader'GetChildHandle("SY_Module") }
+	IF coModule {
+		IF coModule'FIND(moduleCode$) { coModule'GetValue("moduleName$", moduleName$) }
+	}
+	IF documentType$="Q" {
+		ENABLE CONTROL documentPath.CTL
+		ENABLE CONTROL displayTransaction.CTL
+	} ELSE {
+		DISABLE CONTROL documentPath.CTL
+		DISABLE CONTROL displayTransaction.CTL
+	}
+	_OBJ'LoadLines(cGridCTL)
+RETURN
+
+! ------------------------------------------------------------------------------
+rowMods:
+	ENTER gridCtl, rowNo
+	retVal = _OBJ'RowMods(FROM "SY_LineEntry_UI", gridCtl, rowNo)
+	IF rowNo {
+		gridCTL'row		= rowNo
+		gridCTL'column$ = "member$"
+		gridCTL'LOCK	= isTRUE
+	}
+RETURN retVal
+
+! ------------------------------------------------------------------------------
+BT_Cancel:
+	retvAL = _OBJ'BT_Cancel(FROM "SY_LineEntry_UI")
+
+	DISABLE CONTROL moduleCode.CTL
+	DISABLE CONTROL moduleCode.CTL + 3000
+
+	DISABLE CONTROL BT_Copy.CTL
+
+	moduleName$ = ""
+	DROP_BOX WRITE documentType.CTL, 1
+
+	DISABLE CONTROL documentPath.CTL
+
+	ML_GoToLine = 0
+	_OBJ'ClearGrid(GD_Lines.ctl)
+
+	SET_FOCUS documentCode.CTL
+RETURN retVal
+
+! ------------------------------------------------------------------------------
+BT_COPY:
+	last_id = DEC(MID(MSE,25,2))
+
+	IF coBusiness'EditState <> edtNEW {
+		coSession'UI'MessageBox$ ("SO_NewEntries")
+	} ELSE {
+
+		TERM$ = coSession'LegacyTerm$
+		Start$ = documentCode$ + moduleCode$ + documentType$
+		CALL "SWQuery", "SY_531APSDocument", "", L$, selection$, ST, "", SK, TERM$, Start$
+
+		retVal = coBusiness'CopyFromDocument(selection$)
+		IF retVal {
+			retVal = _OBJ'BT_RowResetAll()
+		}
+	}
+
+	IF last_id {
+		NEXT_ID = last_id
+	}
+RETURN retVal
+
+! ------------------------------------------------------------------------------
+BT_COPY_CANCEL:
+	CMD_STR$ = "END"
+RETURN retSUCCESS
+
+! ------------------------------------------------------------------------------
+BT_COPY_OK:
+	IF NUL(ML_CopyFromNo$) {
+		NEXT_ID = ML_CopyFromNo.ctl
+	} ELSE {
+		arg_1$ = cCopyFromSource$
+		arg_2$ = cCopyFromNo$ + cCopyFromInvSeq$
+		CMD_STR$ = "END"
+	}
+RETURN retSUCCESS
+
+! ----------------------------------------------------------------------------------------------
+onExit:
+!	retVal = _OBJ'OnExitGridView()
+!	IF retVal {
+		retVal = _OBJ'OnExit(FROM "SY_LineEntry_UI")
+!	}
+RETURN retVal
+!

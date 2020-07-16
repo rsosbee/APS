@@ -1,0 +1,44 @@
+! $Id: SY_531APSConstant.pvc $
+! APS Sage 100 ERP System Object / Constants Class override
+! Accounting Systems, Inc. 2019. RCSosbee
+! #236076 - 2019-03-28 RCS
+
+DEF CLASS "SY_531APSConstant" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "SY_Constant"
+
+	! Public Properties
+
+
+	! Boolean Constants
+	LOCAL isNULL				= 0
+	
+	! String Constants
+	LOCAL isNULL$				= $$
+
+	! Elements Defined Elsewhere, but Referenced Locally
+
+END DEF
+!
+
+ON_CREATE:
+	
+	! Inheritance check to ensure object is not directly created
+	IF POS(UCS(_OBJ'_Class$) = UCS(PGN)) {
+		IF %SYS_SS {			! coSession is not included in enter statement in direct inheritance structure of this class
+			%SYS_SS'LastErrorNum$ = "SY_NotInherited"
+			%SYS_SS'LastErrorMsg$ = MSG("SY_NotInherited", _OBJ'_Class$)
+		}
+		EXIT errOBJECT
+	}
+	isNULL$						= $$
+	isNULL						= 0
+
+RETURN
+!
+
+ON_DELETE:
+
+RETURN
+!

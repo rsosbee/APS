@@ -1,0 +1,224 @@
+! $Id: SO_531APSInvoicePayment_bus.pvc $
+! Copyright 2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #236076 - 2019-02-07 RCS
+!
+
+DEF CLASS "SO_531APSInvoicePayment_bus" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "SO_InvoicePayment_bus"
+
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL cLF$						= $0D0A$
+	LOCAL CR$						= $0D$
+	LOCAL CrLf$						= $0A0D$
+	LOCAL Tab$						= $09$
+	LOCAL isNULL$					= $$
+	LOCAL cAPSLogCh
+	
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	
+	FUNCTION LOCAL CreateLog(logFile$,cAPSlogCH)						CREATE_LOG
+
+	! ** Determine if a SPS credit card has been authorized on invoice
+	! ** @Param authOnThisDocOnly {optional} [input, boolean] if true, only want to know if authorization occurred on the invoice
+	! ** @returns [boolean] True = credit card authorized on invoice, False = credit card not authorized or credit card authorized on sales order
+	FUNCTION LOCAL IsCreditCardAuthorized()								IS_CREDIT_CARD_AUTHORIZED
+	FUNCTION LOCAL IsCreditCardAuthorized(authOnThisDocOnly)			IS_CREDIT_CARD_AUTHORIZED
+
+	! ** This function validates payment and deposit records and updates header payment fields
+	! ** @returns [boolean] True = success, False = failure
+	FUNCTION LOCAL OneCardRecordsValidation()							ONE_CARD_RECORDS_VALIDATION
+	FUNCTION WriteLog(Type$,Message$,logFile$)							WRITE_LOG
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+
+END DEF
+
+
+ON_CREATE:
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+CREATE_LOG:
+ENTER logFile$,cAPSlogCH
+	if nul(logFile$) {
+		logFile$		= "APS_Error_"+dte(0:"%Yl%Mz%Dz_%Hz%mz%Sz")+".log"
+	}
+
+	cAPSlogCH			= HFN
+	retVal				= retFAILURE
+	%logFile$			= logFile$
+	log$				= coSession'PathCompany$+logFile$
+ 	WHILE 1
+ 		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; retVal = retSUCCESS; BREAK
+ 		IF ERR <> 12 {
+ 			CLOSE (cAPSlogCH)
+ 			OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; retVal = retSUCCESS; BREAK
+  		}
+ 		SERIAL log$,ERR=*NEXT
+ 		CLOSE (cAPSlogCH)
+ 		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; retVal = retSUCCESS; BREAK
+ 		cAPSlogCH		= 0
+ 		BREAK
+ 	WEND
+
+RETURN retVal
+!
+
+IS_CREDIT_CARD_AUTHORIZED:	! #236076 - 2019-02-07 RCS
+
+ENTER (authOnThisDocOnly), ERR=*NEXT
+	! authOnThisDocOnly is true when we need to determine whether to void a transaction	and
+	! whether to recalc corporate sales tax.
+	! When we have multiple cards, need to check a particular sales order transaction
+	! Allow deletion of preauth from invoice only.  Leaves the SO preauth alone. #236076 - 2019-02-07 RCS
+	retVal				= retFAILURE
+
+	IF PostAuthorizationProcessed$ = isYES$ {
+		retVal			= retSUCCESS
+	} ELSE {
+		IF (PaymentTypeCategory$	= "P" and not(PreAuthProcessedInSO))	\
+			OR PaymentTypeCategory$	= "D"									\
+			OR InvoiceType$			= "CM"									\
+			OR NOT(NUL(Last4BankAccountNos$)) { 
+			retVal		= _OBJ'IsCreditCardAuthorized(FROM "SO_CommonPayment_bus")
+		}
+		IF retVal AND PaymentTypeCategory$ = "D" {
+			IF DepositProcessedInSO AND authOnThisDocOnly {
+				retVal	= retFAILURE
+			}
+		}
+	}
+
+RETURN retVal
+!
+
+ONE_CARD_RECORDS_VALIDATION:	! no call back to base.
+	
+	! these fields need to be the same in payment and deposit records
+	creditCardIOL$		= CPL("IOLIST " + CreditCardIDCols$ + "," + CreditCardAddressCols$ + ",SaveCreditCard$")
+
+	! update these fields in document header
+	docUpdateFromIOL$	= CPL("IOLIST PaymentType$, PaymentTypeCategory$, TransactionAmt, $$, $$")
+	docUpdateToIOL$		= CPL("IOLIST PaymentType$, PaymentTypeCategory$, DepositAmt, CheckNoForDeposit$, OtherPaymentTypeRefNo$")
+	
+	retVal				= retSUCCESS
+	IF InvoiceType$ <> "CM" {
+		retVal			= _OBJ'SetPaymentKey("D")
+		IF retVal		= edtEXISTS {
+			_OBJ'GetPartialRecord(depRec$, creditCardIOL$)
+			_OBJ'GetPartialRecord(docUpdateRec$, docUpdateFromIOL$)
+			coHeaderBus'SetPartialRecord(docUpdateRec$, docUpdateToIOL$)
+			depositExists	= isTRUE
+		}
+	}
+	
+	IF depositExists {
+		retVal			= _OBJ'SetPaymentKey("P")
+
+		IF retVal		= edtNEW {
+			refreshPaymentRec	= isTRUE
+		}
+		IF retVal		= edtEXISTS {
+			_OBJ'GetPartialRecord(payRec$, creditCardIOL$)
+
+			! // change to force the refresh because of AVS changes to the address data.
+	
+			IF payRec$ <> depRec$ {
+				! to catch this condition
+				payRec.txt$				= sub(payRec$,sep,"|")
+				depRec.txt$				= sub(depRec$,sep,"|")
+				LogMessage$				= "Record Mismatch!"+CrLf$+"PayRec:  "+payRec.txt$+CrLf$+"DepRec:  "+depRec.txt$+CrLf$+"Default Card ID:  "+cDefaultCardID$+CrLf$+"Credcard ID:  "+CreditCardID$
+			!	_obj'WriteLog("Data Mismatch",LogMessage$,logFile$)
+			!	coSession'UI'MessageBox$("", "Data Mismatch Detected!\"+"Error log:  "+logfile$+"\Please email this log file to APS Support","Style=OK,Title=Data Mismatch,Icon=S")
+				refreshPaymentRec		= isTRUE
+			}
+		}
+
+		IF refreshPaymentRec {
+			! payment record may be new or it may have the customer's default CC.  Copy CC info from deposit record.
+			_OBJ'SetPartialRecord(depRec$, creditCardIOL$)
+			_OBJ'SetValue("TransactionAmt", 0)
+			retVal		= _OBJ'Write()
+		}
+	} ELSE {
+		! need to update payment type and payment type category and clear non-credit card fields and deposit amt in document header
+		docUpdateFromIOL$				= CPL("IOLIST PaymentType$, PaymentTypeCategory$, 0, $$, $$")
+		docUpdateToIOL$					= CPL("IOLIST PaymentType$, PaymentTypeCategory$, DepositAmt, CheckNoForDeposit$, OtherPaymentTypeRefNo$")
+
+		retVal = _OBJ'SetPaymentKey("P")
+		IF retVal = edtEXISTS {
+			paymentExists				= isTRUE
+
+			IF InvoiceType$ = "CM" {
+				PaymentTypeCategory$	= "P"
+				updateHdr				= isTRUE
+			} ELSE {
+				coHeaderBus'GetValue("PaymentType$", headerPaymentType$)
+				IF headerPaymentType$ <> PaymentType$ {
+					updateHdr			= isTRUE
+					PaymentTypeCategory$	= "D"
+					IF coPaymentTypeChild'Find(PaymentType$) {
+						coPaymentTypeChild'GetValue("DefaultTransaction$", PaymentTypeCategory$)
+					}
+				}
+			}
+			IF updateHdr {
+				coHeaderBus'SetPartialRecord(REC(docUpdateFromIOL$), docUpdateToIOL$)
+			}
+			_OBJ'ClearRecord()
+		}
+
+		retVal			= retSUCCESS ! Payment record is not required when there is no deposit.
+	}
+
+	IF retVal AND (depositExists OR paymentExists) {
+		! Make sure that the document has lines and totals are not zero
+		! ( condition that will cause order/invoice write to fail )
+		retVal			= coHeaderBus'Lines'ValidateLines()
+
+		IF retVal <> retSUCCESS {
+			LastErrorNum$	= coHeaderBus'Lines'LastErrorNum$
+			LastErrorMsg$	= coHeaderBus'Lines'LastErrorMsg$
+		}
+	}
+
+	IF NOT(NUL(cHeaderPaymentType$)) AND NOT(depositExists) AND NOT(paymentExists) {
+		IF coPaymentTypeChild'Find(cHeaderPaymentType$) {
+			coPaymentTypeChild'GetValue("PaymentMethod$", headerPaymentMethod$)
+			IF POS(headerPaymentMethod$ = pmtCREDIT$ + pmtACH$) {
+				coHeaderBus'SetPartialRecord($$, docUpdateToIOL$)
+			}
+		}
+	}
+
+RETURN retVal
+!
+
+WRITE_LOG:
+ENTER LogType$, LogMessage$, logFile$
+
+	logFile$					= "APS_Error_"+dte(0:"%Yl%Mz%Dz_%Hz%mz%Sz")+".log"
+	_obj'CreateLog(logFile$,cAPSlogCH)
+	IF cAPSlogCH {
+		time$					= dte(0:"%Hz:%mz:%Sz")
+		date$					= dte(0:"%Mz/%Dz/%Yz")
+		stamp$					= "APS Error Log - Date: "+date$+" Time: "+time$+" Mode: "+LogType$+" User: "+coSession'UserCode$
+		MaskedRequestLog$		= LogMessage$
+		PRINT (cAPSlogCH)CrLf$+stamp$
+		PRINT (cAPSlogCH)MaskedRequestLog$+CrLf$
+		CLOSE(cAPSlogCH)
+		cAPSlogCH 				= 0
+ 	}
+
+RETURN
+!

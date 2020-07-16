@@ -1,0 +1,72 @@
+! $Id: SO_531APSSalesJournal_UI.pvc $
+! Copyright 2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #232007 - 2018-01-31 RCS
+
+DEF CLASS "SO_531APSSalesJournal_ui" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "SO_SalesJournal_UI"
+
+	! Public properties
+
+	! Local Functions (methods)
+	FUNCTION LOCAL BT_PREVIEW()									BT_PREVIEW
+	FUNCTION LOCAL BT_PRINT()									BT_PRINT
+	FUNCTION LOCAL PERFORM APSErrorLog()						APS_ERROR_LOG
+
+	! Local Properties
+
+    ! Local variables defined elsewhere but referenced locally
+	LOCAL coSession
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+RETURN
+!
+
+ON_DELETE:
+
+RETURN
+!
+
+BT_PRINT:
+
+	retVal = _OBJ'BT_Print(FROM "SO_531APSSalesJournal_UI_base")
+
+	if %APS_C2P_ErrorsExist=isTRUE {
+		retVal = _obj'APSErrorLog()
+	}
+
+RETURN
+!
+
+BT_PREVIEW:
+
+	retVal = _OBJ'BT_Preview(FROM "SO_531APSSalesJournal_UI_base")
+
+	if %APS_C2P_ErrorsExist=isTRUE {
+		retVal = _obj'APSErrorLog()
+	}
+
+
+RETURN
+!
+
+APS_ERROR_LOG:
+
+	coSession'UI'MessageBox$("","ClickToPay upload errors occurred!\"+ \
+				"Please review the error log that will display next.\"+ \
+				"Do not delete the error log - you will need it for APS to\"+ \
+				"troubleshoot the issue with the ClickToPay gateway.", \
+				"Style=OK,Title=APS ClickToPay Gateway Upload Error Log,Icon=S")
+
+	log$=coSession'PathCompany$+%logFile$
+	system_help log$
+	retVal = retSUCCESS
+
+RETURN retVal
+!

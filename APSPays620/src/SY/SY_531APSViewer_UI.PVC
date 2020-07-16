@@ -1,0 +1,162 @@
+! SY_531APSDocument_UI.PVC
+! Copyright 2017-2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #232007 - BSosbee
+
+DEF CLASS "SY_531APSViewer_UI" CREATE REQUIRED DELETE REQUIRED
+	LIKE "SY_MaintUI"
+
+	! Public Properties
+
+	! Public Methods
+
+	! Private Properties
+	LOCAL cGridCTL
+	LOCAL coModule
+
+	LOCAL cEntityName$ = ""
+	LOCAL cDivisions$
+	
+	! objects
+	LOCAL coRequest
+
+	! Private Methods
+	FUNCTION LOCAL changeTimeStamp() 						changeTimeStamp
+	FUNCTION LOCAL formatDisplay$(displayText$) 			formatDisplay
+	FUNCTION LOCAL postReadRec()							postReadRec
+
+	LOCAL coSession
+	
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	coBusiness = _OBJ'InitBusinessObject( "MAIN", "SY_531APSViewer_BUS", $$, isTRUE, isTRUE, isTRUE)
+	IF NOT(coBusiness) {
+		EXIT errOBJECT
+	}
+	coSession'GetParameter("A/R", "Divisions$", cDivisions$)
+	SCREEN_LIB$ = "SY_531APSViewer.M4L"
+	SCREEN_ID$  = "dMain"
+	
+	! for parsing the request/response data
+	coRequest	= new("SY_531APSRequest",coSession)
+RETURN
+!
+
+ON_DELETE:
+	drop object coRequest,err=*next
+RETURN
+!
+
+changeTimeStamp:
+RETURN _OBJ'keyChange(timeStamp$)
+!
+
+postReadRec:
+	tempOBJ = coBusiness'GetChildHandle("documentCode")
+	IF tempOBJ {
+		key$ = documentCode$+moduleCode$+"Q"
+		IF tempOBJ'FIND(key$) {
+			tempOBJ'GetValue("documentDesc$", documentDesc$)
+			tempOBJ'GetValue("documentPath$", documentPath$)
+		}
+	}
+	ML_InvoiceNo$		= InvoiceNo$+InvoiceType$
+	ML_Customer$		= tbl(cDivisions$="Y",CustomerNo$,ARDivisionNo$+"-"+CustomerNo$)
+	customerName$		= $$
+	coRequest'ParseData(request$,"customerName",customerName$)
+	BillToName$			= customerName$
+	IF NUL(D531_C2PLinkCode$) {
+		LinkCode$					= $$
+		coRequest'ParseData(response$,"clickToPayLinkCode",LinkCode$)
+		if nul(LinkCode$) {
+			coRequest'ParseData(request$,"clickToPayLinkCode",LinkCode$)
+		}
+		D531_C2PLinkCode$		= LinkCode$
+	}
+
+	displayRequest$		= _OBJ'formatDisplay$(request$)
+	displayResponse$	= _OBJ'formatDisplay$(response$)
+	change_flg			= 0
+RETURN retVal
+!
+
+formatDisplay:
+ENTER displayText$
+
+	DataFormat$			= "json"
+	br$					= CHR(10)
+	t$					= ""
+	retVal				= retSUCCESS
+	inset				= 0
+	SWITCH DataFormat$
+		CASE "json"
+			indent		= 0
+			inQuotes	= false
+			FOR i=1 TO LEN(displayText$)
+				char$ = MID(displayText$, i, 1)
+				if char$=QUO {
+					if inQuotes {
+						inQuotes = isFALSE
+					} ELSE {
+						inQuotes = isTRUE
+					}
+				}
+				SWITCH char$
+					CASE "{"
+						indent = indent + 2
+						t$ += char$ + br$ + DIM(indent)
+						BREAK
+					CASE "["
+						indent = indent + 2
+						t$ += char$ + br$ + DIM(indent)
+						BREAK
+					CASE ":"
+						if MID(displayText$, i+1, 1)="{" {
+							t$ += char$ + br$ + DIM(indent)
+						} ELSE {
+							if MID(displayText$, i+1, 1)="[" {
+								t$ += char$ + br$ + DIM(indent)
+							} ELSE {
+								t$ += char$
+							}
+						}
+						BREAK
+					CASE ","
+						addBRTag = isFALSE
+						IF MID(displayText$, i-1, 1)="]" { addBRTag = isTRUE }
+						IF MID(displayText$, i-1, 1)="}" { addBRTag = isTRUE }
+						IF MID(displayText$, i-1, 1)=QUO { addBRTag = isTRUE }
+						IF MID(displayText$, i+1, 1)=QUO { addBRTag = isTRUE }
+						IF indent<0 { indent = 0 }
+						IF addBRTag {
+							t$ += char$ + br$ + DIM(indent)
+						} ELSE {
+							t$ += char$
+						}
+						BREAK
+					CASE "]"
+						indent = indent - 2
+						if indent<0 { indent = 0 }
+						t$ += br$ + DIM(indent)  + char$
+						BREAK
+					CASE "}"
+						indent = indent - 2
+						if indent<0 { indent = 0 }
+						t$ += br$ + DIM(indent) + char$
+						BREAK
+					DEFAULT
+						t$ += char$
+						BREAK
+				END SWITCH
+				charPos = charPos + 1
+			NEXT i
+			displayText$ = t$
+			BREAK
+		CASE "xml"
+			BREAK
+	END SWITCH
+RETURN displayText$
+!

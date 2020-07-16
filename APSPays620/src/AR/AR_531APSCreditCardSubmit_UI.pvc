@@ -1,0 +1,307 @@
+! $Id: AR_531APSCreditCardSubmit_ui.pvc $
+! APS ERP Credit Card Submit
+! $Copyright 2013-2019 Accounting Systems, Inc.  Columbia, SC
+! Irina Kouptsova, Bob Sosbee #235036
+! Revised to hosted form and EMV #236076 RCS
+!
+DEF CLASS "AR_531APSCreditCardSubmit_ui" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "SY_MaintSetUI"
+	LIKE "CI_ExpirationDateUI_val"
+
+	! Public Properties
+	PROPERTY cEndURL$
+	PROPERTY cEndStatus$
+	
+	! Local/Private Properties
+	LOCAL cResponce$
+	LOCAL SCREEN_ID$
+	LOCAL UserAction$
+	LOCAL ML_TestURL$
+	LOCAL cAPSCreditCardLog$
+	LOCAL CR$		= $0D$		! RCS 2018-10-15 Ticket #236076
+	LOCAL CrLf$		= $0A0D$	! RCS 2018-10-15 Ticket #236076
+	LOCAL Tab$		= $09$	
+
+
+	! objects
+	LOCAL coCompany				! RCS 2019-01-26 for APS company parms
+
+	! File channels
+	LOCAL cAPSlogCH
+	
+	! Public Functions (Methods)
+	FUNCTION GetEmvForm(StepTwoUrl$, UserAction$)					GET_EMV_FORM			! #236076 - 2019-01-16 RCS
+	FUNCTION GetHostedForm(StepTwoUrl$, UserAction$)				GET_HOSTED_FORM			! PLW 2018-08-21 Ticket #236076
+	FUNCTION GetBrowser(StepTwoUrl$, UserAction$)					GET_BROWSER				! #236076 - 2019-01-09 RCS
+	FUNCTION GetUrlForTesting(TestUrl$, UserAction$)				GET_URL_FOR_TESTING		! #236076 - 2019-01-15 RCS
+	FUNCTION OnUrlChange()											ON_URL_CHANGE			! #236076 - 2019-01-16 RCS
+	FUNCTION GetVaultForm(StepTwoUrl$, UserAction$)					GET_VAULT_FORM			! #236076 - 2019-04-02 RCS
+	
+	! Local functions (Methods)
+
+	FUNCTION LOCAL BT_CancelClose() 								BT_CANCEL_CLOSE
+	FUNCTION LOCAL BT_OkClose() 									BT_OK_CLOSE
+	FUNCTION LOCAL ChangeML_TestURL()								CHANGE_ML_TESTURL
+
+	FUNCTION LOCAL PERFORM CreateLog()								CREATE_LOG
+	FUNCTION LOCAL LogMask(tmpOpenRec$,tmpMaskRec$)					LOG_MASK
+	FUNCTION LOCAL OnExit() 										ON_EXIT
+	FUNCTION LOCAL PostLoad() 										POST_LOAD
+
+	FUNCTION LOCAL WriteLog(Type$,Message$)							WRITE_LOG
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession, ERR=*NEXT
+
+	coBusiness			= _OBJ'InitBusinessObject("MAIN","AR_531APSCreditCardSubmit_bus","SET",isTRUE,isTRUE,isTRUE)
+ 	IF NOT(coBusiness) { EXIT errOBJECT }
+
+	SCREEN_LIB$			= "AR_531APSCreditCardSubmit.m4l"
+	SCREEN_ID$			= "dHostedForm"
+	
+	coCompany 			= NEW ("SY_Company_SVC", coSession)
+	coCompany'FIND(coSession'companyKey$)
+	coCompany'GetValue("D531_APSCreditCardLog$", cAPSCreditCardLog$)
+
+RETURN
+!
+
+ON_DELETE:
+	IF cAPSlogCH {	
+		CLOSE (cAPSlogCH)
+		cAPSlogCH		= 0
+	}
+	
+	if coCompany {
+		DROP OBJECT coCompany,ERR=*NEXT
+		coCompany		= 0
+	}
+
+RETURN
+!
+
+BT_CANCEL_CLOSE:
+	cResponce$			= "CANCEL"
+	CMD_STR$			= "End"
+RETURN retSUCCESS
+!
+
+BT_OK_CLOSE:				! #236076 - 2019-01-15 RCS **** for test URL.
+	cResponce$			= "SUBMIT"
+	TestURL$			= ML_TestURL$
+	UserAction$			= cResponce$
+	CMD_STR$			= "E"
+RETURN retSUCCESS
+!
+
+
+CHANGE_ML_TESTURL:			! #236076 - 2019-01-15 RCS **** for test URL.
+RETURN retSUCCESS
+!
+
+CREATE_LOG:
+	cAPSlogCH			= HFN
+	log$=coSession'PathCompany$+"APS_TRAN"+dte(0:"%Yl%Mz")+".log" ! Breaks the logs into monthly chunks to reduce size. 2018-03-30 RCS
+	WHILE 1
+		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+		IF ERR<>12 {
+			CLOSE (cAPSlogCH)
+			OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+ 		}
+		SERIAL log$,ERR=*NEXT
+		CLOSE (cAPSlogCH)
+		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+		cAPSlogCH		= 0
+		BREAK
+	WEND
+RETURN retSUCCESS
+!
+
+GET_BROWSER:			! #236076 - 2019-01-15 RCS **** for test URL.
+ENTER HTTPStepTwoURL$, UserAction$
+
+	Screen_ID$			= "dBrowser"
+	retval				= sys(HttpStepTwoURL$)
+	if not(retVal) {
+		UserAction$		= "SUBMITTED"
+	} ELSE {
+		UserAction$		= "CANCEL"
+	}
+	cResponce$			= UserAction$
+	
+RETURN retSuccess
+!
+
+GET_EMV_FORM:			! #236076 - 2019-01-15 RCS
+ENTER HTTPStepTwoURL$, UserAction$
+	Screen_ID$			= "dEmvForm"
+	_OBJ'Process(HTTPStepTwoUrl$, UserAction$)
+
+RETURN retSUCCESS
+!
+
+GET_HOSTED_FORM:		! PLW 2018-08-20 Ticket #236076
+ENTER HTTPStepTwoURL$, UserAction$
+	Screen_ID$			= "dHostedForm"
+	_OBJ'Process(HTTPStepTwoUrl$, UserAction$)
+
+RETURN retSUCCESS
+!
+
+GET_URL_FOR_TESTING:	! #236076 - 2019-01-15 RCS **** for test URL.
+ENTER TestURL$,UserAction$
+	Screen_ID$			= "dGetURL"
+	_obj'Process(TestURL$,UserAction$)
+RETURN retSUCCESS
+!
+
+GET_VAULT_FORM:		! PLW 2018-08-20 Ticket #236076
+ENTER HTTPStepTwoURL$, UserAction$
+	Screen_ID$			= "dVaultForm"
+	_OBJ'Process(HTTPStepTwoUrl$, UserAction$)
+RETURN retSUCCESS
+!
+
+LOG_MASK:
+ENTER tmpOpen$,tmpMask$
+	tmpMask$			= tmpOpen$
+	
+	! lay out masked Direct Pay transactions so they are readable.  #236076 RCS
+	if pos("&" 			= tmpMask$) 	\
+		and not(pos("<" = tmpMask$))	\ 
+		and len(tmpMask$)  {
+		wTask$			= $$
+		for nLoop		= 1 to len(tmpMask$)
+			if tmpMask$(nLoop,1) = "&" {
+				wTask$	+= CrLf$ + tmpMask$(nLoop,1)
+			} else {
+				wTask$	+= tmpMask$(nLoop,1)
+			}
+		next nLoop
+		
+		tmpMask$		= wTask$
+	}
+	
+RETURN retSUCCESS
+!
+
+ON_EXIT:
+	SWITCH UCS(SCREEN_ID$)
+	
+		CASE "DBROWSER"
+			ARG_2$		= cResponce$
+			BREAK
+			
+		CASE "DEMVFORM"
+	 		If POS("APPROVED" = UCS(cEndStatus$)) {
+	 			ARG_2$	= "SUBMITTED"
+	 		} ELSE {
+	 			ARG_2$	= UCS(cEndStatus$)		! May be Cancel or Declined.
+	 		}
+			BREAK
+			
+		CASE "DGETURL"							! #236076 - 2019-01-15 RCS for URL testing.
+			ARG_1$		= ML_TestURL$
+			ARG_2$		= tbl(nul(cResponce$),cResponce$,"CANCEL")
+			BREAK
+			
+		CASE "DHOSTEDFORM"
+			ARG_2$		= ucs(cEndStatus$)
+			hostedURL$	= cEndUrl$
+	 		If POS("REDIRECT" = UCS(hostedURL$)) {
+	 			ARG_2$	= "SUBMITTED"
+	 		} ELSE {
+	 			ARG_2$	= "CANCELLED"
+	 		}
+			BREAK
+			
+		CASE "DVAULTFORM"						! For vault entries.
+			ARG_2$		= ucs(cEndStatus$)
+			hostedURL$	= cEndUrl$
+	 		If POS("REDIRECT" = UCS(hostedURL$)) {
+	 			ARG_2$	= "SUBMITTED"
+	 		} ELSE {
+	 			ARG_2$	= "CANCELLED"
+	 		}
+			BREAK
+			
+		DEFAULT
+			BREAK
+			
+	END SWITCH
+	
+RETURN retSUCCESS
+!
+
+ON_URL_CHANGE:			! #236076 - 2019-01-16 RCS
+
+	cEndUrl$			= SHELL_BROWSER.ctl'document'url$
+
+	cChkURL$			= cEndUrl$
+	if nul(cChkURL$) {
+		cChkURL$		= "<null>"
+	}
+	_OBJ'WriteLog("Step 2 URL Change",cChkURL$)
+
+	! EMV form response
+	IF MSK(cEndUrl$,"#.*") {
+		cEndStatus$ 	= cEndUrl$(MSK(cEndUrl$,"#.*")+1)
+		cChkFlag		= pos("="=cEndStatus$)
+		if cChkFlag {
+			cEndStatus$	= mid(cEndStatus$,cChkFlag+1)	! in case the 'status=' prefix comes back.
+		}
+		SWITCH ucs(mid(cEndStatus$,1,1))
+			CASE "A"								! Approved
+				CMD_STR$	= "End"
+				BREAK
+			CASE "C"								! Cancelled
+				CMD_STR$	= "End"
+				BREAK
+			CASE "D"								! Declined
+				CMD_STR$	= "End"
+				BREAK
+		END SWITCH
+	}
+	
+	! hosted form reponse
+	If POS("REDIRECT" 	= UCS(cEndUrl$)) {
+		CMD_STR$		= "End" 					! Close the form automatically if the URL contains "Redirect" (hosted form)
+		cEndStatus$		= "SUBMITTED"
+	}
+RETURN retSUCCESS
+!
+
+POST_LOAD:
+	cScreen$			= ucs(Screen_ID$)
+	if pos(cScreen$="DEMVFORM|DHOSTEDFORM|DVAULTFORM") {	! #236076 - 2019-04-03 RCS
+		SHELL_BROWSER.CTL'Navigate(ARG_1$)
+	}
+RETURN retSUCCESS
+!
+
+WRITE_LOG:
+ENTER LogType$, LogMessage$
+	IF cAPSCreditCardLog$	= isYES$ {
+		_obj'CreateLog()
+		IF cAPSlogCH {
+			time$			= dte(0:"%Hz:%mz:%Sz") ! was STR(TIM:"00.000") 2018-03-30 RCS to improve logging.
+			date$			= STR(DAY)
+			stamp$			= "Date: " + date$ + " Time: " + time$ + " " + LogType$ + ": "
+			MaskedRequestLog$	= LogMessage$
+			_OBJ'LogMask(LogMessage$,MaskedRequestLog$)
+			MaskedRequestLog$	= SUB(MaskedRequestLog$, $0A$, $0A0D$)
+			PRINT (cAPSlogCH)CrLf$+stamp$
+			PRINT (cAPSlogCH)MaskedRequestLog$+CrLf$
+			CLOSE(cAPSlogCH)
+			cAPSlogCH		= 0
+	 	}
+	}
+RETURN retSUCCESS
+!

@@ -1,0 +1,51 @@
+! SY_531APSDocumentDetail_BUS.PVC
+! Copyright 2017 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+!
+
+DEF CLASS "SY_531APSDocumentDetail_BUS" CREATE REQUIRED DELETE REQUIRED
+	LIKE "SY_LineEntryDetail_BUS"
+
+	! Public Properties
+
+	! Public Methods
+	FUNCTION CopyFromDocument(copyREC$, copyIOL$, selection$)			CopyFromDocument
+
+	! Private Properties
+	LOCAL cMainTable$		= "SY_531APSDocumentDetail"
+	LOCAL cIsSysDB			= isTRUE
+
+	! Private Methods
+
+	! Local Variables - Defined Elsewhere, but Referenced Locally
+	LOCAL coHeader
+END DEF
+
+! ----------------------------------------------------------------------------------------------
+ON_CREATE:
+ENTER coSession
+	
+	_OBJ'SetMode("SET")
+	_OBJ'SetIndex("kDISPLAY")
+
+RETURN
+
+! ----------------------------------------------------------------------------------------------
+ON_DELETE:
+RETURN
+
+! ----------------------------------------------------------------------------------------------
+CopyFromDocument:
+ENTER copyREC$, copyIOL$, selection$
+
+	retVal					= retFAILURE
+
+	copyFH					= _OBJ'OpenTable("SY_531APSDocumentDetail", pthSYSTEM$)
+	SELECT * FROM copyFH BEGIN selection$ END selection$ + $FE$
+		retVal = retSUCCESS
+		READ DATA FROM copyREC$ TO IOL=copyIOL$
+		WRITE (cPhysicalFH)
+	NEXT RECORD
+	CLOSE (copyFH)
+
+RETURN retVal
+!

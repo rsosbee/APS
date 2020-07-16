@@ -1,0 +1,31 @@
+! SY_531APSDocumentDetail_SVC.PVC
+! Copyright 2017 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+!
+DEF CLASS "SY_531APSDocumentDetail_SVC" CREATE REQUIRED DELETE REQUIRED
+	LIKE "SY_Service"
+
+	! Public Properties
+
+	! Public Methods
+
+	! Private Properties
+	LOCAL cMainTable$		= "SY_531APSDocumentDetail"
+	LOCAL cIsSysDB			= isTRUE
+
+	! Private Methods
+
+	! Local Variables - Defined Elsewhere, but Referenced Locally
+	LOCAL coHeader
+END DEF
+
+! ----------------------------------------------------------------------------------------------
+ON_CREATE:
+ENTER coSession, coHeader
+	_OBJ'SetIndex("kDISPLAY")
+	_OBJ'SetBrowseIndex("kDISPLAY","kDISPLAY")
+RETURN
+
+! ----------------------------------------------------------------------------------------------
+ON_DELETE:
+RETURN
+!

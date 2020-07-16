@@ -1,0 +1,204 @@
+! $Id$: SY_531APSTableCreation.pvc $
+! Inherited library for table creation in ClickToPay
+! Accounting Systems, Inc. 2013-2020 PLWhirley, Bob Sosbee
+! 
+
+DEF CLASS "SY_531APSTableCreation"  CREATE REQUIRED  DELETE REQUIRED
+	! Inherits from the following class(es)
+
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL cDesc$
+	LOCAL cCompanyCode$
+	LOCAL cCount
+
+	! Public Functions (Methods)
+	FUNCTION UpdateC2PFiles(tmpCompany$)						UPDATE_C2P_FILES
+	FUNCTION UpdateC2PFiles(tmpCompany$,cModuleCode$)			UPDATE_C2P_FILES
+
+!	FUNCTION UpdateC2PFiles(tmpCompany$)						UPDATE_C2P_FILES
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL APFiles()									AP_FILES
+	FUNCTION LOCAL ARFiles()									AR_FILES
+	FUNCTION LOCAL CIFiles()									CI_FILES
+	FUNCTION LOCAL GLFiles()									GL_FILES
+	FUNCTION LOCAL SOFiles()									SO_FILES
+	FUNCTION LOCAL SYFiles()									SY_FILES
+	FUNCTION LOCAL CreateTables(cFileName$,cCompany$)			CREATE_TABLES
+
+END DEF
+!
+
+On_Create:
+	
+	if not(coSession) {
+		coSession		= %sys_ss
+	}
+
+RETURN
+!
+
+On_Delete:
+RETURN
+!
+
+UPDATE_C2P_FILES:	! Used to insure that all C2P/APS files are updated.
+ENTER (cCompanyCode$),(cModuleCode$),err=*next
+
+	if not(coSession) { 
+		coSession		= %sys_ss
+	}
+	if nul(cCompanyCode$) {
+		cCompanyCode$	= coSession'CompanyCode$
+	}
+
+	cModuleCode$		= ucs(cModuleCode$)
+	%cCompanyCode$		= cCompanyCode$
+	
+	filecnt				= 0
+
+	if nul(cModuleCode$) {
+		cDesc$			= "APS"
+	} else {
+		cDesc$			= "APS " +cModuleCode$ 
+	}
+	%cDesc$				= cDesc$
+
+	IF coSession'UI {
+		action$			= "init"
+		title$			= "Checking " + cDesc$ + " files for company " + cCompanyCode$
+		message$		= $$
+		coSession'UI'ProgressBar(action$, title$, message$, 0)
+		wait .1
+	}
+	
+	cCount				= 0
+	SWITCH cModuleCode$
+		CASE "AP"
+			cCount		+= _obj'APFiles()
+			BREAK
+		CASE "AR"
+			cCount		+= _obj'ARFiles()
+			cCount		+= _obj'SYFiles()	! to insure SY files are processed after upgrade of an existing system. DB# 1344 - 2020-04-09 - RCS
+			BREAK
+		CASE "CI"
+			cCount		+= _obj'CIFiles()
+			BREAK
+		CASE "GL"
+			cCount		+= _obj'GLFiles()
+			BREAK
+		CASE "SO"
+			cCount		+= _obj'SOFiles()
+			BREAK
+		CASE "SY"
+			cCount		+= _obj'SYFiles()
+			BREAK
+		DEFAULT
+			cCount		+= _obj'APFiles()		
+			cCount		+= _obj'ARFiles()
+			cCount		+= _obj'CIFiles()
+			cCount		+= _obj'GLFiles()
+			cCount		+= _obj'SOFiles()
+			cCount		+= _obj'SYFiles()
+			BREAK
+	END SWITCH
+	
+	IF coSession'UI {
+		action$			= "close"
+		coSession'UI'ProgressBar(action$)
+		wait .1
+	}
+
+	retVal				= retSUCCESS
+
+RETURN retVal
+!	
+	
+AP_FILES:
+	cCompanyCode$		= %cCompanyCode$
+	
+RETURN tmpVal
+!
+
+AR_FILES:	
+	! RCS #236076 - 2019-04-17 - updated additional files.
+	tmpVal				= _obj'CreateTables("AR_531APSConvertPaymentTypes",	cCompanyCode$); filecnt += tmpVal	! 1
+	tmpVal				= _obj'CreateTables("AR_531APSCustomerCreditCard",	cCompanyCode$); filecnt += tmpVal	! 2
+	tmpVal				= _obj'CreateTables("AR_531APSPaymentType",			cCompanyCode$); filecnt += tmpVal	! 3
+	tmpVal				= _obj'CreateTables("AR_CashReceiptsHeader",		cCompanyCode$); filecnt += tmpVal	! 4
+	tmpVal				= _obj'CreateTables("AR_CashReceiptsHistory",		cCompanyCode$); filecnt += tmpVal	! 5
+	tmpVal				= _obj'CreateTables("AR_Customer",					cCompanyCode$); filecnt += tmpVal	! 6
+	tmpVal				= _obj'CreateTables("AR_CustomerCreditCard",		cCompanyCode$); filecnt += tmpVal	! 7
+	tmpVal				= _obj'CreateTables("AR_InvoiceHeader",				cCompanyCode$); filecnt += tmpVal	! 8
+	tmpVal				= _obj'CreateTables("AR_InvoiceHistoryHeader",		cCompanyCode$); filecnt += tmpVal	! 9
+	tmpVal				= _obj'CreateTables("AR_InvoiceHistoryPayment",		cCompanyCode$); filecnt += tmpVal	! 10
+	tmpVal				= _obj'CreateTables("AR_InvoiceHistoryWrk",			cCompanyCode$); filecnt += tmpVal	! 11
+	tmpVal				= _obj'CreateTables("AR_InvoiceWrk",				cCompanyCode$); filecnt += tmpVal	! 12
+	tmpVal				= _obj'CreateTables("AR_PaymentType",				cCompanyCode$); filecnt += tmpVal	! 13
+	tmpVal				= _obj'CreateTables("AR_TransactionPaymentHistory",	cCompanyCode$); filecnt += tmpVal	! 14
+	tmpVal				= _obj'CreateTables("AR_TransactionPosting",		cCompanyCode$); filecnt += tmpVal	! 15 #241845 2018-09-17 RCS
+RETURN tmpVal
+!
+
+CI_FILES:
+	cCompanyCode$		= %cCompanyCode$
+	
+RETURN tmpVal
+!
+
+GL_FILES:
+	cCompanyCode$		= %cCompanyCode$
+	
+RETURN tmpVal
+!
+
+SO_FILES:
+	cCompanyCode$		= %cCompanyCode$
+	tmpVal				= _obj'CreateTables("SO_InvoiceHeader",				cCompanyCode$); filecnt += tmpVal	! 16
+	tmpVal				= _obj'CreateTables("SO_InvoicePayment",			cCompanyCode$); filecnt += tmpVal	! 17
+	tmpVal				= _obj'CreateTables("SO_InvoiceWrk",				cCompanyCode$); filecnt += tmpVal	! 18
+	tmpVal				= _obj'CreateTables("SO_SalesOrderHeader",			cCompanyCode$); filecnt += tmpVal	! 19
+	tmpVal				= _obj'CreateTables("SO_SalesOrderHistoryHeader",	cCompanyCode$); filecnt += tmpVal	! 20
+	tmpVal				= _obj'CreateTables("SO_SalesOrderHistoryPayment",	cCompanyCode$); filecnt += tmpVal	! 21
+	tmpVal				= _obj'CreateTables("SO_SalesOrderPayment",			cCompanyCode$); filecnt += tmpVal	! 22
+	tmpVal				= _obj'CreateTables("SO_SalesOrderWrk",				cCompanyCode$); filecnt += tmpVal	! 23
+RETURN tmpVal
+!
+
+SY_FILES:
+	cCompanyCode$		= %cCompanyCode$
+	tmpVal				= coSession'CreateTable("SY_531APSActivation",		"SYSTEM",err=*next); filecnt += tmpVal	! 24 - may be in use DB# 1324
+	tmpVal				= coSession'CreateTable("SY_531APSActiveToken",		"SYSTEM"); filecnt += tmpVal		! 25 #236076 - 2019-02-02 RCS
+	tmpVal				= coSession'CreateTable("SY_531APSCompany",			"SYSTEM"); filecnt += tmpVal		! 26
+	tmpVal				= coSession'CreateTable("SY_531APSDocumentDetail",	"SYSTEM"); filecnt += tmpVal		! 27
+	tmpVal				= coSession'CreateTable("SY_531APSDocumentHeader",	"SYSTEM"); filecnt += tmpVal		! 28
+	tmpVal				= coSession'CreateTable("SY_531APSEmvTerminal",		"SYSTEM"); filecnt += tmpVal		! 29 #236076 - 2019-01-28 RCS
+	tmpVal				= coSession'CreateTable("SY_531APSTransactionLog",	"SYSTEM"); filecnt += tmpVal		! 30
+RETURN tmpVal
+!
+
+CREATE_TABLES:
+ENTER cFileName$,cCompanyCode$
+
+	if not(coSession) { 
+		coSession		= %sys_ss
+	}
+	if nul(cCompanyCode$) {
+		cCompanyCode$	= %cCompanyCode$
+	}
+
+	IF coSession'UI {
+		action$			= "Update"
+		title$			= "Checking " + %cDesc$ + " files for company " + cCompanyCode$
+		message$		= "Checking file: " + cFileName$
+		coSession'UI'ProgressBar(action$, title$, message$, 0)
+		wait .5
+	}
+
+	retVal				= retFAILURE
+	retVal				= coSession'CreateTable(cFileName$,"COMPANY:"+cCompanyCode$,ERR=*NEXT)
+
+RETURN retVal
+!

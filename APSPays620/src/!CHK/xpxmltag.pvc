@@ -1,0 +1,599 @@
+! XML Tag Parser Object
+! Program <xpxmltag.pvc>
+! Copyright 2006, Megasys Hospitality Systems, Inc.
+
+! %Id: XPXMLTAG.pvc 2444 2007-03-14 19:25:13Z jhwilder %
+
+! ** This is a sub-object of the XPXMLDOC object.  It is used to hold information about a single tag element and it's children and attributes.
+
+DEF CLASS "*obj/xpxmltag"
+
+	! ** The tag name
+
+	PROPERTY Name$ SET ERR
+
+	! ** Optional text value associated with this tag
+
+	PROPERTY Text$ SET ERR
+
+	! ** A decoded version of the 'Text$' property
+
+	PROPERTY DecodedText$ GET GetDecodedText SET ERR
+
+	! ** A reference to a %PvxClass(*obj/group)% for the atrtibutes of this tag
+
+	PROPERTY Attributes OBJECT SET ERR
+
+	! ** The number of attributes for this tag
+
+	PROPERTY AttributeCount SET ERR
+
+	! ** A reference to a %PvxClass(*obj/group)% for the child elements of this tag
+
+	PROPERTY Elements OBJECT SET ERR
+
+	! ** The number of child elements
+
+	PROPERTY ElementCount SET ERR
+	PROPERTY CurrentElement SET ERR ! Pointer to current sub-element node
+	PROPERTY CurrentElementName$ SET ERR
+
+	! ** The line separator character to be used when building the 'XMLString$' property. (Default is $0D0A$ - Carriage return / line feed)
+
+	PROPERTY LineSep$ SET SetLineSep
+
+	! ** Use this property to pull the XML coding of this element and its children as a single string.
+
+	PROPERTY XMLString$ GET GetXMLString SET ERR
+
+	! ** Breaks the XMLText$ down into its elements and attributes.
+	! ** @param XMLText$ The string containing the XML document
+
+	FUNCTION Parse$(_XMLText$)Parse
+
+	! Searching for specific elements
+	! ** Search for the first occurance of a specific element by name
+	! ** @param _Name$ The name of the element to find
+	! ** @returns the a reference to the %PvxClass(*obj/group)% object for the element or ZERO if not found
+
+	FUNCTION FindElement(_Name$)FindElement
+
+	! ** Search for the first occurance of a specific element by name
+	! ** @param _Name$ The name of the element to find
+	! ** @returns the Text$ value for the element found
+
+	FUNCTION FindElementText$(_Name$)FindElementText
+
+	! Searching through multiple elements
+
+	FUNCTION FindNextElement() FindNextElement
+	FUNCTION FindNextElement(_Name$)FindNextElement
+	FUNCTION FindNextElementName$() FindNextElementName
+	FUNCTION FindNextElementText$() FindNextElementText
+	FUNCTION FindNextElementText$(_Name$)FindNextElementText
+
+	! Searching for specific attributes
+	! ** Search for the first occurance of a specific attribute by name
+	! ** @param _Name$ The name of the attribute to find
+	! ** @returns the a reference to the %PvxClass(*obj/group)% object for the attribute or ZERO if not found
+
+	FUNCTION FindAttribute(_Name$)FindAttribute
+
+	! ** Search for the first occurance of a specific attribute by name
+	! ** @param _Name$ The name of the attribute to find
+	! ** @returns the Text$ value for the attribute found
+
+	FUNCTION FindAttributeText$(_Name$)FindAttributeText
+
+	! ** Create a child element
+	! ** @param _Name$ The name of the element to be created
+	! ** @returns the a reference to the %PvxClass(*obj/group)% object that is created or ZERO if creation fails
+
+	FUNCTION CreateElement(_Name$)CreateElement
+
+	! ** Create a child element
+	! ** @param _Name$ The name of the element to be created
+	! ** @param _Text$ The text value to be set for the element
+	! ** @returns the a reference to the %PvxClass(*obj/group)% object that is created or ZERO if creation fails
+
+	FUNCTION CreateElement(_Name$,_Text$)CreateElement
+
+	! ** Create an attribute
+	! ** @param _Name$ The name of the attribute to be created
+	! ** @returns the a reference to the %PvxClass(*obj/group)% object that is created or ZERO if creation fails
+
+	FUNCTION CreateAttribute(_Name$)CreateAttribute
+
+	! ** Create an attribute
+	! ** @param _Name$ The name of the attribute to be created
+	! ** @param _Text$ The text value to be set for the attribute
+	! ** @returns the a reference to the %PvxClass(*obj/group)% object that is created or ZERO if creation fails
+
+	FUNCTION CreateAttribute(_Name$,_Text$)CreateAttribute
+
+	! ** Set the name of this tag
+	! ** @param _Name$ The name to be assigned to this tag
+
+	FUNCTION SetName(_Name$)SetName
+
+	! ** Set the taxt value for this tag
+	! ** @param _Text$ The text value to be assigned to this tag
+
+	FUNCTION SetText(_Text$)SetText
+	FUNCTION LOCAL DecodeText$(_Text$)DecodeText
+	FUNCTION LOCAL EncodeText$(_Text$)EncodeText
+	FUNCTION LOCAL Init() Init
+	LOCAL CurrentElementID ! Used if searching for next element
+	LOCAL True=1
+	LOCAL False=0
+
+END DEF
+
+Return_False:! Return false
+
+RETURN False
+
+
+Init:
+
+	Name$ = ""
+	Text$ = ""
+
+	IF Elements { DROP OBJECT Elements }
+		Elements = 0
+		ElementCount = 0
+		CurrentElement = 0
+		CurrentElementName$ = ""
+		IF Attributes { DROP OBJECT Attributes }
+		Attributes = 0
+		AttributeCount = 0
+
+RETURN True
+
+
+Parse:
+
+ENTER (_XMLText$)
+
+	LOCAL x
+	_obj'Init() 
+
+	! The first thing we should see is a '<' signifying the beginning of a tag element
+
+	IF POS("<"=_XMLText$)=0 {
+
+		! Invalid text
+
+		_XMLText$ = ""
+	} ELSE {
+		IF POS("<!--"=STP(_XMLText$, 0))=1 {
+
+			! This is a comment, skip it
+
+			_XMLText$ = STP(_XMLText$, 0)
+			x = POS("-->" = _XMLText$)
+			IF x {
+				Name$ = MID(MID(_XMLText$, 1, x+1), 2)
+				_XMLText$ = STP(MID(_XMLText$, x+3), 0)
+			} ELSE {
+				Name$ = _XMLText$
+				_XMLText$ = ""
+			}
+		} ELSE {
+			IF POS("<"=_XMLText$) {
+
+				! Next find the end of this tag
+
+				x = POS(">" = _XMLText$)
+				IF x {
+
+					! Everything inside this set of <> goes into _name$ (this includes the tag name and any possible attributes
+					! The rest goes into _XMLText$ for processing by the next child node
+
+					_Name$ = STP(MID(_XMLText$, 1, x), 2)
+					_XMLText$ = STP(MID(_XMLText$, x+1), 0)
+					IF POS("/>"=_Name$) {
+
+						! If the tag ends with /> it is an empty tag (no inner text to process)
+						! strip off the < and /> characters and check for attributes
+
+						_Name$ = STP(MID(_Name$, 2, LEN(_Name$)-3))
+						GOSUB ReadAttributes	! *SC-OK*
+					} ELSE {
+
+						! This tag has inner text (which may consist of children nodes
+						! Strip off the < and > characters and check for attributes
+
+						_Name$ = MID(_Name$, 2, LEN(_Name$)-2)
+						GOSUB ReadAttributes	! *SC-OK*
+
+						! Find the inner text and detect child nodes for recursive processing
+
+						x = POS("<" = _XMLText$)
+						IF x>1 {
+
+							! This node has text
+
+							Text$ = MID(_XMLText$, 1, x-1)
+							_XMLText$ = MID(_XMLText$, x)
+						}
+						ClosingTag$ = "</"+Name$+">"
+
+						! Process this recursive loop until we hit the closing tag
+
+						_XMLText$ = STP(_XMLText$, 0)
+
+						WHILE (POS(ClosingTag$=_XMLText$)<>1 AND LEN(_XMLText$))
+
+							IF NOT(Elements) { Elements=NEW("*obj/group") }
+							x = NEW("*obj/xpxmltag")
+							_XMLText$ = x'Parse$(_XMLText$)
+							x'LineSep$ = LineSep$
+							Elements'Add(x)
+							x = REF(DROP x) ! Drop my reference, let the group object take over
+
+						WEND 
+
+						IF POS(ClosingTag$=_XMLText$)=1 { _XMLText$=STP(MID(_XMLText$, LEN(ClosingTag$)+1), 0) }
+						IF Elements { ElementCount=Elements'Count }
+					}
+				} ELSE {
+					_XMLText$ = ""
+				}
+			}
+		}
+	}
+
+RETURN _XMLText$
+
+
+ReadAttributes:
+
+	LOCAL _attributes$
+	IF POS(" "=_Name$) {
+		_attributes$ = STP(MID(_Name$, POS(" "=_Name$)+1))
+		Name$ = MID(_Name$, 1, POS(" "=_Name$)-1)
+
+		WHILE (LEN(_attributes$))
+
+			IF NOT(Attributes) { Attributes=NEW("*obj/group") }
+			x = NEW("*obj/xpxmlatr")
+			_attributes$ = x'Parse$(_attributes$)
+			Attributes'Add(x)
+			x = REF(DROP x)
+
+		WEND 
+
+	} ELSE {
+		Name$ = STP(_Name$)
+	}
+
+RETURN 
+
+! Be aware that if multiple elements with the same name exist, this will only
+! return the first element!
+
+
+FindElement:
+
+ENTER _Name$
+
+	obj_id = 0
+	CurrentElementName$ = ""
+	CurrentElementID = 0
+	IF Elements AND Elements'Count {
+		IF POS("/"=_Name$) {
+
+			! Recursive search request through multiple nodes
+
+			ThisName$ = MID(_Name$, 1, POS("/"=_Name$)-1)
+			NextName$ = MID(_Name$, POS("/"=_Name$)+1)
+		} ELSE {
+			ThisName$ = _Name$
+		}
+
+		! Search through the elements and return the first match.
+
+		FOR x=1 TO Elements'Count
+
+			IF Elements'Item(x)'Name$=ThisName$ { 
+				CurrentElementID=x, this_obj_id=Elements'Item(x)
+				BREAK
+			}
+
+		NEXT 
+
+		IF this_obj_id {
+			IF LEN(NextName$) {
+				obj_id = this_obj_id'FindElement(NextName$)
+			} ELSE {
+				obj_id = this_obj_id
+			}
+		}
+	}
+	IF obj_id AND POS("/"=_Name$)=0 {
+
+		! This is only valid if they haven't done a recursive search
+
+		CurrentElementName$ = obj_id'Name$
+		CurrentElement = obj_id
+	}
+
+RETURN obj_id
+
+	! ---[ FindNextElement ]---
+	! Use this routine if there are multiple elements with the same name under the current node
+	! It will return a 0 if no element is found, otherwise it will return the object ID of the next
+	! matching element.  If the _Name$ variable is empty, it will simply read through each node and
+	! return the object ID's.  Once you pass the last element, the function will return as zero.
+	! After calling this function, you may also re-read the current element from the CurrentElement
+	! property.
+	! The idea is to use this in a while loop.  For Example:
+	! WHILE (xmldoc'FindNextElement("Address"))
+	! 	Address$+=xmldoc'CurrentElement'Text$
+	! WEND
+
+
+FindNextElement:
+
+ENTER _Name$,ERR=*NEXT
+
+	obj_id = 0
+	IF POS("/"=_Name$) {
+		EXIT 88 ! Recursive not allowed for this function
+	} ELSE {
+		IF LEN(_Name$) AND CurrentElementName$<>_Name$ {
+	
+			! We are not set on the same item, just go find the next one of the new name
+	
+			obj_id = _obj'FindElement(_Name$)
+		} ELSE {
+			IF Elements AND Elements'Count AND CurrentElementID<Elements'Count {
+	
+				! Search through the remaining elements under this node for an item of the same name
+	
+				y = CurrentElementID+1 ! Start at next node
+				FOR x=y TO Elements'Count
+	
+					x$ = Elements'Item(x)'Name$
+					IF NUL(_Name$) OR x$=_Name$ { 
+						CurrentElementID=x
+						obj_id=Elements'Item(x)
+						BREAK
+					}
+				NEXT 
+			}
+		}
+	}
+	IF obj_id {
+		CurrentElementName$ = obj_id'Name$
+		CurrentElement = obj_id
+	} ELSE {
+	
+		! We've reached the end of the line. Subsequent calls will start again at the beginning
+	
+		CurrentElementID = 0
+		CurrentElementName$ = ""
+	}
+	
+RETURN obj_id
+
+
+FindElementText:
+
+ENTER _Name$
+
+	LOCAL ElementText$,x
+	x = _obj'FindElement(_Name$)
+	IF x { ElementText$=x'Text$ }
+
+RETURN ElementText$
+
+
+FindNextElementName:
+
+	LOCAL _x$
+	IF _obj'FindNextElement()  { _x$=_obj'CurrentElementName$ }
+
+RETURN _x$
+
+
+FindNextElementText:
+
+ENTER _Name$,ERR=*NEXT
+
+	LOCAL ElementText$,x
+	x = _obj'FindNextElement(_Name$)
+	IF x { ElementText$=x'Text$ }
+
+RETURN ElementText$
+
+
+FindAttribute:
+
+ENTER _Name$
+
+	obj_id = 0
+	IF Attributes {
+		IF Attributes'Count {
+			FOR x=1 TO Attributes'Count
+				IF Attributes'Item(x)'Name$=_Name$ {
+					obj_id=Attributes'Item(x)
+					BREAK
+				}
+			NEXT 
+		}
+	}
+
+RETURN obj_id
+
+
+FindAttributeText:
+
+ENTER _Name$
+
+	LOCAL AttributeText$,x
+	x = _obj'FindAttribute(_Name$)
+	IF x { AttributeText$=x'Text$ }
+
+RETURN AttributeText$
+
+
+CreateElement:
+
+ENTER _Name$,_Text$,ERR=*NEXT
+
+	_ret_val = 0
+
+	! Only one top level element is allowed in an XML document.
+
+	IF (_Class$="XPXMLDOC" AND ElementCount=0) OR _Class$<>"XPXMLDOC" {
+		IF NOT(Elements) { Elements=NEW("*obj/group") }
+		x = NEW("*obj/xpxmltag")
+		IF x'SetName(_Name$) {
+			x'SetText(_Text$)
+			Elements'Add(x)
+			x'LineSep$ = LineSep$
+			_ret_val = x
+			x = REF(DROP x) ! Drop my reference, let the group object take over
+		} ELSE {
+			DROP OBJECT x
+			_ret_val = 0
+		}
+		ElementCount = Elements'Count
+	}
+
+RETURN _ret_val
+
+
+CreateAttribute:
+
+ENTER _Name$,_Text$,ERR=*NEXT
+
+	_ret_val = 0
+	IF LEN(Name$) {
+		_ret_val = _obj'FindAttribute(_Name$) ! Cannot have duplicate attribute names
+		IF NOT(_ret_val) {
+			IF NOT(Attributes) { Attributes=NEW("*obj/group") }
+			x = NEW("*obj/xpxmlatr")
+			IF x'SetName(_Name$) {
+				Attributes'Add(x)
+				_ret_val = x
+				x = REF(DROP x) ! Drop my reference, let the group object take over
+			} ELSE {
+				DROP OBJECT x
+				_ret_val = 0
+			}
+			AttributeCount = Attributes'Count
+		}
+		IF _ret_val { _ret_val'SetText(_Text$) }
+	}
+
+RETURN _ret_val
+
+! Name must only be characters A-Z or a-z
+SetName:
+
+ENTER _Name$
+
+	IF _Name$ LIKE "[^A-Za-z0-9_:]" {
+		_ret_val = False
+	} ELSE {
+		_ret_val = True
+		Name$ = _Name$
+	}
+
+RETURN _ret_val
+
+! Must Encode special characters so that they don't interfere with the xml tags
+SetText:
+
+ENTER _Text$
+
+	Text$ = _obj'EncodeText$(_Text$)
+
+RETURN True
+
+
+GetDecodedText:
+
+RETURN _obj'DecodeText$(Text$)
+
+
+SetLineSep:
+
+ENTER _LineSep$
+
+	LineSep$ = _LineSep$
+	IF Elements {
+		IF Elements'Count {
+			FOR x=1 TO Elements'Count
+				Elements'Item(x)'LineSep$ = LineSep$
+			NEXT 
+		}
+	}
+
+RETURN True
+
+
+GetXMLString:
+
+	LOCAL xml$
+	xml$ = "<"+Name$
+	IF POS("<!--"=xml$)=1 {
+		xml$+ = ">" ! Comment
+	} ELSE {
+		IF Attributes {
+			IF Attributes'Count {
+				FOR x=1 TO Attributes'Count
+					xml$+ = " "+Attributes'Item(x)'Name$+" = "+QUO+Attributes'Item(x)'Text$+QUO
+				NEXT 
+			}
+		}
+		IF NUL(Text$) AND NOT(ElementCount) {
+			xml$+ = " />"+LineSep$
+		} ELSE {
+			xml$+ = ">"+Text$
+			IF Elements {
+				xml$+ = LineSep$
+				IF Elements'Count {
+					FOR x=1 TO Elements'Count
+						xml$+ = Elements'Item(x)'XMLString$
+					NEXT 
+				}
+			}
+			xml$+ = "</"+Name$+">"+LineSep$
+		}
+	}
+
+RETURN xml$
+
+
+DecodeText:
+
+ENTER _Text$
+
+	IF LEN(_Text$) {
+		_Text$ = SUB(_Text$, "&amp;", "&")
+		_Text$ = SUB(_Text$, "&apos;", "'")
+		_Text$ = SUB(_Text$, "&quot;", QUO)
+		_Text$ = SUB(_Text$, "&lt;", "<")
+		_Text$ = SUB(_Text$, "&gt;", ">")
+	}
+
+RETURN _Text$
+
+
+EncodeText:
+
+ENTER _Text$
+
+	IF LEN(_Text$) {
+		_Text$ = SUB(_Text$, "&", "&amp;")
+		_Text$ = SUB(_Text$, "'", "&apos;")
+		_Text$ = SUB(_Text$, QUO, "&quot;")
+		_Text$ = SUB(_Text$, "<", "&lt;")
+		_Text$ = SUB(_Text$, ">", "&gt;")
+	}
+
+RETURN _Text$

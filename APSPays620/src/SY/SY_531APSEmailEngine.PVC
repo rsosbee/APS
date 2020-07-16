@@ -1,0 +1,84 @@
+! $Id: SY_531APSEmailEngine.PVC $
+! Copyright 2017-2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+!
+
+DEF CLASS "SY_531APSEmailEngine" CREATE REQUIRED DELETE REQUIRED
+	! Inherits from the following class(es)
+	LIKE "SY_EmailEngine"
+
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL coCompany
+	LOCAL cInvoiceFH
+	
+	! Public Functions (Methods)
+	
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL functionBreak(value$) 		functionBreak
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+END DEF
+!
+
+ON_CREATE:
+	ENTER coSession
+	coCompany = NEW("SY_Company_SVC", coSession)
+	coCompany'FIND(coSession'companyKey$)
+
+	SWITCH coSession'moduleCode$
+		CASE "A/R"
+			cInvoiceFH = coSession'openTable("AR_InvoiceHeader", pthCOMPANY$)
+			BREAK
+		CASE "S/O"
+			cInvoiceFH = coSession'openTable("SO_InvoiceHeader", pthCOMPANY$)
+			BREAK
+	END SWITCH
+
+RETURN
+!
+
+ON_DELETE:
+	CLOSE (cInvoiceFH, ERR=*PROCEED); cInvoiceFH = 0
+	DROP OBJECT coCompany, ERR=*PROCEED; coCompany = 0
+RETURN
+!
+
+functionBreak:
+ENTER (value$)
+
+	LOCAL htmlBody$, documentNo$, documentKey$, linkStart, linkLength
+	IF value$="SY_EMAILENGINE:PRESENDEMAIL" {
+		coCompany'GetValue("D531_C2PCustomerURL$", D531_C2PCustomerURL$)
+
+		IF NOT(NUL(D531_C2PCustomerURL$)) {
+			c2p.URL$ = D531_C2PCustomerURL$ + "?code="
+
+			htmlBody$ = EEBody$
+
+			linkStart = POS("<APSClickToPay>", htmlBody$) + 15
+			linkLength = POS(">"=MID(htmlBody$, linkStart)) - 1
+			documentNo$ = MID(htmlBody$, linkStart, linkLength)
+
+			c2p.D531_C2PLinkCode$ = ""
+			SWITCH coSession'moduleCode$
+				CASE "A/R"
+					documentKey$ = UCS(MID(documentNo$, 1, 9))
+					READ (cInvoiceFH, KEY=documentKey$, REC=c2p$, ERR=*BREAK)
+					BREAK
+				CASE "S/O"
+					documentKey$ = UCS(MID(documentNo$, 1, 7))
+					READ (cInvoiceFH, KEY=documentKey$, REC=c2p$, ERR=*BREAK)
+					BREAK
+			END SWITCH
+
+			IF NOT(NUL(c2p.D531_C2PLinkCode$)) {
+				htmlBody$ = SUB(htmlBody$, "<APSClickToPay>"+documentNo$, c2p.URL$+c2p.D531_C2PLinkCode$)
+				coSend'SetHTMLBody(htmlBody$)
+			}
+		}
+	}
+
+RETURN _OBJ'functionBreak(FROM "SY_531APSEmailEngine_base", value$)
+!

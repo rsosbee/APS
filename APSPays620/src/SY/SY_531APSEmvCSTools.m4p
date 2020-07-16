@@ -1,0 +1,88 @@
+! $Id: SY_531APSEmvCsTools.m4p $
+! Copyright 2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! ** @Author Bsosbee
+! ** @Date 2019.04.12 15 at 07:26:11 PM EDT 
+! #236076 - 2019-04-17 RCS
+! 
+
+FIND_EMV_CHAN:	! used for fast checking of service ports.
+ENTER SERVER$,PORT$,RESULT
+	RESULT			= 0
+	E1$				= STP(SERVER$,1)+";"+PORT$
+	E1				= HFN
+	OPEN (E1,ERR	= END_FIND)"[tcp]"+E1$
+	RESULT			= 1
+END_FIND:
+	CLOSE (E1)
+	E1				= 0
+EXIT
+!
+
+GET_APS_CLIENT_VERSION:			! used to determine if APSEMVClient.exe should be copied again for updating.  Based on code from Mike King.
+ENTER exe$,FileVersion$,ProductVersion$,ErrMsg$,Result
+!	exe$			= "D:\pxplus\pvxplus9\pxplus.exe"+$00$
+	cExe$			= exe$+$00$	! need fully qualified file name.
+	Result			= 1
+	ErrMsg$			= $$
+	
+	tmp$			= DIM(512,$00$)
+	size			= DLL("version.dll","GetFileVersionInfoSizeA",cExe$,tmp$)
+	IF size			= 0 {
+		GOTO ERROR 
+	}
+	tmp$			= DIM(0)
+	bfr$			= DIM(size,$00$)
+	r				= DLL("version.dll","GetFileVersionInfoA",cExe$,$$,size,bfr$)
+	IF r			= 0 {
+		GOTO ERROR
+	}
+	where$			= DIM(4,$00$)
+	length$			= DIM(4,$00$)
+	r				= DLL("version.dll","VerQueryValueA",bfr$,"\\"+$00$,where$,length$)
+	IF r			= 0 {
+		GOTO ERROR
+	}
+	! VS_FIXEDFILEINFO structure
+	! dwFileVersionMS		= 9,4
+	! dwFileVersionLS		= 13,4
+	! dwProductVersionMS	= 17,4
+	! dwProductVersionLS	= 21,4
+	
+	! file version
+	tmp$			= MEM(DEC(SWP(where$)),DEC(SWP(length$)))
+	tmp$			= SWP(tmp$(9,4))+SWP(tmp$(13,4))+SWP(tmp$(17,4))+SWP(tmp$(21,4))
+	fv$				= ""
+	FOR n=1 TO 8 STEP 2
+		fv$			+= STR(DEC(tmp$(n,2)))
+		IF n<8 {
+			fv$ 	+= "." 
+		}
+	NEXT
+	FileVersion$	= fv$
+	
+	! product version
+	pv$				= ""
+	FOR n=9 TO 16 STEP 2
+		pv$			+= STR(DEC(tmp$(n,2)))
+		IF n<16 {
+			pv$		+= "."  
+		}
+	NEXT 
+	ProductVersion$	= pv$
+EXIT 
+	!
+
+ERROR: 
+	error			= DLL("kernel32","GetLastError")
+	result			= 0
+	size			= 512
+	text$			= DIM(size,$00$)
+	result			= DLL("Kernel32","FormatMessageA",DEC($1000$),0,error,0,text$,size,0)
+	IF result		= 0 {
+		ErrMsg$		= "An unknown error occured"
+	} ELSE {
+		ErrMsg$		= text$(1,POS($0D0A$=text$))
+	}
+	Result			= 0
+EXIT
+!

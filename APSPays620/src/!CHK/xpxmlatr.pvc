@@ -1,0 +1,129 @@
+! XML Tag Attribute Object
+! Program <xpxmlatr.pvc>
+! Copyright 2006, Megasys Hospitality Systems, Inc.
+
+! %Id: XPXMLATR.pvc 2205 2007-01-12 14:58:43Z jhwilder %
+
+! ** This is a sub-object of the %PvxClass(*obj/xpxmltag)% object.  It is used to hold information about a single tag element's attributes.  
+
+DEF CLASS "*obj/xpxmlatr"
+
+	! ** The attribute name
+
+	PROPERTY Name$ SET ERR
+
+	! ** The attribute text vaue
+
+	PROPERTY Text$ SET ERR
+
+	! ** Parses through the string to pull out the attributes for an element
+	! ** @param _attributes$ The string that contains the attributes for an element
+	! ** @returns The modified string value with the attribute information removed
+
+	FUNCTION Parse$(_attributes$)Parse
+
+	! ** Set the name of this attribute
+
+	FUNCTION SetName(_Name$)SetName
+
+	! ** Set the text of this attribute
+
+	FUNCTION SetText(_Text$)SetText
+	FUNCTION LOCAL DecodeText$(_Text$)DecodeText
+	FUNCTION LOCAL EncodeText$(_Text$)EncodeText
+	LOCAL True=1,False=0
+	LOCAL xml$
+
+END DEF
+
+
+Return_False:! Return false
+
+	RETURN False
+
+
+Parse:
+
+	ENTER (_attrib$)
+
+		Name$ = ""
+		Text$ = ""
+		LOCAL x
+		x = POS(" = " = _attrib$)
+
+		IF x=0 {
+			Name$ = _attrib$
+			_attrib$ = ""
+			} ELSE {
+			Name$ = STP(MID(_attrib$, 1, x-1), 2)
+			_attrib$ = STP(MID(_attrib$, x+1), 2)
+			IF LEN(_attrib$) {
+				IF POS(QUO=_attrib$)=1 {
+					_attrib$ = MID(_attrib$, 2)
+					IF POS(QUO=_attrib$) {
+						Text$ = _obj'DecodeText$(MID(_attrib$, 1, POS(QUO=_attrib$)-1))
+						_attrib$ = STP(MID(_attrib$, POS(QUO=_attrib$)+1), 2)
+						} ELSE {
+						_attrib$ = "" ! Bad attribute
+					}
+					} ELSE {
+					_attrib$ = "" ! bad Attribute
+				}
+			}
+		}
+
+		RETURN _attrib$
+
+		! Name must only be characters A-Z or a-z
+
+
+SetName:
+
+	ENTER _Name$
+
+		IF _Name$ LIKE "[^A-Za-z0-9_:]" {
+			_ret_val = False
+			} ELSE {
+			_ret_val = True
+			Name$ = _Name$
+		}
+
+		RETURN _ret_val
+
+		! Must Encode special characters so that they don't interfere with the xml tags
+
+
+SetText:
+
+	ENTER _Text$
+
+		Text$ = _obj'EncodeText$(_Text$)
+
+		RETURN True
+
+
+DecodeText:
+
+	ENTER _Text$
+
+		_Text$ = SUB(_Text$, "&amp;", "&")
+		_Text$ = SUB(_Text$, "&apos;", "'")
+		_Text$ = SUB(_Text$, "&quot;", QUO)
+		_Text$ = SUB(_Text$, "&lt;", "<")
+		_Text$ = SUB(_Text$, "&gt;", ">")
+
+		RETURN _Text$
+
+
+EncodeText:
+
+	ENTER _Text$
+
+		_Text$ = SUB(_Text$, "&", "&amp;")
+		_Text$ = SUB(_Text$, "'", "&apos;")
+		_Text$ = SUB(_Text$, QUO, "&quot;")
+		_Text$ = SUB(_Text$, "<", "&lt;")
+		_Text$ = SUB(_Text$, ">", "&gt;")
+
+		RETURN _Text$
+

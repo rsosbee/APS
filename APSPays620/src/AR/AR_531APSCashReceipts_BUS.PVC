@@ -1,0 +1,157 @@
+! $ID: AR_531APSCashReceipts_Bus.pvc $
+! Copyright 2018-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! Bob Sosbee #232007 - 2018-02-19
+!
+DEF CLASS "AR_531APSCashReceipts_Bus" CREATE REQUIRED DELETE REQUIRED
+	! Inherits from the following class(es)
+	LIKE "AR_CashReceipts_Bus"
+
+	! Public Properties
+	PROPERTY From_C2P
+
+	! Local/Private Properties
+	LOCAL hldPostingAmt
+	LOCAL hldDepositType$
+	LOCAL cSkipCCVoid
+
+	! Public Functions (Methods)
+	FUNCTION Delete(Key$)							DELETE_REC
+	FUNCTION PreDelete()							PRE_DELETE
+	FUNCTION ValidateCreditCardGUID(tmpVal$)		VALIDATE_CREDITCARDGUID
+
+	! ** Write current record
+	! ** @returns [boolean] True = success, False = failure, -1 = warning
+	FUNCTION Write()								WRITE_REC
+
+	! Local/Private Functions (Methods)
+
+	! ** Post Delete Record - executes CreditCardPostDelete() and updates cash receipts deposit object after header delete is successful
+	! ** @returns [boolean] returns isTrue = succes; warning, (-1) if failure or warning encountered
+	FUNCTION LOCAL PostDeleteRec()					POST_DELETE_REC
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+	!
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+DELETE_REC:
+	
+ENTER (Key$)
+
+	! 2018-04-24 RCS - Fix to allow deleting of zero dollar receipt records. -->
+	retVal				= retSUCCESS
+	READ DATA FROM key$ TO IOL	= cKeyRecIOL$  					! populate individual key columns from key$
+	CreditCardEntryNo$	= STP(CreditCardEntryNo$, 1, $00$) 		! Interior key column, need to strip nulls included in key$
+	! <--
+	
+	From_C2P			= isFALSE
+	read (cfh,key=key$,rec=DH$)		! _obj'getValue("D531_C2PPaymentId$",D531_C2PPaymentId$) returns null even though data is there.
+	D531_C2PPaymentId$	= dh.D531_C2PPaymentId$
+	if not(nul(D531_C2PPaymentId$)) {
+		cSkipCCVoid		= isTRUE
+		From_C2P		= isTRUE
+	}
+
+	retVal				= _OBJ'Delete(FROM "AR_531APSCashReceipts_bus_BASE",Key$)
+
+RETURN retVal
+!
+
+PRE_DELETE:
+
+	From_C2P			= isFALSE
+	_obj'GetValue("D531_C2PPaymentId$",D531_C2PPaymentId$)
+	_obj'GetValue("DepositType$",DepositType$)
+	_obj'GetValue("PostingAmt",PostingAmt)
+	if not(nul(D531_C2PPaymentId$)) {
+		cSkipCCVoid		= isTRUE
+		From_C2P		= isTRUE
+	}
+
+	retVal				= _OBJ'PreDelete(FROM "AR_531APSCashReceipts_bus_BASE")
+
+RETURN retVal
+!
+
+POST_DELETE_REC: ! Back out deposit totals
+
+	retVal				= retSUCCESS
+
+	iF From_C2P and PostingAmt {
+		coDeposit		= _obj'DepositObject ! get the deposit object ID
+		if coDeposit'RequireDepositAmt$ = isYES$ {
+			depositKey$	= coDeposit'GetKey$()
+			SWITCH depositType$
+				CASE "A"
+					coDeposit'GetValue("ACHDepositAmt", ACHDepositAmt)
+					coDeposit'SetValue("ACHDepositAmt", ACHDepositAmt - PostingAmt)
+					BREAK
+				CASE "R"
+					coDeposit'GetValue("CreditDepositAmt", CreditDepositAmt)
+					coDeposit'SetValue("CreditDepositAmt", CreditDepositAmt - PostingAmt)
+
+					BREAK
+				CASE "C"
+					coDeposit'GetValue("CashDepositAmt", CashDepositAmt)
+					coDeposit'SetValue("CashDepositAmt", CashDepositAmt - PostingAmt)
+
+					BREAK
+			END SWITCH
+			depositBalance				-= PostingAmt
+			IF coUI {
+				coUI'SetVar("DepositBalance",depositBalance) ! PLW 2018-02-26
+			}
+
+		}
+		retVal			= coDeposit'Write()
+		IF retVal {
+			! The deposit record was cleared at the end of Write(). Reset the key for the next cash receipt record in the deposit.
+			coDeposit'SetKey(depositKey$)
+		}
+		IF retVal <> retSUCCESS {
+			LastErrorNum$	= coDeposit'LastErrorNum$
+			LastErrorMsg$	= coDeposit'LastErrorMsg$
+		}
+	}
+
+	retVal=_OBJ'PostDeleteRec(FROM "AR_531APSCashReceipts_bus_BASE")
+
+RETURN retVal
+!
+
+VALIDATE_CREDITCARDGUID: ! for C2P credit card guid
+
+ENTER (tmpVal$)
+
+	if %C2P_Import			= isTRUE {	! from A/R Cash Receipts C2P Deposit
+		retVal				= retSUCCESS
+	} else {
+		exit 88 						! return the expected error to force class validation.
+	}
+
+RETURN retVal
+!
+
+WRITE_REC:
+
+	retVal					= retSUCCESS
+
+	if %C2P_Import			= isTRUE {
+		CreditCardGUID$		= %CreditCardGUID$
+		_OBJ'SetValueNoValidate("CreditCardGUID$", D531_C2PPaymentId$) ! set it yet again.
+	}
+	retVal=_OBJ'Write(FROM "AR_531APSCashReceipts_bus_BASE")
+
+RETURN retVal
+!

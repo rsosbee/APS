@@ -1,0 +1,81 @@
+0010 DEF CLASS "DShellNameSpaceEvents"
+0020    PROPERTY EventCaller GET GetEventCaller SET Err
+0030    PROPERTY EventStack GET GetEventStack SET Err
+0040    PROPERTY EventsDispatched GET GetEventsDispatched SET Err
+0050    PROPERTY EventsDiscarded GET GetEventsDiscarded SET Err
+0060    FUNCTION Event_FavoritesSelectionChange(int_cItems, int_hItem, str_strName$, str_strUrl$, int_cVisits, str_strDate$, int_fAvailableOffline) Event_FavoritesSelectionChange FOR EVENT "FavoritesSelectionChange"
+0070    FUNCTION Event_SelectionChange() Event_SelectionChange FOR EVENT "SelectionChange"
+0080    FUNCTION Event_DoubleClick() Event_DoubleClick FOR EVENT "DoubleClick"
+0090    FUNCTION Event_Initialized() Event_Initialized FOR EVENT "Initialized"
+0100 END DEF
+0110 !
+0120 STOP
+0130 !
+0140 ! CONSTRUCTOR On_Create
+0150 !
+0160 On_Create:
+0170 !
+0180 !   < Insert code here >
+0190 !
+0200 RETURN
+0210 !
+0220 ! DESTRUCTOR On_Delete
+0230 !
+0240 On_Delete:
+0250 !
+0260 !   < Insert code here >
+0270 !
+0280 RETURN
+0290 !
+0300 ! PROPERTY EventCaller (GET)
+0310 !
+0320 GetEventCaller:
+0330 RETURN TCB(120)
+0340 !
+0350 ! PROPERTY EventStack (GET)
+0360 !
+0370 GetEventStack:
+0380 RETURN TCB(122)
+0390 !
+0400 ! PROPERTY EventsDispatched (GET)
+0410 !
+0420 GetEventsDispatched:
+0430 RETURN TCB(121)
+0440 !
+0450 ! PROPERTY EventsDiscarded (GET)
+0460 !
+0470 GetEventsDiscarded:
+0480 RETURN TCB(123)
+0490 !
+0500 ! EVENT FavoritesSelectionChange
+0510 !
+0520 Event_FavoritesSelectionChange:
+0530 ENTER int_cItems, int_hItem, str_strName$, str_strUrl$, int_cVisits, str_strDate$, int_fAvailableOffline
+0540 !
+0550 !   < Insert code here >
+0560 !
+0570 RETURN
+0580 !
+0590 ! EVENT SelectionChange
+0600 !
+0610 Event_SelectionChange:
+0620 !
+0630 !   < Insert code here >
+0640 !
+0650 RETURN
+0660 !
+0670 ! EVENT DoubleClick
+0680 !
+0690 Event_DoubleClick:
+0700 !
+0710 !   < Insert code here >
+0720 !
+0730 RETURN
+0740 !
+0750 ! EVENT Initialized
+0760 !
+0770 Event_Initialized:
+0780 !
+0790 !   < Insert code here >
+0800 !
+0810 RETURN

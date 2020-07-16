@@ -1,0 +1,758 @@
+! $Id$: SY_531APSActivation_bus.PVC $
+! Activate APS Credit Card
+! Accounting Systems, Inc. 2013-2020. Robert Sosbee.
+! 
+DEF CLASS "SY_531APSActivation_bus" CREATE REQUIRED DELETE REQUIRED 
+	! Inherits from the following class(es)
+	 LIKE "SY_Maint"
+	 LIKE "SY_Password"
+	 LIKE "SY_531APSTableCreation" ! PLW 2019-04-17  Ticket #250723 moved table creation to separate library so it can be shared.
+
+	 
+	! Public Properties
+	PROPERTY APSActivated
+	PROPERTY APSCCEnabled
+	PROPERTY APSC2PEnabled
+	PROPERTY C2PDefault
+!	PROPERTY cSkipCardConversion ! PLW Ticket #235697 2018-03-20 flag from AR_531APSConvertToAPS
+
+	PROPERTY D531_APSIOList$ GET getD531_APSIOList		SET ERR
+	PROPERTY RecordChanged GET RECORD_CHANGED			SET ERR		! Has the record changed
+	
+	
+	
+	! Local/Private Properties
+	LOCAL cMainTable$		= "SY_531APSActivation"
+	LOCAL cIsSysDB			= isTRUE
+	LOCAL isNULL$			= ""
+	LOCAL cAPSOrigRcd$
+	
+	! Local file channels
+	LOCAL cMainTableFh
+	LOCAL cD531_APSCompanyFH
+	
+	
+	! Public Functions (Methods)
+	FUNCTION CheckActivatedCompanies(CurAct,AllAct)						CHECK_ACTIVATED_COMPANIES
+	FUNCTION CheckAPSActivation() 										CHECK_APS_ACTIVATION
+	FUNCTION CheckAPSActivation(CompCode$) 								CHECK_APS_ACTIVATION
+	FUNCTION CheckIfActivated(APSActivated)								CHECK_IF_ACTIVATED
+	FUNCTION UpdateAPSAllCompanies(UpdateFlag$)							UPDATE_APS_ALL_COMPANIES
+	FUNCTION UpdateAPSCurrentCompany(UpdateFlag$)						UPDATE_APS_CURRENT_COMPANY
+	FUNCTION RetrieveVersionInfo(Version$,Additional$)					RETRIEVE_VERSION_INFO		! #227159 - RCS - 2017-09-14
+	FUNCTION SetKey(key$)												SET_KEY
+ 	FUNCTION UpdatesURLs()												UPDATE_URLS 				! #232007 - RCS - 2017-11-20
+ 	FUNCTION UpdateURLs()												UPDATE_URLS					! #232007 - RCS - 2018-11-21
+ 	FUNCTION UpdateAPSFiles(cCompany$)									UPDATE_APS_FILES
+ 	FUNCTION ValidateC2P_ApiKey()										VALIDATE_C2P_API_KEY
+ 	FUNCTION LOCAL ValidateCreditCardEnable(APS531val$)					VALIDATE_CREDIT_CARD_ENABLE
+	FUNCTION LOCAL ValidateD531APSLevelIIIProcessing(value$)			VALIDATE_LEVEL_III_PROCESSING
+	FUNCTION LOCAL ValidateD531_C2PCCPaymentType(value$)				VALIDATE_CCPAYMENTTYPE
+	FUNCTION LOCAL ValidateD531_C2PACHPaymentType(value$)				VALIDATE_ACHPAYMENTTYPE
+	FUNCTION LOCAL ValidatePaymentType(value$,cPaymentTypeMethod$)		VALIDATE_PAYMENT_TYPE
+
+ 	FUNCTION Write()													WRITE
+ 	
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL SetCurrentKey(key$)									SET_CURRENT_KEY
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession 
+END DEF
+
+ON_CREATE:
+
+ENTER coSession
+
+	testFH					= coSession'OpenTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
+	if not(testFH) {
+		tmpRet				= coSession'CreateTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
+	}
+	if testFH {
+		close (testFH,err=*next)
+		testFH				= 0
+	}
+
+	cMainTableFh			= coSession'OpenTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
+	IF NOT(cMainTableFh) {
+		coSession'CreateTable("SY_531APSActivation","SYSTEM")
+		cMainTableFh		= coSession'OpenTable("SY_531APSActivation", "SYSTEM")
+	}
+
+	! C2P Start
+	cD531_APSCompanyFH		= coSession'openTable("SY_531APSCompany", "SYSTEM")
+	STATIC IOL				= IOL(cD531_APSCompanyFH)
+	cIOLIst$				+= SUB(MID(LST(IOL(cD531_APSCompanyFH)), 8), ",", SEP)+SEP ! PLW 2018-02-21 missing trailing SEP
+
+RETURN 
+!
+
+ON_DELETE:
+	CLOSE (cMainTableFh,ERR=*NEXT)
+	cMainTableFh			= 0
+	CLOSE (cD531_APSCompanyFH, ERR=*NEXT)	
+	cD531_APSCompanyFH		= 0
+RETURN
+!
+
+CHECK_ACTIVATED_COMPANIES:
+ENTER CurrentCompanyActivated,AllCompaniesActivated
+
+	retVal					= retSUCCESS
+	CurrentCompanyActivated	= isFALSE
+	AllCompaniesActivated	= isTRUE
+	CurrentCompanyKey$		= coSession'CompanyKey$
+
+	tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+	IF tmpSY_CompanyFH {
+		SELECT *, REC=COMPANY$ FROM tmpSY_CompanyFH BEGIN $$ END $FE$
+			TMP.APSActivated$			= isNO$
+			FIND (cMainTableFh,KEY=COMPANY.CompanyKey$,REC=TMP$,DOM=*NEXT)
+			IF TMP.APSActivated$		= isYES$ {
+				IF COMPANY.CompanyKey$	= CurrentCompanyKey$ { 
+					CurrentCompanyActivated = isTRUE
+					APSActivated		= isTRUE
+				}
+			} ELSE {
+				AllCompaniesActivated	= isFALSE
+				BREAK
+			}
+		NEXT RECORD
+		IF NOT(CurrentCompanyActivated) {
+			TMP.APSActivated$			= isNO$
+			FIND (cMainTableFh,KEY=CurrentCompanyKey$,REC=TMP$,DOM=*NEXT)
+			CurrentCompanyActivated		= (TMP.APSActivated$ = isYES$)
+			APSActivated				= (TMP.APSActivated$ = isYES$)
+		}
+		CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+	} ELSE {
+		retVal				= retFAILURE
+		LastErrorNum$		= "SY_531APSCannotOpen"
+		LastErrorMsg$		= MSG("SY_531APSCannotOpen","SY_Company")
+	}
+RETURN retVal
+!
+
+CHECK_APS_ACTIVATION:
+
+ENTER CurrentCompanyKey$,ERR=*NEXT
+	
+	retVal					= retSUCCESS
+	IF NUL(CurrentCompanyKey$) { 
+		CurrentCompanyKey$	= coSession'CompanyKey$
+	}
+	TMP.APSActivated$		= isNO$
+	
+	FIND (cMainTableFh,KEY	= CurrentCompanyKey$,REC=TMP$,DOM=*NEXT)
+	IF TMP.APSActivated$	<> isYES$ {
+		retVal				= retFAILURE
+		LastErrorNum$		= "SY_531APSNotActivated"
+		LastErrorMsg$		= MSG("SY_531APSNotActivated")
+	}
+	%APSActivated 			= retVal 
+	APSActivated			= retVal
+RETURN retVal
+!
+
+CHECK_IF_ACTIVATED:
+	
+ENTER APSActivated
+	
+	APSActivated			= isFALSE
+	retVal					= retSUCCESS
+		
+	tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+ 	IF tmpSY_CompanyFH {
+		SELECT *, REC=COMPANY$ FROM tmpSY_CompanyFH BEGIN $$ END $FE$
+			TMP.APSActivated$	= isNO$
+			FIND (cMainTableFh,KEY=COMPANY.CompanyKey$,REC=TMP$,DOM=*NEXT)
+			IF TMP.APSActivated$= isYES$ { 
+				APSActivated	= isTRUE
+				BREAK
+			}
+		NEXT RECORD
+		CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+	} ELSE {
+		retVal				= retFAILURE
+		LastErrorNum$		= "SY_531APSCannotOpen"
+		LastErrorMsg$		= MSG("SY_531APSCannotOpen","SY_Company")
+	}
+RETURN retVal
+!
+
+getD531_APSIOList:
+RETURN IOL(cD531_APSCompanyFH)
+!
+
+SET_CURRENT_KEY:
+
+ENTER key$
+
+	! This is included just in case the SY_531APSActivation bus object
+	! is instantiated by 3rd party app
+
+	_OBJ'SetCurrentKey(FROM "SY_Maint", key$)
+
+
+RETURN retSUCCESS
+!
+
+SET_KEY:
+
+ENTER key$
+	
+	retVal				= _OBJ'SetKey(FROM "SY_Maint", key$)
+	
+	
+RETURN retVal
+!
+
+READ_REC:
+	
+ENTER (APSkey$)
+! preinput -1301; escape
+!	retVal				= _OBJ'ReadRec(FROM "SY_531APSCompany_bus_BASE",APSkey$)
+	retVal				= retSUCCESS
+	IF NUL(CompanyKey$) { 
+		CompanyKey$		= coSession'CompanyKey$
+	}
+
+!	IF retVal {
+!		APSActivated	= 0
+ 		! check for activation
+!		if not(coAPSActivation) { coAPSActivation = NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT) }
+!		IF coAPSActivation {
+	tmpCompanyKey$		= CompanyKey$
+	IF NOT(NUL(tmpCompanyKey$)) {
+		APSActivated	= _obj'CheckAPSActivation (tmpCompanyKey$)
+	}
+!		}
+	IF APSActivated AND NOT(CCRegistered) { CCRegistered = isTRUE }
+
+		! C2P Start 
+!		%CompanyCode$	= Companycode$ ! for ALE lookup
+	C2PDefault		= isFALSE
+	cC2PRead		= isFALSE
+	READ (cD531_APSCompanyFH, KEY=CompanyKey$, ERR=*NEXT); cC2PRead = isTRUE
+	if not(cC2PRead) {
+		! Set defaults
+		READ DATA FROM "",rec=C2P$ TO IOL=IOL(cD531_APSCompanyFH)
+		c2p.CompanyKey$						= CompanyKey$
+		C2P.D531_APSCreditCardLog$			= isNO$
+		c2p.D531APSLevelIIIProcessing$		= isNO$
+		c2p.D531_C2PEnabled$				= isNO$
+		c2p.D531_C2PCurrency$				= "USD"
+		c2p.D531_C2POptOut$					= isNO$
+		WRITE (cD531_APSCompanyFH,REC=C2P$) ! Sets defaults w/o triggering change rec.
+		C2PDefault							= isTRUE
+		READ (cD531_APSCompanyFH, KEY=CompanyKey$, ERR=*NEXT)
+	}
+	APSC2PEnabled	= D531_C2PEnabled$		= isYES$
+	cAPSOrigRcd$	= rec(iol(cD531_APSCompanyFH))
+!	}
+RETURN retVal
+!
+
+RECORD_CHANGED:			! logic copied from Sy_Maint;Record_Changed
+
+	cEditRcd$			= REC(IOL(cFH))
+
+	retVal				= ( (EditState=edtNEW) OR (EditState=edtEXISTS AND cEditRcd$<>cOrigRcd$) )
+
+	cAPSEditRcd$		= rec(iol(cD531_APSCompanyFH))
+
+	if not(retVal) {
+		if EditState	= edtEXISTS AND cAPSOrigRcd$<>cAPSEditRcd$ {
+			retVal		= retSUCCESS
+		}
+	}
+
+RETURN retVal
+!
+
+RETRIEVE_VERSION_INFO:  	! #227159 - RCS - 2017-09-14 - moved to bus to make available to any APS program.
+ENTER cAPSVersion$,cAPSAdditionalInfo$,err=*next
+
+	retVal					= retSUCCESS
+	ModCode$				= "ASIAPS"
+	ModuleCode$				= "A/R"
+	DeveloperCode$			= "531"
+	cAPSVersion$			= isNULL$
+	cAPSAdditionalInfo$ 	= isNULL$
+	cEnhancementFh			= 0
+	cEnhancementFh			= coSession'OpenTable("SY_Enhancement","SYSTEM",ERR=*NEXT)
+		
+	IF cEnhancementFh  {
+		SELECT *,REC=ENH$ FROM cEnhancementFh BEGIN ModuleCode$ END ModuleCode$:$FE$ WHERE ENH.DeveloperCode$=DeveloperCode$ AND ENH.EnhancementCode$=ModCode$
+			cAPSVersion$		= STR(ENH.EnhancementLevel)
+			cAPSVersion$		= STR(ENH.EnhancementLevel:"###.00",ERR=*NEXT)
+			cAPSVersion$		= "rev "+STP(cAPSVersion$,2)
+			P					= POS(" "=STP(ENH.EnhancementName$),-1)
+			IF P { 
+				cAPSVersion$	+= "."+STP(MID(STP(ENH.EnhancementName$),P),2) 
+			}
+			revDate$			= ENH.ReleaseDate$
+			revDate$			= MID(revDate$,5,2)+"/"+MID(revDate$,7,2)+"/"+MID(revDate$,1,4)
+			cAPSAdditionalInfo$	= ENH.EnhancementName$+" Date: "+revDate$
+			BREAK
+		NEXT RECORD
+		! close files
+		CLOSE (cEnhancementFh,ERR=*NEXT)
+		cEnhancementFH = 0
+	}
+RETURN retVal
+!
+
+UPDATE_APS_ALL_COMPANIES:
+ENTER UpdateFlag$
+
+	retVal					= retSUCCESS
+
+	tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+	IF tmpSY_CompanyFH {
+		SELECT *, REC=COMPANY$ FROM tmpSY_CompanyFH BEGIN $$ END $FE$
+			ACTIVATE.CompanyKey$	= COMPANY.CompanyKey$
+			ACTIVATE.CompanyCode$	= COMPANY.CompanyCode$
+			ACTIVATE.CompanyName$	= COMPANY.CompanyName$
+			ACTIVATE.APSActivated$	= UpdateFlag$
+			WRITE (cMainTableFh,REC	= ACTIVATE$)
+		NEXT RECORD
+		CLOSE (tmpSY_CompanyFH,ERR=*NEXT)
+	} ELSE {
+		retVal				= retFAILURE
+		LastErrorNum$		= "SY_531APSCannotOpen"
+		LastErrorMsg$		= MSG("SY_531APSCannotOpen","SY_Company")
+	}
+
+RETURN retVal
+!
+
+UPDATE_APS_CURRENT_COMPANY:
+	
+ENTER UpdateFlag$
+
+	retVal					= retSUCCESS
+
+	ACTIVATE.CompanyKey$	= coSession'CompanyKey$
+	ACTIVATE.CompanyCode$	= coSession'CompanyCode$
+	ACTIVATE.CompanyName$	= coSession'CompanyName$
+	ACTIVATE.APSActivated$	= UpdateFlag$
+	WRITE (cMainTableFh,REC	= ACTIVATE$)
+
+RETURN retVal
+!
+
+UPDATE_APS_FILES: ! Used to insure that all APS files are updated.
+ENTER (cCompanyCode$),err=*next
+	if nul(cCompanyCode$) { 
+		cCompanyCode$	= coSession'CompanyCode$ 
+	}
+	retVal				= _obj'UpdateC2PFiles(cCompanyCode$)		! PLW 2019-04-17 Ticket #250723
+
+RETURN retVal
+!
+
+UPDATE_URLS: 										! #232007 - Moved to BUS for C2P processing.
+
+	URLMaintObj			= NEW("SY_URLMaintenance_bus",coSession)
+	
+	! APS primary URL
+	tmpRet				= URLMaintObj'SetKey("APS PRIMARY")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS Primary URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/transact.php") }
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	if not(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	! APS query URL
+	tmpRet				= URLMaintObj'SetKey("APS Query")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS Query URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/query.php") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+	
+	! C2P Primary URL #232007
+	tmpRet				= URLMaintObj'SetKey("APS C2P PORTAL")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS C2P Portal URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://portal.apsclicktopay.com/Invoices/ClickToPay") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	! C2P Gateway URL #232007
+	tmpRet				= URLMaintObj'SetKey("APS C2P GATEWAY")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS C2P Gateway URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://api.apsclicktopay.com") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	! APS EasyPay Portal URL #236076 - 2018-09-26 RCS
+	tmpRet				= URLMaintObj'SetKey("APS C2P EASYPAY")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS C2P Gateway URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://portal.apsclicktopay.com/EasyPay") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	! APS EMV Portal URL #236076 - 2018-12-26 RCS
+	tmpRet				= URLMaintObj'SetKey("APS C2P EMV")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS C2P EMV Gateway URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","http://localhost:3000/emv/startNewTransaction") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	DROP OBJECT URLMaintObj,ERR=*NEXT
+	URLMaintObj			= 0
+	
+RETURN retSUCCESS
+!
+VALIDATE_CREDIT_CARD_ENABLE:
+	
+ENTER (APS531val$)
+
+
+	retVal				= retSUCCESS
+
+	IF NOT(CCRegistered) AND POS(APS531val$ = "YAB") { ! 231342 - Yes, ACH, Both
+		mssg$			= "enable Credit Card Processing unless CC module is registered"
+		LastErrorNum$	= "CI_Cannot"
+		LastErrorMsg$	= MSG("CI_Cannot", mssg$)
+		retVal			= retFAILURE
+	}
+
+	IF retVal {
+
+		IF cOrigCreditCardEnable$ = isNO$ AND POS(APS531val$ = "YAB") { ! 231342 - Yes, ACH, Both
+			IF NOT(NUL(D531APSMerchantID$)) AND NOT(NUL(D531APSPassword$)) {
+				IF _OBJ'ARCreditCard {
+					retVal	= ARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$))
+					IF NOT(retVal = retSUCCESS) {
+						IF POS("AUTHENTICATION FAILED"=ARCreditCard'LastErrorMsg$) {
+							retVal			= retWARNING
+							LastErrorNum$	= "SY_531InvalidExistCredentials.Y2"
+							LastErrorMsg$	= MSG("SY_531InvalidExistCredentials.Y2")
+						} ELSE {
+							retVal			= retFAILURE
+							LastErrorNum$	= ARCreditCard'LastErrorNum$
+							LastErrorMsg$	= ARCreditCard'LastErrorMsg$
+						}
+					}
+				} ELSE {
+					retVal			= retFAILURE
+					LastErrorNum$	= coSession'LastErrorNum$
+					LastErrorMsg$	= coSession'LastErrorMsg$
+				}
+			} ELSE {
+				retVal			= retWARNING
+				LastErrorNum$	= "SY_531APSBlankCredentials.Y2"
+				LastErrorMsg$	= MSG("SY_531APSBlankCredentials.Y2")
+			}
+		} ELSE {
+			IF APS531val$ = isNO$ {
+				cValidProcessingPayTypesExist	= _OBJ'CheckProcessingPaymentTypesExist()
+				IF cValidProcessingPayTypesExist {
+					retVal		= retWARNING
+				}
+			}
+		}
+
+		IF retVal {
+			tmpIOL$ = "CreditCardTransTimeout," 		\
+					+ "CreditCardBatchAuthTrans$," 		\
+					+ "CreditCardLog$," 				\
+					+ "CreditCardDisplay$,"				\
+					+ "D531_APSCreditCardLog$"
+
+			tmpIOL$ = CPL( "IOLIST " + tmpIOL$ )
+
+			SWITCH APS531val$
+				CASE isYES$,"A","B" ! #231342 - Yes, ACH, Both.
+					_OBJ'GetOriginalValue("CreditCardTransTimeOut")
+					_OBJ'GetOriginalValue("CreditCardBatchAuthTrans$")
+					_OBJ'GetOriginalValue("D531_APSCreditCardLog$")
+				BREAK
+
+				CASE isNO$
+					CreditCardTransTimeOut			= cDefaultTimeoutValue
+					CreditCardBatchAuthTrans$		= isNO$
+					CreditCardLog$					= isNO$
+					CreditCardDisplay$				= isNO$
+					D531_APSCreditCardLog$			= isNO$
+				BREAK
+			END SWITCH
+
+			tmpRec$	= REC( tmpIOL$ )
+			_OBJ'SetPartialRecord( tmpRec$, tmpIOL$ )
+		}
+	}
+	
+RETURN retVal
+!
+
+VALIDATE_C2P_API_KEY: ! #232007 - RCS 2017-12-04, refactored 2019-05-24 RCS
+
+	! Does a "get Invoice link request" to validate the API key and connectivity to APS Click To Pay.
+
+	c2p.companyCode$	= LCS(companyCode$)
+	c2p.companyKey$		= companyKey$
+
+	coCompany			= NEW ("SY_Company_SVC", 		coSession)
+	coCompany'FIND(c2p.companyKey$)
+
+	_obj'GetValue("D531_C2PAPIKey$",	c2p.APIKey$)
+	_obj'GetValue("D531_C2PCurrency$",	c2p.Currency$)
+
+	coDocument			= NEW ("SY_531APSDocument_SVC", coSession)
+	coRequest			= NEW ("SY_531APSRequest",		coSession)
+
+	c2p.ARDivisionNo$	= "00"
+	c2p.CustomerNo$		= "C2PTEST"
+	c2p.InvoiceNo$		= "0000001"
+	c2p.InvoiceType$	= "IN"
+
+	! api/invoices/getCode
+	documentCode$		= "IG###Q"
+	memoryFH			= coRequest'CreateMemoryFile()
+	coRequest'c2p.APIKEY$	= c2p.APIKey$
+	coDocument'FIND(documentCode$)
+	coDocument'GetValue("documentPath$", documentPath$)
+
+	coRequest'LoadHeader()
+ 
+ 	retVal				= coRequest'SendRequest(documentCode$, documentPath$, memoryFH)
+ 	
+ 	coRequest'LoadResponse()
+ 
+	SWITCH retVal
+		CASE retSUCCESS ! was able to send the request and get an answer
+			BREAK
+
+		CASE retWARNING ! request connected at an insecure level
+			coRequest'TlsWarning()
+			BREAK
+
+		DEFAULT
+			! failed to send transaction!
+			coRequest'DisplayError(c2p.errorMessage$)
+			retVal		= retFAILURE
+			BREAK
+	END SWITCH
+	IF c2p.statusClassCode <> 1 {
+		! failed transaction
+		coSession'UI'MessageBox$($$,"Invalid or missing ClickToPay key!"+SEP+				\
+									"Please verify your APS ClickToPay key."+SEP+			\
+									"APS ClickToPay error message: "+c2p.ErrorMessage$,		\
+									"title=APS ClickToPay,style=OK,icon=S,beep")
+			retVal		= retFAILURE
+	}
+
+	DROP OBJECT coRequest,	ERR=*PROCEED;	coRequest	= 0
+	DROP OBJECT coDocument,	ERR=*PROCEED;	coDocument	= 0
+	DROP OBJECT coCompany,	ERR=*PROCEED;	coCompany	= 0
+
+RETURN retVal
+!
+
+VALIDATE_ACHPAYMENTTYPE:
+	
+ENTER (value$)
+	retval				= retSUCCESS
+	tLevel				= coSession'ModuleLevel
+	
+	retval				= _obj'ValidatePaymentType(value$,PaymentTypeMethod$)
+	
+	if retVal and tLevel > 5.3 and PaymentTypeMethod$ <> "A" {
+		retVal			= retFAILURE
+	}
+	
+	if retVal and tLevel < 5.4 and PaymentTypeMethod$ <> "R" { ! override in 5.30 and below to allow ACH to process as Credit Card 2018-05-14 RCS
+		retVal			= retFAILURE
+	}
+	
+	IF not(retVal) {
+		retVal			= retFAILURE
+		LastErrorNum$	= "CI_Invalid"
+		LastErrorMsg$	= MSG("CI_Invalid", "payment type for ClickToPay ACH payments")
+	}
+
+RETURN retVal
+!
+
+VALIDATE_CCPAYMENTTYPE:
+	
+ENTER (value$)
+	retval				= retSUCCESS
+
+	retval				= _obj'ValidatePaymentType(value$,PaymentTypeMethod$)
+
+	IF not(retVal) or (retVal AND PaymentTypeMethod$ <> "R") {
+		retVal			= retFAILURE
+		LastErrorNum$	= "CI_Invalid"
+		LastErrorMsg$	= MSG("CI_Invalid", "payment type for ClickToPay credit card")
+	}
+
+RETURN retVal
+!
+
+VALIDATE_LEVEL_III_PROCESSING:
+ENTER value$
+
+	IF value$<>isYES$ {
+		_OBJ'SetValueNoValidate("D531APSSummaryCommodityCode$",$$)
+		_OBJ'SetValueNoValidate("D531APSItemCommodityCode$",$$)
+		_OBJ'SetValueNoValidate("D531ShipFromPostal$",$$)
+	}
+
+RETURN retSUCCESS
+!
+
+VALIDATE_PAYMENT_TYPE: ! #232007 - 2018-02-22 RCS
+
+ENTER (value$),cPaymentTypeMethod$
+
+	retVal				= retSUCCESS
+	pt_found			= 0
+
+	tmpAR_PaymentTypeFH	= coSession'OpenTable("AR_PaymentType", pthOTHERCOMPANY$ + CompanyCode$)
+
+	READ (tmpAR_PaymentTypeFH,rec=PT$,key=value$,dom=*next); pt_found=1
+
+	if pt_found {
+		cPaymentTypeMethod$	= pt.PaymentMethod$
+	} else {
+		retVal = retFAILURE
+		LastErrorNum$		= "CI_Invalid"
+		LastErrorMsg$		= MSG("CI_Invalid", "payment type")
+	}
+
+	if tmpAR_PaymentTypeFH {
+		CLOSE (tmpAR_PaymentTypeFH,err=*next)
+		tmpAR_PaymentTypeFH	= 0
+	}
+
+RETURN retVal
+!
+
+WRITE:
+
+	APSC2PEnabled				= D531_C2PEnabled$=isYES$
+	tmpCompanyKey$          	= CompanyKey$
+
+	IF APSActivated AND POS(CreditCardEnable$ = "YB") AND D531APSLevelIIIProcessing$=isYES$ { ! #231342 - Yes or Both for credit cards only.
+		IF NUL(D531APSSummaryCommodityCode$)	\ 
+			OR NUL(D531APSItemCommodityCode$) 	\
+			OR NUL(D531ShipFromPostal$) {	
+				retVal			= retFAILURE
+				LastErrorNum$	= "SY_531APSLevelIIIcommodity"
+				LastErrorMsg$	= MSG("SY_531APSLevelIIIcommodity")
+				RETURN retVal
+		}
+	}
+	! Level III are required for C2P, so check that they are turned on.
+	IF D531_C2PEnabled$=isYES$ { ! #232007 - needed for C2P
+		IF NUL(D531APSSummaryCommodityCode$)	\ 
+			OR NUL(D531APSItemCommodityCode$)	\
+			OR NUL(D531ShipFromPostal$)			\
+			OR D531APSLevelIIIProcessing$<>isYES$	{
+				retVal			= retFAILURE
+				LastErrorNum$	= "SY_531APSLevelIIIcommodity"
+				LastErrorMsg$	= MSG("SY_531APSLevelIIIcommodity")
+				RETURN retVal
+		}
+	}
+
+	IF APSActivated {
+
+		retVal					= retSUCCESS
+
+		tmpCompanyKey$			= CompanyKey$
+		tmpCompanyCode$			= CompanyCode$
+		newCompany				= (EditState=edtNEW)
+		cCreditCardLog$			= CreditCardLog$
+
+		! Ensure that color is not black when using Frame or Both.
+		xBgChk					= EVN("_OBJ'ValidateBackGroundColor()",ERR=*NEXT) ! V530
+
+		IF CreditCardEnable$	= isNO$				\
+			AND POS(cOrigCreditCardEnable$ = "YAB")	\
+			AND cValidProcessingPayTypesExist { ! # 231342 - Yes, ACH, Both
+
+			IF _OBJ'ARCreditCard {
+
+				IF retVal {
+					CLOSE(cAR_PaymentTypeFH, ERR = *NEXT)
+					cAR_PaymentTypeFH	= 0
+					retVal				= ARCreditCard'LockConvFiles(CompanyCode$, isTRUE)
+				}
+
+				IF NOT(retVal) {
+					LastErrorNum$		= ARCreditCard'LastErrorNum$
+					LastErrorMsg$		= ARCreditCard'LastErrorMsg$
+				}
+			} ELSE {
+				retVal					= retFAILURE
+				LastErrorNum$			= coSession'LastErrorNum$
+				LastErrorMsg$			= coSession'LastErrorMsg$
+			}
+		}
+
+		IF POS(CreditCardEnable$ = "YAB") AND cOrigCreditCardEnable$ = isNO$ { ! #231342 - Yes, ACH, Both
+
+			IF _OBJ'ARCreditCard {
+				retVal					= ARCreditCard'TestInternetConnection()
+
+				IF retVal {
+					CLOSE(cAR_PaymentTypeFH, ERR = *NEXT)
+					cAR_PaymentTypeFH	= 0
+					retVal				= ARCreditCard'LockConvFiles(CompanyCode$, isTRUE)
+				}
+
+				IF NOT(retVal) {
+					LastErrorNum$		= ARCreditCard'LastErrorNum$
+					LastErrorMsg$		= ARCreditCard'LastErrorMsg$
+				}
+
+			} ELSE {
+				retVal					= retFAILURE
+				LastErrorNum$			= coSession'LastErrorNum$
+				LastErrorMsg$			= coSession'LastErrorMsg$
+			}
+		}
+
+		IF retVal {
+			! C2P Change
+			D531_C2PCurrency$			= tbl(nul(D531_C2PCurrency$),D531_C2PCurrency$,"USD")					! currency
+			D531_C2POptOut$				= tbl(nul(D531_C2POptOut$),D531_C2POptOut$,isNO$)						! Opt in/Opt out
+			D531_APSCreditCardLog$		= tbl(nul(D531_APSCreditCardLog$),D531_APSCreditCardLog$,isNO$)			! logging
+			D531APSLevelIIIProcessing$	= tbl(nul(D531APSLevelIIIProcessing$),D531APSLevelIIIProcessing$,isNO$)	! Level III
+			D531_C2PEnabled$			= tbl(nul(D531_C2PEnabled$),D531_C2PEnabled$,isNO$)						! C2P enable
+
+			retVal						= _OBJ'Write(FROM "SY_Maint")
+
+			IF retVal {
+
+				IF coSession'SQL { 
+						retDb			= coSession'FileObj'ValidateDatabase(tmpCompanyCode$, isTRUE)
+				}
+
+				CompanyKey$				= tbl(nul(CompanyKey$),CompanyKey$,tmpCompanyKey$)
+				WRITE (cD531_APSCompanyFH)
+				C2PDefault				= isFALSE
+			}
+		}
+
+	} ELSE {
+		! C2P Change
+		D531_C2PCurrency$				= tbl(nul(D531_C2PCurrency$),D531_C2PCurrency$,"USD")					! currency
+		D531_C2POptOut$					= tbl(nul(D531_C2POptOut$),D531_C2POptOut$,isNO$)							! Opt in/Opt out
+		D531_APSCreditCardLog$			= tbl(nul(D531_APSCreditCardLog$),D531_APSCreditCardLog$,isNO$)			! logging
+		D531APSLevelIIIProcessing$		= tbl(nul(D531APSLevelIIIProcessing$),D531APSLevelIIIProcessing$,isNO$)	! Level III
+		D531_C2PEnabled$				= tbl(nul(D531_C2PEnabled$),D531_C2PEnabled$,isNO$)						! C2P enable
+
+		!retVal							= retSUCCESS ! _OBJ'WRITE (FROM "SY_531APSCompany_bus_BASE")
+		if retVal {
+			CompanyKey$					= tbl(nul(CompanyKey$),CompanyKey$,tmpCompanyKey$)
+			WRITE (cD531_APSCompanyFH)
+			C2PDefault					= isFALSE
+		}
+	}
+
+RETURN retVal
+!

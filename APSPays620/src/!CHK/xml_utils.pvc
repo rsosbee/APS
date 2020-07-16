@@ -1,0 +1,156 @@
+! $Id: xml_utils.pvc.pvxsrc 226 2009-09-08 19:26:43Z fred.mcguirk $ 
+! Copyright (c) 2008 Sage Software Canada Ltd. All Rights Reserved
+! ** @Author fmcguirk  @Date Nov 3, 2008 8:27:55 AM
+!
+DEF CLASS "*obj/xml_utils"
+
+	! Local/Private Properties
+	
+	! Match values
+	LOCAL NotSpecified			= 0
+	LOCAL NameMatch				= 1
+	LOCAL NameAndValueMatch		= 2
+	LOCAL ValueMatch			= 3
+	
+	! Read_Element Return Field types
+	LOCAL ElementValue			= 1
+	LOCAL ElementName			= 2
+	
+	! ValueType values
+	LOCAL ValueTypeAttribute	= 1
+	LOCAL ValueTypeTag			= 2
+	
+	! SetMode values
+	LOCAL SetModeParent			= 1
+	LOCAL SetModeChild			= 2
+	LOCAL SetModeSibling		= 3
+	LOCAL theXmlLevel
+	
+	! Public Properties
+	PROPERTY _version$			= CVS(MID(STP("$Revision: 226 $",2,"$"),10),3)
+	
+	! Public Functions (Methods)
+	! ** Get the contents of a XML object in a string variable
+	! ** @param aXML A reference to a "*XML" object containing the data
+	! ** @returns A string variable containing the information in the "*XML" object
+	FUNCTION getXML$(aXML)								getXML
+	! ** Create an XML object from information contained in a string variable
+	! ** @param aString$ A string variable containing a XML data structure to be loaded into a new XML object
+	! ** @returns A reference to the new XML object that is created, or zero if the creation fails.
+	FUNCTION loadXmlFromString(aString$)				loadXmlFromString
+	
+	! Local/Private Functions (Methods)	
+	FUNCTION LOCAL getXmlChild(aXML,XmlData$,theLevel)	getXmlChild
+	FUNCTION LOCAL getXmlSibling$(aXML,theLevel)		getXmlSibling
+	
+END DEF
+!
+getXML:
+ENTER (aXML)
+	LOCAL DocRoot$
+	LOCAL done
+	LOCAL level
+	LOCAL retVal$
+	LOCAL status
+	LOCAL theLevel
+	LOCAL theXML$
+	done					= 0
+	WHILE NOT(done)
+		status				= aXML'Previous_Sibling(); IF status { GOTO *SAME }
+		status				= aXML'Set_Element("","",_obj'ValueTypeTag,_obj'SetModeParent,_obj'NotSpecified)
+		IF NOT(status) { 
+			done			= 1 
+		}
+	WEND 
+	DocRoot$				= aXML'Read_Element$(_obj'ElementName)
+	IF NOT(NUL(DocRoot$)) {
+		status				= _obj'getXmlChild(aXML,XmlData$,theLevel+1)
+		theXML$				+= XmlData$
+		! traverse the XML document tree
+		status				= aXML'Set_Element("","",_obj'ValueTypeTag,_obj'SetModeParent,_obj'NotSpecified)
+		done				= NOT(status)
+		WHILE NOT(done)
+			theXML$			+= _obj'getXmlSibling$(aXML,theLevel+1)
+			status			= aXML'Set_Element("","",_obj'ValueTypeTag,_obj'SetModeParent,_obj'NotSpecified)
+			done			= NOT(status)
+		WEND 
+		retVal$				= "<?xml version=""1.0"" encoding=""iso-8859-1"" standalone=""no"" ?>"
+		retVal$				+= $0D0A$+"<"+DocRoot$+">"+$0D0A$+theXML$+"</"+DocRoot$+">"+$0D0A$
+	}
+RETURN retVal$
+!
+
+getXmlChild:
+ENTER (aXML),theXmlData$,(theLevel)
+
+	LOCAL childName$
+	LOCAL childValue$
+	LOCAL childXmlData$
+	LOCAL retVal$
+	LOCAL status
+	
+	theXmlData$					= ""
+	status						= aXML'Set_Element("","",_obj'ValueTypeTag,_obj'SetModeChild,_obj'NotSpecified)
+	IF status {
+		childName$				= aXML'Read_Element$(_obj'ElementName)
+		childValue$				= aXML'Read_Element$(_obj'ElementValue)
+		IF NOT(NUL(childValue$)) {
+			theXmlData$			= DIM(theLevel*4)+"<"+childName$+">"+childValue$+"</"+childName$+">"+$0D0A$+_obj'getXmlSibling$(aXML,theLevel)
+		} ELSE {
+			status				= _obj'getXmlChild(aXML,childXmlData$,theLevel+1)
+			theXmlData$			= DIM(theLevel*4)+"<"+childName$+">"+$0D0A$+childXmlData$+DIM(theLevel*4)+"</"+childName$+">"+$0D0A$
+		}
+		retVal					= 1
+	}
+RETURN retVal
+!
+
+getXmlSibling:
+ENTER (aXML),(theLevel)
+	LOCAL siblingName$
+	LOCAL siblingValue$
+	LOCAL retVal$
+	LOCAL status
+	
+	status						= aXML'Next_Sibling()
+	IF status {
+		siblingName$			= aXML'Read_Element$(_obj'ElementName)
+		siblingValue$			= aXML'Read_Element$(_obj'ElementValue)
+		IF NOT(NUL(siblingValue$)) {
+			retVal$				= DIM(theLevel*4)+"<"+siblingName$+">"+siblingValue$+"</"+siblingName$+">"+$0D0A$+_obj'getXmlSibling$(aXML,theLevel)
+		} ELSE {
+			status				= _obj'getXmlChild(aXML,childXML$,theLevel+1)
+			retVal$				= DIM(theLevel*4)+"<"+siblingName$+">"+$0D0A$+childXML$+DIM(theLevel*4)+"</"+siblingName$+">"+$0D0A$
+		}
+	}
+RETURN retVal$
+!
+
+loadXmlFromString:
+ENTER (aString$)
+	LOCAL aXML
+	LOCAL DocRoot$
+	LOCAL retVal
+	LOCAL status
+	LOCAL tmp
+	LOCAL x
+	
+	tmp							= POS("<?xml "=aString$)
+	IF tmp {
+		aString$				= SUB(MID(aString$,tmp),$0D0A$,$0A$,0)
+		tmp						= POS($0A$	= aString$)
+		IF tmp {
+			! aString$=mid(aString$,tmp+1)
+			x					= MSK(MID(aString$,tmp+1),"<[^>]+>")
+			DocRoot$			= MID(aString$,tmp+x+1,MSL-2)
+			DEF OBJECT aXML,"*XML"
+			status				= aXML'open(aString$,"source=string;Doc_Root="+DocRoot$)
+			IF status			= 1 {
+				retVal			= aXML
+			} ELSE {
+				DROP OBJECT aXML
+			}
+		}
+	}
+RETURN retVal
+!

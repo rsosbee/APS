@@ -1,0 +1,1 @@
+pvxwin32.exe -hd ..\launcher\sota.ini APSUpdateCompany.m4p

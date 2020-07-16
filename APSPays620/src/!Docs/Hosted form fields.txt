@@ -1,0 +1,27 @@
+paymentType (ach|cc)
+cvvRequired (true|false)
+postalCodeRequired (true|false)
+theme
+service (create|update)
+maskedCardNumber (used when doing an update, if you wish to display current CC to user)
+
+accountName (used for ACH)
+accounttype (checking/savings) 
+entityType (personal/business) 
+maskedRoutingNumber (used when doing an update, if you wish to display current routing to user)
+maskedAccountNumber (used when doing an update, if you wish to display current bank account # to user)
+
+And then, the "defaults":
+firstName
+lastName
+address
+city
+state
+postalCode
+country
+And other display values:
+to show set transaction=true
+amount (decimal)
+taxAmount (decimal)
+shippingAmount (decimal)
+None of these is required (defaults exist for all).

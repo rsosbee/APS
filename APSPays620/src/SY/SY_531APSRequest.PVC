@@ -1,0 +1,1966 @@
+! $Id: SY_531APSRequest.PVC $
+! Copyright 2017-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #232007 - BSosbee (RCS)
+
+DEF CLASS "SY_531APSRequest"
+! Inherits from the following class(es)
+
+	LIKE "SY_Constant"
+	LIKE "SY_531APSMultiCurrencyCommon" ! #248049 - 2019-05-23 - RCS
+
+	! Public Properties
+	PROPERTY Enabled 				SET ERR
+	PROPERTY Domain$ 				SET ERR
+	PROPERTY DataFormat$ 			SET ERR
+	PROPERTY EndOfSet$				! 2018-01-03 RCS
+	PROPERTY LastBlockReceived		! 2018-01-03 RCS
+	PROPERTY c2p.BlocksProcessed
+	PROPERTY c2p.BlockSize			= 25 ! default start block
+	PROPERTY c2p.BlockNumberSent	= 1  ! starting block
+	PROPERTY c2p.BlockNumberReceived
+	PROPERTY c2p.APIKey$
+	PROPERTY c2p.Currency$
+
+	PROPERTY tlsWarning
+	PROPERTY c2pDisplay				! #239836 2018-08-08 RCS
+	PROPERTY c2pApiKey$				! #241845 2018-09-17 RCS
+
+	! Local/Private Properties
+	LOCAL c2p.companyCode$
+	LOCAL c2p.APSLevelIIIProcessing$
+	LOCAL c2p.APSSummaryCommodityCode$
+	LOCAL c2p.APSItemCommodityCode$
+	LOCAL c2p.APSShipFromPostal$
+
+	LOCAL c2p.Enabled
+	LOCAL c2p.Option
+
+	LOCAL cLevel3LineLimit 			= 10 ! PLW limit the number of lines sent for Level III
+	LOCAL c2p.Display				! #239836 2018-08-08 RCS
+	LOCAL c2p.DataFormat$
+	LOCAL def.currency$				! Holds original c2p.Currency$
+
+	! working vars
+	LOCAL cDocumentCode$
+	LOCAL cApiKey$
+	LOCAL cMethod$					= "POST"
+	LOCAL cPort$					= "80"
+	LOCAL cSecure$					= ""
+	LOCAL cBlocksProcessed
+	LOCAL tlsChk
+!	LOCAL logFile$
+	LOCAL cLF$						= $0D0A$
+	LOCAL CR$						= $0D$
+	LOCAL CrLf$						= $0A0D$
+	LOCAL Tab$						= $09$
+	LOCAL isNULL$					= $$
+	
+	! Objects
+	LOCAL coCompany
+	LOCAL coDocument
+	LOCAL coHTTP
+	LOCAL coNET
+	LOCAL coSPM
+
+	! file channels
+	LOCAL cTranslationFH
+	LOCAL cTransactionLogFH
+	LOCAL c2p.ArCustFH
+	LOCAL cAPSLogCh
+	LOCAL cSoInvHdrFH
+	LOCAL cSoInvDtlFH
+	LOCAL cArInvHdrFH
+	LOCAL cArInvDtlFH
+
+
+	! Public Functions (Methods)
+	FUNCTION CreateLog(logFile$,cAPSlogCH)												CREATE_LOG
+	FUNCTION CreateMemoryFile()															CREATE_MEMORY_FILE
+	FUNCTION CreateMemoryFile(memoryIOL$)												CREATE_MEMORY_FILE
+	
+	FUNCTION DeleteC2PInvoice(cType$,					\
+								InvoiceNo$,				\
+								InvoiceType$,			\
+								tmpInvFH,				\
+								c2p.statusCode,			\
+								c2p.statusClassCode,	\
+								c2p.errorMessage$)										DELETE_C2P_INVOICE
+	FUNCTION DisplayError(c2p.errorMessage$)											DISPLAY_ERROR		! #251756 - 2019-05-08 - RCS - refactor error display.
+	
+	FUNCTION FindNames(Name$,FirstName$,LastName$)										FIND_NAMES
+	FUNCTION FormatDate$(date$, Time$)													FORMAT_DATE
+	FUNCTION FormatErrorMsg$(c2p.errorMessage$,tmpErrMsg$)								FORMAT_ERROR_MSG	! #251756 - 2019-05-08 - RCS - fix wrapping issue in messageboxes.
+	FUNCTION FormatResponse(response$, memoryFH, memberTree$)							FORMAT_RESPONSE
+
+	FUNCTION GetLinkCode(ArDivisionNo$,					\
+								CustomerNo$,			\
+								InvoiceNo$,				\
+								InvoiceType$,			\
+								LinkCode$,				\
+								c2p.statusCode,			\
+								c2p.statusClassCode,	\
+								c2p.errorMessage$)										GET_LINK_CODE
+
+	FUNCTION GetLinkCode(ArDivisionNo$,					\
+								CustomerNo$,			\
+								InvoiceNo$,				\
+								InvoiceType$,			\
+								LinkCode$,				\
+								c2p.statusCode,			\
+								c2p.statusClassCode,	\
+								c2p.errorMessage$,		\
+								c2p.Currency$)											GET_LINK_CODE
+
+	
+	FUNCTION PERFORM LoadHeader()														LOAD_HEADER
+	FUNCTION PERFORM LoadLine()															LOAD_LINE
+	FUNCTION PERFORM LoadResponse()														LOAD_RESPONSE
+	FUNCTION LogMask(tmpOpenRec$,tmpMaskRec$)											LOG_MASK
+	
+	FUNCTION OptInOrOut(C2POption$)														OPT_IN_OR_OUT
+	
+	FUNCTION ParseData(response$, member$, value$) 										PARSE_DATA
+	FUNCTION PostInvoiceLinkCode(cType$,				\
+								InvoiceNo$,				\
+								InvoiceType$,			\
+								tmpInvFH,				\
+								cLinkCode$,				\
+								c2p.statusCode,			\
+								c2p.statusClassCode,	\
+								c2p.errorMessage$)										POST_INVOICE_LINK_CODE
+	
+	FUNCTION ProcessArInvoice(InvoiceNo$,				\
+								InvoiceType$,			\
+								c2p.statusCode,			\
+								c2p.statusClassCode,	\
+								c2p.errorMessage$,		\
+								c2p.D531_C2PLinkCode$)									PROCESS_AR_INVOICE
+
+	FUNCTION ProcessSoInvoice(InvoiceNo$,				\
+								InvoiceType$,			\
+								c2p.statusCode,			\
+								c2p.statusClassCode,	\
+								c2p.errorMessage$,		\
+								c2p.D531_C2PLinkCode$)									PROCESS_SO_INVOICE
+	
+	
+	FUNCTION QuoteEncode$(inVal$)														QUOTE_ENCODE			! RCS #239544 - 2018-10-04 
+	
+	FUNCTION ResetDotNet()																RESET_DOT_NET
+
+	FUNCTION PERFORM SetC2pFlags()														SET_C2P_FLAGS
+	FUNCTION SendRequest(documentCode$,documentPath$, memoryFH) 						SEND_REQUEST
+
+	FUNCTION TlsWarning()																TLS_WARNING
+
+	FUNCTION WriteLog(Type$,Message$,logFile$)											WRITE_LOG
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL createTranslation()													CREATE_TRANSLATION
+
+	FUNCTION LOCAL displayTransaction(displayText$)										DISPLAY_TRANSACTION
+	FUNCTION LOCAL displayTransaction(displayText$, title$)								DISPLAY_TRANSACTION
+
+	FUNCTION LOCAL formatDisplay(displayText$)											FORMAT_DISPLAY
+	FUNCTION LOCAL formatRequest$(memoryFH) 											FORMAT_REQUEST
+	FUNCTION LOCAL formatReturn(response$, memoryFH)									FORMAT_RETURN
+
+	FUNCTION LOCAL GetRequestData(rKey$,Value$,memoryFH)								GET_REQUEST_DATA
+
+	FUNCTION LOCAL TlsDirectCast()														TLS_DIRECT_CAST
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	! add code to disallow overriding this class
+
+	Enabled				= isFALSE
+	DataFormat$			= "json"
+	c2p.companyCode$	= LCS(coSession'companyCode$)
+	coCompany 			= NEW ("SY_Company_SVC", coSession)
+	coCompany'FIND(coSession'companyKey$) 					! was companyCode$ - RCS 2017-11-20
+
+	coCompany'GetValue("C2PEnabled", 					Enabled)
+	coCompany'GetValue("D531_C2PAPIKey$",				cApiKey$)
+	coCompany'GetValue("C2PDomain$",					Domain$)		! #232007 - RCS
+	coCompany'GetValue("D531APSLevelIIIProcessing$",	c2p.APSLevelIIIProcessing$)
+	coCompany'GetValue("D531APSSummaryCommodityCode$",	c2p.APSSummaryCommodityCode$)
+	coCompany'GetValue("D531APSItemCommodityCode$",		c2p.APSItemCommodityCode$)
+	coCompany'GetValue("D531ShipFromPostal$",			c2p.APSShipFromPostal$)
+
+	coCompany'GetValue("D531_C2PAPIKey$",				c2p.APIKey$)
+	coCompany'GetValue("D531_C2PCurrency$",				c2p.Currency$)
+
+	c2pApiKey$			= cApiKey$	
+	c2p.ApiKey$			= cApiKey$
+	c2p.Enabled			= coCompany'C2PEnabled
+	c2p.Option			= coCompany'C2POption
+	c2p.DataFormat$		= DataFormat$
+	c2p.Display			= c2pDisplay ! #239836 2018-08-08 RCS
+	def.currency$		= c2p.Currency$
+
+	coDocument			= NEW ("SY_531APSDocument_SVC", coSession)
+
+	cTransactionLogFH	= coSession'openTable("SY_531APSTransactionLog", pthSYSTEM$)
+	c2p.ArCustFH		= coSession'OpenTable("AR_Customer","COMPANY")
+	
+	cBlocksProcessed	= 0
+	c2p.BlocksProcessed	= 0
+	
+	! #239836 2018-08-08 - RCS Suppress popup displays if not from AR/SO.
+	c2pDisplay			= isFALSE
+	cTmpLeadPgm$		= ucs(coSession'StartProgram$)
+	SWITCH mid(cTmpLeadPgm$,1,2)
+		CASE "AR","SO"
+			c2pDisplay	= isTRUE
+			BREAK
+		DEFAULT
+			c2pDisplay	= isFALSE
+			BREAK
+	END SWITCH
+	%c2pDisplay			= c2pDisplay
+
+RETURN
+!
+
+ON_DELETE:
+	DROP OBJECT coDocument, ERR=*NEXT
+	DROP OBJECT coCompany, ERR=*NEXT
+	if coHTTP {
+		z				= coHTTP'PvxFree()
+		DELETE OBJECT coHTTP, ERR=*NEXT
+	}
+	IF coSPM {
+		z				= coSPM'PvxFree()
+		DELETE OBJECT coSPM, ERR=*NEXT
+	}
+	if coNET {
+		z				= coNET'PvxFree()
+ 		DELETE OBJECT coNET, ERR=*NEXT
+	}
+
+ 	coDocument			= 0
+	coCompany			= 0
+	coHTTP				= 0
+	coNET				= 0
+	coSPM				= 0
+
+		LOCAL cSoInvFH
+	LOCAL cSoInvDtlFH
+
+	CLOSE (c2p.ArCustFH,		ERR=*NEXT)
+	CLOSE (cTransactionLogFH,	ERR=*NEXT)
+	CLOSE (cSoInvHdrFH,			ERR=*NEXT)
+	CLOSE (cSoInvDtlFH,			ERR=*NEXT)
+	CLOSE (cArInvHdrFH,			ERR=*NEXT)
+	CLOSE (cARInvDtlFH,			ERR=*NEXT)
+	
+	c2p.ArCustFH		= 0
+	cTransactionLogFH	= 0
+	cSoInvHdrFH			= 0
+	cSoInvDtlFH			= 0
+	cArInvHdrFH			= 0
+	cArInvDtlFH			= 0
+	
+RETURN
+!
+
+CREATE_LOG:
+ENTER logFile$, cAPSlogCH
+	if nul(logFile$) {
+		logFile$		= "C2P_Error_"+dte(0:"%Yl%Mz")+".log" ! Breaks the logs into monthly chunks to reduce size. 2018-03-30 RCS
+	}
+	cAPSlogCH			= HFN
+	log$				= coSession'PathCompany$+logFile$
+	WHILE 1
+		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+		IF ERR <> 12 {
+			CLOSE (cAPSlogCH)
+			OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+ 		}
+		SERIAL log$,ERR=*NEXT
+		CLOSE (cAPSlogCH)
+		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+		cAPSlogCH		= 0
+		BREAK
+	WEND
+RETURN retSUCCESS
+!
+
+CREATE_MEMORY_FILE:
+ENTER memoryIOL$, ERR=*NEXT
+		IF NUL(memoryIOL$) { memoryIOL$ = CPL("IOList sequence$, member$, type$, sageField$, value$") }
+		CLOSE (memoryFH, ERR=*NEXT)
+		OPEN (HFN, IOL=memoryIOL$)"*MEMORY*"
+RETURN LFO
+!
+
+CREATE_TRANSLATION:
+
+	translationIOL$		= CPL("IOList member$, sageField$")
+	OPEN (HFN, IOL=translationIOL$)"*MEMORY*"
+	translationFH		= LFO
+
+	documentCode$		= MID(cDocumentCode$, 1, 5) + "R"
+	coDocument'FIND(documentCode$)
+
+	lastMember$			= isNULL$
+	coDocument'Members'MoveFirst()
+
+	responseKey$		= MID(coDocument'Members'GetKey$(), 1, LEN(documentCode$))
+	IF responseKey$ = documentCode$ {
+
+		coDocument'Members'GetValue("member$", member$)
+		REPEAT
+			lastMember$	= member$
+
+			coDocument'Members'GetValue("sageExpression$", sageField$)
+			WRITE (translationFH, KEY=member$)
+
+			coDocument'Members'MoveNext()
+			coDocument'Members'GetValue("member$", member$)
+
+			IF lastMember$ = member$ { BREAK }
+		UNTIL 0
+	}
+
+RETURN translationFH
+!
+
+CHECK_CURRENCY:
+ENTER cCurrency$
+	_OBJ'SetC2PCurrency(cCurrency$, c2p.Currency$) ! PLW 2019-02-12 Ticket #248049
+
+DELETE_C2P_INVOICE:
+ENTER cType$,(InvoiceNo$),(InvoiceType$),(tmpInvFH),c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$
+
+	invoiceFound		= isFALSE
+	c2p.statusCode		= isFALSE
+	c2p.statusClassCode	= isTRUE
+	c2p.errorMessage$	= isNULL$
+	cTmpInvFH			= isFALSE		! #232007/#236076 - 2019-03-08 RCS - fixes for error 13 during sales journal.
+	
+	SWITCH cType$
+		CASE "AR"
+			cTmpInvFH	= coSession'OpenTable("AR_InvoiceHeader","COMPANY")
+			READ (cTmpInvFH, KEY=InvoiceNo$:InvoiceType$, REC=c2p$, DOM=*NEXT); invoiceFound = isTRUE
+			BREAK
+		CASE "SO"
+			cTmpInvFH	= coSession'OpenTable("SO_InvoiceHeader","COMPANY")
+			READ (cTmpInvFH, KEY=InvoiceNo$, REC=c2p$,DOM=*NEXT); invoiceFound = isTRUE
+			BREAK
+	END SWITCH
+	CLOSE (cTmpInvFH,err=*proceed); cTmpInvFH	= 0
+	
+	IF NOT(invoiceFound) or NUL(C2p.CustomerNo$) {	! do not attempt remove if there's not invoice or customer
+		RETURN retSUCCESS
+	}
+
+	memoryFH			= _obj'CreateMemoryFile()
+
+	! api/invoices/delete
+	documentCode$		= "ID###Q"
+	coDocument'FIND(documentCode$)
+	coDocument'GetValue("documentPath$", documentPath$)
+
+	_obj'LoadHeader()
+
+	retVal 				= _obj'SendRequest(documentCode$, documentPath$, memoryFH)
+
+	_obj'LoadResponse()
+
+	SWITCH retVal
+		CASE retSUCCESS ! was able to send the request and get an answer
+			BREAK
+		CASE retWARNING
+			if not(coSession'Updating) {
+				_obj'TlsWarning()
+			}
+			BREAK
+		DEFAULT
+			! failed to send transaction
+			! errors are reported in the calling program
+
+			retVal			= retFAILURE
+			BREAK
+	END SWITCH
+
+	c2p.BlocksProcessed		++
+	if c2p.BlocksProcessed > 50 {
+		tlsChk				= _obj'ResetDotNet()
+		c2p.BlocksProcessed	= 0
+		if tlsChk = retWARNING and not(coSession'Updating) {
+			_obj'TlsWarning()
+		}
+	}
+
+RETURN retVal
+!
+
+DISPLAY_ERROR:
+ENTER (c2p.errorMessage$)
+	_obj'FormatErrorMsg$(c2p.errorMessage$,tmpErrMsg$)
+	coSession'UI'MessageBox$("",						\
+		"Unable to update the ClickToPay Gateway!\"+	\
+		"Error:  "+tmpErrMsg$+"\"+msg(-1),		\
+		"Style=OK,Title=Failed Connection to APS,Icon=S")
+RETURN retSUCCESS
+!
+
+DISPLAY_TRANSACTION:
+ENTER displayText$, title$, ERR=*NEXT
+
+	if not(c2pDisplay) {
+		RETURN retSUCCESS
+	}
+
+	retVal = isFALSE
+
+	IF NUL(title$) { title$	= "APS Click to Pay" }
+
+	height					= 24
+	width					= 64
+
+	PRINT 'DIALOGUE'(0, 0, width, height, title$, isNULL$, OPT="^XC"),
+
+	MULTI_LINE 102, @(1,0,width-4, height-4)
+	MULTI_LINE WRITE 102, displayText$
+
+	BUTTON 100, @(width-21, height-3.5, 9, 1.75)="&Ok"
+	BUTTON 101, @(width-12, height-3.5, 9, 1.75)="&Cancel"
+
+	SET_FOCUS 100
+
+	OBTAIN x
+
+	IF CTL=100 { retVal		= isTRUE }
+
+	PRINT 'POP',
+RETURN retVal
+!
+
+FIND_NAMES:  ! // See also AR_531APSCreditCard.pvc #232007 - 2018-02-24 RCS
+ENTER Name$,FirstName$,LastName$
+
+	Name$					= STP(Name$)
+	FirstName$				= isNULL$
+	LastName$				= isNULL$
+	StripString$			= "|JR|SR|II|III|IV|V|ESQ|MD|JD|DO|DC|PHD|MBA|CPA|PHARMD|DP|DDS|DD|LLDS|"
+
+	StripLastChar			= isTRUE
+	WHILE StripLastChar and LEN(Name$) ! PLW 2018-03-13 added LEN(Name$) to avoid error 41 if null name.
+		NameLen				= LEN(Name$)
+		LastChar$			= MID(Name$,NameLen)
+		IF LastChar$		= "." {
+			Name$			= MID(Name$,1,NameLen-1)
+		} ELSE {
+			StripLastChar	= isFALSE
+		}
+	WEND
+
+	LastNameNotFound		= isTRUE
+	WHILE LastNameNotFound
+		LastNameStart		= POS(" ",Name$,-1)
+		IF LastNameStart {
+			LastName$		= MID(Name$,LastNameStart+1)
+			CheckLastName$	= "|"+UCS(LastName$)+"|"
+			IF POS(CheckLastName$ = StripString$) {
+				Name$		= MID(Name$,1,LastNameStart)
+				Name$		= STP(Name$)
+			} ELSE {
+				FirstName$	= MID(Name$,1,LastNameStart)
+				FirstName$	=	STP(FirstName$)
+				LastNameNotFound	= isFALSE
+			}
+		} ELSE {
+			FirstName$		= Name$
+			LastName$		= Name$
+			LastNameNotFound		= isFALSE
+		}
+	WEND
+
+RETURN retSUCCESS
+!
+
+FORMAT_DATE:
+ENTER date$, time$
+	formatDate$ 			=  MID(date$,1,4) + "-"
+	formatDate$ 			+= MID(date$,5,2) + "-"
+	formatDate$ 			+= MID(date$,7,2) + "T"
+	formatDate$ 			+= STR(NUM(MID(time$, 1, POS("."=time$)-1), ERR=*NEXT):"00") + ":"
+	formatDate$ 			+= STR(INT(NUM(MID(time$, POS("."=time$)), ERR=*NEXT)*60):"00") + ":"
+	formatDate$ 			+= "00"
+RETURN formatDate$
+!
+
+FORMAT_DISPLAY:
+ENTER displayText$
+	t$						= isNULL$
+	retVal					= retSUCCESS
+	inset					= 0
+	SWITCH DataFormat$
+		CASE "json"
+		    indent			= 0
+			inQuotes		= isFALSE
+			FOR i			= 1 TO LEN(displayText$)
+				char$ 		= MID(displayText$, i, 1)
+				if char$ = QUO {
+					if inQuotes {
+						inQuotes	= isFALSE
+					} ELSE {
+						inQuotes	= isTRUE
+					}
+				}
+				SWITCH char$
+					CASE "{"
+						indent		= indent + 2
+						t$			+= char$ + SEP + DIM(indent)
+			        	BREAK
+					CASE "["
+						indent		= indent + 2
+						t$			+= char$ + SEP + DIM(indent)
+			        	BREAK
+					CASE ":"
+						if MID(displayText$, i+1, 1)="{" {
+							t$		+= char$ + SEP + DIM(indent)
+						} ELSE {
+							if MID(displayText$, i+1, 1)="[" {
+								t$	+= char$ + SEP + DIM(indent)
+							} ELSE {
+								t$	+= char$
+							}
+						}
+						BREAK
+					CASE ","
+						addBRTag	= isFALSE
+						IF MID(displayText$, i-1, 1)="]" {
+							addBRTag	= isTRUE
+						}
+						IF MID(displayText$, i-1, 1)="}" {
+							addBRTag	= isTRUE
+						}
+						IF MID(displayText$, i-1, 1)=QUO {
+							addBRTag	= isTRUE
+						}
+						IF MID(displayText$, i+1, 1)=QUO {
+							addBRTag	= isTRUE
+						}
+						IF indent<0 {
+							indent	= 0
+						}
+						IF addBRTag {
+							t$		+= char$ + SEP + DIM(indent)
+						} ELSE {
+							t$		+= char$
+						}
+						BREAK
+					CASE "]"
+						indent		= indent - 2
+						if indent<0 {
+							indent	= 0
+						}
+						t$			+= SEP + DIM(indent)  + char$
+						BREAK
+					CASE "}"
+						indent		= indent - 2
+						if indent<0 {
+							indent	= 0
+						}
+						t$			+= SEP + DIM(indent) + char$
+						BREAK
+					DEFAULT
+						t$			+= char$
+						BREAK
+				END SWITCH
+				charPos		= charPos + 1
+			NEXT i
+			displayText$	= t$
+			BREAK
+		CASE "xml"
+			BREAK
+	END SWITCH
+
+RETURN retVal
+!
+
+FORMAT_ERROR_MSG:		! #251756 - 2019-05-08 - RCS - fix wrapping issue in messageboxes.
+ENTER (c2p.errorMessage$),tmpErrMsg$
+	tmpErrMsg$		= c2p.errorMessage$
+	msgStart		= 1
+	while 1
+		if len(mid(tmpErrMsg$(msgStart),1))<=50 { break }
+		x			= pos(" " = tmpErrMsg$(msgStart,50),-1)
+		tmpErrMsg$(msgStart+x-1,1)	= "\"
+		msgStart	+= x
+	wend
+RETURN retSUCCESS
+!
+
+FORMAT_REQUEST:
+ENTER memoryFH
+
+	SWITCH DataFormat$
+		CASE "json"
+			request$		= "{"
+
+			SELECT * FROM memoryFH BEGIN $$ END $FE$ WHERE type$ = "H"
+				IF value$ 	= QUO+"true"+QUO OR value$ = QUO+"false"+QUO { 
+					value$	= SUB(value$, QUO, isNULL$) 
+				}
+				request$	+= QUO + SUB(member$, "$", isNULL$) + QUO + ":" + _obj'QuoteEncode$(value$) + "," ! RCS #239544 - 2018-10-04 
+			NEXT RECORD
+			! *** PLW 2017-12-18 added lines for shipping and billing address
+			isShipping		= isFALSE
+			SELECT * FROM memoryFH BEGIN $$ END $FE$ WHERE type$ = "S"
+				IF NOT(isShipping) {
+					request$	+= QUO + "shipping" + QUO + ":" + "{"
+					isShipping	= isTRUE
+				}
+				request$	+= QUO + SUB(member$, "$", isNULL$) + QUO + ":" + _obj'QuoteEncode$(value$) + "," ! RCS #239544 - 2018-10-04 
+			NEXT RECORD
+			IF isShipping {
+				request$	= MID(request$, 1, LEN(request$)-1)
+				request$	+= "},"
+			}
+
+			isBilling		= isFALSE
+			SELECT * FROM memoryFH BEGIN $$ END $FE$ WHERE type$ = "B"
+				IF NOT(isBilling) { ! RCS 2017-12-27 - Was isShipping
+					request$	+= QUO + "billing" + QUO + ":" + "{"
+					isBilling	= isTRUE
+				}
+				request$	+= QUO + SUB(member$, "$", isNULL$) + QUO + ":" + _obj'QuoteEncode$(value$) + "," ! RCS #239544 - 2018-10-04 
+			NEXT RECORD
+			IF isBilling {
+				request$	= MID(request$, 1, LEN(request$)-1)
+				request$	+= "},"
+			}
+			! ****** end of shipping and billing adds.
+			isDetail		= isFALSE
+			detailStart$	= isNULL$
+			SELECT * FROM memoryFH BEGIN $$ END $FE$ WHERE type$ = "D"
+				IF NOT(isDetail) {
+					request$	+= QUO + "products" + QUO + ":" + "["
+					isDetail	= isTRUE
+				}
+				IF NUL(detailStart$) {
+					request$		+= "{"
+					detailStart$	= member$
+				} ELSE {
+					IF detailStart$ = member$ {
+						request$	= MID(request$, 1, LEN(request$)-1)
+						request$	+= "},{"
+					}
+				}
+				request$	+= QUO + SUB(member$, "$", isNULL$) + QUO + ":" + _obj'QuoteEncode$(value$) + "," ! RCS #239544 - 2018-10-04 
+			NEXT RECORD
+			IF isDetail {
+				request$	= MID(request$, 1, LEN(request$)-1)
+				request$	+= "}],"
+			}
+
+			request$		= MID(request$, 1, LEN(request$)-1)
+			request$		+= "}"
+			BREAK
+		CASE "xml"
+			request$		= "<request>"
+			SELECT * FROM memoryFH BEGIN $$
+				request$	+= "<" + SUB(member$, "$", isNULL$) + ">" + value$ + "</" + SUB(member$, "$", isNULL$) + ">"
+			NEXT RECORD
+			request$		+= "</request>"
+			BREAK
+	END SWITCH
+
+RETURN request$
+!
+
+FORMAT_RESPONSE:
+ENTER (response$), memoryFH, memberTree$
+	cTmpResponse$ 			= response$ ! #240918 - 2018-08-20
+	! remove the beginning and ending braces
+	response$				= MID(response$, 2, LEN(response$)-2)
+
+	REPEAT
+		memberStart			= POS(QUO=response$) + 1
+		memberLength		= POS(QUO=MID(response$, memberStart+1))
+		member$				= MID(response$, memberStart, memberLength)
+		typeStart			= POS(":"=response$) + 1
+		typeMember$			= MID(response$, typeStart, 1)
+		SWITCH typeMember$
+
+			CASE QUO ! string
+				valueStart	= typeStart + 1
+				valueLength	= POS(QUO=MID(response$, valueStart))-1
+				value$		= MID(response$, valueStart, valueLength)
+
+				! get sageField$
+				REPEAT
+					READ (cTranslationFH, KEY=member$, ERR=*BREAK)
+					member$	= memberTree$ + member$ + "$"
+					WRITE (memoryFH, KEY=member$)
+				UNTIL 1
+
+				response$	= MID(response$, valueStart + valueLength + 2)
+				BREAK
+
+			CASE "[" ! array
+
+				arrayStart		= typeStart + 1
+				internalArray	= 0
+				response$		= MID(response$, arrayStart)
+				FOR i=1 TO LEN(response$)
+					arrayLength	= i
+					IF MID(response$,i,1)="[" {
+						internalArray		++
+						internalArrayStart	= i + 1 ! #240918 - 2018-08-20
+					}
+					IF MID(response$,i,1)="]" {
+						IF internalArray {
+							internalArray	--
+							internalArrayLen	= i - internalArrayStart ! #240918 - 2018-08-20
+							response$(internalArrayStart,internalArrayLen)	= SUB(mid(response$,internalArrayStart,internalArrayLen), "},{", "}|{") ! preserve tertiary sub array. #240918 - 2018-08-20
+						}	ELSE {
+							BREAK
+						}
+					}
+				NEXT i
+
+				array$		= MID(response$, 1, arrayLength - 1)
+				array$		= SUB(array$, "},{", "}"+SEP+"{")
+				arrayCount	= POS(SEP=array$,1,0)
+				dim arrays$[arrayCount]
+				READ DATA FROM array$ TO arrays${ALL}
+
+				FOR i=0 TO arrayCount
+					newMemberTree$	= memberTree$ + member$ + "." + STR(i+1:"000000") +"."
+					if pos("|"=arrays$[i]) {
+						arrays$[i]	= SUB(arrays$[i], "}|{","},{") ! reactivate sub array #240918 - 2018-08-21
+					}
+					_OBJ'formatResponse(arrays$[i], memoryFH, newMemberTree$)
+				NEXT i
+
+				response$	= MID(response$, arrayLength + 1)
+
+				BREAK
+			DEFAULT ! numeric, boolean or null (srring)
+				valueStart	= typeStart
+				valueLength	= POS(","=MID(response$+",", valueStart))-1
+				value$		= MID(response$, valueStart, valueLength)
+
+				! get SageField$
+				REPEAT
+					READ (cTranslationFH, KEY=member$, ERR=*BREAK)
+
+					SWITCH value$
+						CASE "true"
+							value$	= "1"
+							BREAK
+						CASE "false"
+							value$	= "0"
+							BREAK
+						CASE "null"
+							value$	= isNULL$
+							member$	+= "$"
+							BREAK
+						DEFAULT
+					END SWITCH
+
+					member$	= memberTree$ + member$
+					WRITE (memoryFH, KEY=member$)
+				UNTIL 1
+				
+				IF member$ = "c2p.statusClassCode" { 
+					VIA member$		= NUM(value$)
+				}
+
+				response$	= MID(response$, valueStart + valueLength + 1)
+				BREAK
+		END SWITCH
+	UNTIL NUL(response$)
+
+	IF c2p.statusClassCode = retSUCCESS { ! 2018-01-03 RCS
+		retVal		= retSUCCESS
+	} ELSE {
+		retVal		= retFAILURE
+	}
+
+RETURN retVal
+!
+
+FORMAT_RETURN:
+ENTER response$, memoryFH
+
+! reset memory file
+	memoryFH 		= _OBJ'CreateMemoryFile()
+
+	documentCode$	= MID(cDocumentCode$, 1, 5) + "R"
+	coDocument'FIND(documentCode$)
+	coDocument'GetValue("documentPath$", documentPath$)
+
+	sequence		= 0
+	lastMember$		= isNULL$
+	coDocument'Members'MoveFirst()
+
+	responseKey$	= MID(coDocument'Members'GetKey$(), 1, LEN(documentCode$))
+	IF responseKey$ = documentCode$ {
+
+		coDocument'Members'GetValue("member$", member$)
+		REPEAT
+			coDocument'Members'GetValue("type$", type$)
+			lastMember$	=	 member$
+
+			IF type$="H" {
+				sequence	++
+				sequence$ 	= STR(sequence:"000000")
+				coDocument'Members'GetValue("sageExpression$", sageField$)
+				_OBJ'parseData(response$, member$, value$)
+				IF POS(UCS("statusClassCode")=UCS(sageField$)) {
+					VIA sageField$	= NUM(value$, ERR=*NEXT)
+				}
+				WRITE (memoryFH, KEY=sequence$)
+			}
+
+			coDocument'Members'MoveNext()
+			coDocument'Members'GetValue("member$", member$)
+
+			IF lastMember$	= member$ { BREAK }
+		UNTIL 0
+
+		! all the responses have header DATA, but the payment query has detail as well
+		IF documentCode$	= "PQ###R" {
+
+			! separate the payments into individual strings
+			paymentDetail$	= MID(response$, POS(QUO+"payments"+QUO +":["=response$) + 12)
+			paymentDetail$	= MID(paymentDetail$, 1, POS("]}],"=paymentDetail$, -1) + 1)
+
+			FOR i			= 0 TO paymentCount
+				payment$	= payments$[i]
+
+				lastMember$	= isNULL$
+				coDocument'Members'MoveFirst()
+
+				coDocument'Members'GetValue("member$", member$)
+				REPEAT
+					coDocument'Members'GetValue("type$", type$)
+					lastMember$		= member$
+
+					IF type$="D" {
+						sequence	++
+						sequence$	= STR(sequence:"000000")
+						coDocument'Members'GetValue("sageExpression$", sageField$)
+						_OBJ'parseData(response$, member$, value$)
+						WRITE (memoryFH, KEY=sequence$)
+					}
+					coDocument'Members'MoveNext()
+					coDocument'Members'GetValue("member$", member$)
+
+					IF lastMember$	= member$ { BREAK }
+				UNTIL 0
+			NEXT i
+		}
+	}
+
+	IF c2p.statusClassCode	= retSUCCESS {
+		retVal				= retSUCCESS
+	} ELSE {
+		retVal				= retFAILURE
+	}
+
+RETURN retVal
+!
+
+GET_LINK_CODE:
+ENTER (c2p.ArDivisionNo$),(c2p.CustomerNo$),(c2p.InvoiceNo$),(c2p.InvoiceType$),c2p.D531_C2PLinkCode$,c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$,c2p.Currency$,err=*next
+	
+	documentCode$		= "IG###Q"
+	memoryFH			= _obj'CreateMemoryFile()
+	
+	coDocument'FIND(documentCode$)
+	coDocument'GetValue("documentPath$", documentPath$)
+
+	_obj'LoadHeader()
+	
+	retVal = _obj'SendRequest(documentCode$, documentPath$, memoryFH)
+	
+	_obj'LoadResponse()
+	
+RETURN retVal
+!
+
+GET_REQUEST_DATA: ! Pulls from the request memory table.  String values only. #241845 2018-09-17 RCS
+ENTER (rKey$),Value$,(memoryFH)
+
+	Value$		= isNULL$
+	if len(rKey$) < 6 {
+		rkey$	= dim(6-len(rKey$),"0")+rKey$
+	}
+	retVal		= retFAILURE
+	read (memoryFH,key=rKey$,dom=*return); retVal = retSUCCESS
+	if mid(Value$,1,1)	= QUO {
+		Value$	= mid(Value$,2,len(Value$)-2)
+	}
+	SWITCH value$
+		CASE "true"
+			value$	= "1"
+			BREAK
+		CASE "false"
+			value$	= "0"
+			BREAK
+		CASE "null"
+			value$	= isNULL$
+			BREAK
+		DEFAULT
+	END SWITCH
+	
+RETURN retVal
+!
+
+LOAD_HEADER:
+! Set documentCode$,memoryFH,documentPath$ before invoking
+
+	sequence				= 0
+	lastMember$				= isNULL$
+	headerMask$				= "-#########0.00#"		! default
+	if headerInt {
+		headerMask$			= "-#########0"			! headerInt must be set before LoadHeader() - used for payment blocks.
+	}
+	coDocument'FIND(documentCode$)
+	coDocument'Members'MoveFirst()
+	coDocument'Members'GetValue("member$", member$)
+	
+	REPEAT
+		coDocument'Members'GetValue("type$", type$)
+		lastMember$			= member$
+		IF type$<>"D" { ! PLW 2017-12-18 changed to <>"D" to include "H","B", and "S".
+			sequence		++
+			sequence$		= STR(sequence:"000000")
+
+			coDocument'Members'GetValue("sageExpression$", sageExpression$)
+			IF POS("$"+QUO:sageExpression$) {
+				temp$		= EVS(sageExpression$, ERR=*NEXT)
+				temp$		= MID(temp$,1,512) ! PLW 2018-11-12 Ticket #243908 avoid error 1 on write to memory file
+				IF c2p.DataFormat$="json" {
+					value$	= QUO + temp$ + QUO
+				} ELSE {
+					value$	= temp$
+				}
+			} ELSE {
+				SWITCH sageExpression$
+					CASE "true", "false"
+						value$	= sageExpression$
+						BREAK
+					DEFAULT
+						temp	= EVN(sageExpression$, ERR=*NEXT)
+						value$	= stp(STR(temp:headerMask$),2) ! RCS 2018-01-05 for JSON Integer only.
+				END SWITCH
+				
+			}
+			WRITE (memoryFH, KEY=sequence$)
+		}
+		coDocument'Members'MoveNext()
+		coDocument'Members'GetValue("member$", member$)
+
+		IF lastMember$		= member$ { BREAK }
+	UNTIL 0
+	!
+	
+RETURN retSUCCESS
+!
+
+LOAD_LINE:  ! process detail lines
+! documentCode$,memoryFH is set in LoadHeader()
+
+		lastMember$					= isNULL$
+		coDocument'Members'MoveFirst()
+		coDocument'Members'GetValue("member$", member$)
+		REPEAT
+			coDocument'Members'GetValue("type$", type$)
+			lastMember$				= member$
+			IF type$="D" {
+				sequence			++
+				sequence$			= STR(sequence:"000000")
+				coDocument'Members'GetValue("sageExpression$", sageExpression$)
+				IF POS("$"+QUO:sageExpression$) {
+					temp$			= EVS(sageExpression$, ERR=*NEXT)
+					temp$			= SUB(temp$, QUO, isNULL$)
+					temp$			= MID(temp$,1,512) ! PLW 2018-11-12 Ticket #243908 avoid error 1 on write to memory file
+					IF c2p.DataFormat$="json" {
+						value$		= QUO + temp$ + QUO
+					} ELSE {
+						value$		= temp$
+					}
+				} ELSE {
+					temp			= EVN(sageExpression$, ERR=*NEXT)
+					value$			= stp(STR(temp:"-#########0.00#"),2) ! RCS 2018-01-05 for JSON
+				}
+				WRITE (memoryFH, KEY=sequence$)
+			}
+			coDocument'Members'MoveNext()
+			coDocument'Members'GetValue("member$", member$)
+
+			IF lastMember$			= member$ { BREAK }
+		UNTIL 0
+
+RETURN retSUCCESS
+!
+
+LOAD_RESPONSE:
+! reads memoryFH and loads into workspace
+
+	SELECT * FROM memoryFH BEGIN $$
+		IF POS("$"			= sageField$) {
+			VIA sageField$	= value$
+		} ELSE {
+			VIA sageField$	= NUM(value$, ERR=*NEXT)
+		}
+	NEXT RECORD
+
+RETURN retSUCCESS
+!
+
+LOG_MASK:
+ENTER tmpOpen$,tmpMask$
+	tmpMask$		= tmpOpen$
+	! lay out masked Direct Pay transactions so they are readable.  #236076 RCS
+	if pos("&" 			= tmpMask$)		\ 
+		and not(pos("<" = tmpMask$))	\
+		and len(tmpMask$)  {
+		
+			wTask$		= isNULL$
+			for nLoop	= 1 to len(tmpMask$)
+				if tmpMask$(nLoop,1) = "&" {
+					wTask$	+= CrLf$ + tmpMask$(nLoop,1)
+				} else {
+					wTask$	+= tmpMask$(nLoop,1)
+				}
+			next nLoop
+			
+			tmpMask$	= wTask$
+	}
+	
+RETURN retSUCCESS
+!
+
+OPT_IN_OR_OUT:
+ENTER (C2POption$)
+	C2POption$				= tbl(pos(isYES$=C2POption$),isNO$,isYES$)
+	SWITCH c2p.Option
+		CASE isTRUE ! Opt Out mode
+			cSkip	= tbl(C2POption$ = isYES$, isFALSE, isTRUE)	! will skip
+			BREAK
+		CASE isFALSE ! Opt In mode
+			cSkip	= tbl(C2POption$ = isYES$, isTRUE, isFALSE)	! will not skip
+			BREAK
+	END SWITCH
+RETURN cSkip
+!
+
+PARSE_DATA:
+ENTER (response$), (member$), value$
+	SWITCH DataFormat$
+		CASE "json"
+			if not(pos(member$=response$)) {
+				value$		= isNULL$
+				BREAK
+			}
+			memberStart		= POS(QUO+member$+QUO+":"=response$) + LEN(member$) + 3
+			memberStart		+= MID(response$, memberStart, 1)=QUO
+			memberLength	= POS(QUO+",}":MID(response$, memberStart)) - 1
+			value$			= MID(response$, memberStart, memberLength)
+			BREAK
+		CASE "xml"
+			BREAK
+	END SWITCH
+RETURN retVal
+!
+
+POST_INVOICE_LINK_CODE:
+ENTER cType$,(InvoiceNo$),(InvoiceType$),tmpInvFH,cLinkCode$,c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$
+
+	invoiceFound		= isFALSE
+	c2p.statusCode		= isFALSE
+	c2p.statusClassCode	= isTRUE
+	c2p.errorMessage$	= isNULL$
+	cTmpInvFH			= isFALSE		! #232007/#236076 - 2019-03-08 RCS - fixes for error 13 during sales journal.
+	c2p.Currency$		= def.Currency$	! reset to default.
+	
+	SWITCH cType$
+		CASE "AR"
+			cTmpInvFH	= coSession'OpenTable("AR_InvoiceHeader","COMPANY")
+			READ (cTmpInvFH, KEY=InvoiceNo$:InvoiceType$, REC=c2p$, DOM=*NEXT); invoiceFound = isTRUE
+			_OBJ'SetC2PCurrency(c2p.ARMC_234_EntryCurrency$, c2p.Currency$) ! #248049 - 2019-05-23 - RCS
+			BREAK
+		CASE "SO"
+			cTmpInvFH	= coSession'OpenTable("SO_InvoiceHeader","COMPANY")
+			READ (cTmpInvFH, KEY=InvoiceNo$, REC=c2p$,DOM=*NEXT); invoiceFound = isTRUE
+			_OBJ'SetC2PCurrency(c2p.SOMC_234_EntryCurrency$, c2p.Currency$) ! #248049 - 2019-05-23 - RCS
+			BREAK
+	END SWITCH
+	CLOSE (cTmpInvFH,err=*proceed); cTmpInvFH	= 0
+	
+	IF NOT(invoiceFound) or NUL(C2p.CustomerNo$) { ! do not attempt to get code if there's no invoice or customer
+		RETURN retSUCCESS
+	}
+	if pos(InvoiceType$="AD|CA|DM|FC") {	! Skip ADjustments, CAsh invoices, Debit Memos, and Finance Charges #251756 - 2019-05-22 RCS
+		RETURN retSUCCESS
+	}
+	! there is a balance...and no link code
+	IF NUL(c2p.D531_C2PLinkCode$) {
+		
+		retVal			= _obj'GetLinkCode(c2p.ArDivisionNo$,c2p.CustomerNo$,c2p.InvoiceNo$,c2p.InvoiceType$,c2p.D531_C2PLinkCode$,c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$)
+		if retVal and not(nul(c2p.D531_C2PLinkCode$)) {
+			D531_C2PLinkCode$			= c2p.D531_C2PLinkCode$
+			c2p.D531_C2PWebInvCreated$	= isYES$
+			c2p.D531_C2PWebInvUpdated$	= isYES$
+			WRITE (arInvoiceHistHdrFH, REC = c2p$)
+		}
+
+		SWITCH retVal
+			CASE retSUCCESS ! was able to send the request and get an answer
+				IF c2p.statusClassCode	= retSUCCESS {
+					cLinkCode$			= c2p.D531_C2PLinkCode$
+					D531_C2PLinkCode$	= c2p.D531_C2PLinkCode$
+				}
+				BREAK
+			CASE retWARNING
+				if not(coSession'Updating) {
+					_obj'TlsWarning()
+				}
+				IF c2p.statusClassCode	= retSUCCESS {
+					cLinkCode$			= c2p.D531_C2PLinkCode$
+					D531_C2PLinkCode$	= c2p.D531_C2PLinkCode$
+
+				}
+				BREAK
+			DEFAULT
+				! failed to send transaction
+				! reporting in calling program
+				BREAK
+		END SWITCH
+
+		c2p.BlocksProcessed			++
+		if c2p.BlocksProcessed > 50 {
+			tlsChk = _obj'ResetDotNet()
+			c2p.BlocksProcessed		= 0
+			if not(coSession'Updating) and tlsChk = retWARNING {
+				_obj'TlsWarning()
+			}
+		}
+	}
+
+RETURN retVal
+!
+
+PROCESS_AR_INVOICE:
+ENTER (InvoiceNo$),(InvoiceType$),c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$,c2p.D531_C2PLinkCode$
+	
+	hld.InvoiceNo$			= InvoiceNo$
+	hld.InvoiceType$		= InvoiceType$
+	c2p.Currency$			= def.Currency$	! reset to default.
+	if not(cArInvHdrFH) {
+		cArInvHdrFH			= coSession'OpenTable("AR_InvoiceHeader","COMPANY")
+	}
+	if not(cArInvDtlFH) {
+		cArInvDtlFH			= coSession'OpenTable("AR_InvoiceDetail","COMPANY")
+	}
+	
+	READ (cArInvHdrFH, KEY	= hld.InvoiceNo$:hld.InvoiceType$, REC=c2p.header$)
+	READ (c2p.ArCustFH,key	= c2p.header.ARDivisionNo$:c2p.header.CustomerNo$, rec=c2p$)
+	
+	! there is a balance...and no link code
+
+	_OBJ'SetC2PCurrency(c2p.header.ARMC_234_EntryCurrency$, c2p.Currency$) ! #248049 - 2019-05-23 - RCS
+	
+	c2p.timeStamp$ 			= DTE(0, TIM:"%Y-%Mz-%DzT%Hz:%mz:%sz")
+	c2p.InvoiceDate$		= c2p.header.InvoiceDate$(1,4)+"-"+c2p.header.InvoiceDate$(5,2)+"-"+c2p.header.InvoiceDate$(7,2)+"T00:01:00"
+	c2p.InvoiceDueDate$		= c2p.header.InvoiceDueDate$(1,4)+"-"+c2p.header.InvoiceDueDate$(5,2)+"-"+c2p.header.InvoiceDueDate$(7,2)+"T00:01:00"
+	c2p.OrderDescription$	= "Services and fees"
+	_obj'FindNames(c2p.CustomerName$,	c2p.ShipToFirstName$,	c2p.ShipToLastName$)
+	_obj'FindNames(c2p.header.SoldTo$,	c2p.SoldToFirstName$,	c2p.SoldToLastName$)
+	c2p.CustomerPO$ 		= c2p.header.CustomerPONo$
+	if nul(c2p.header.CustomerPONo$) {
+		c2p.CustomerPO$		= "Verbal"
+	}
+	if nul(c2p.header.EmailAddress$) and not(nul(c2p.EmailAddress$)) {
+		c2p.header.EmailAddress$ = c2p.EmailAddress$ ! #238741 RCS - 2018-07-09 - default if no email address on the order for C2P.
+	}
+	x	= pos(";"=c2p.header.EmailAddress$)
+	if x {
+		c2p.header.EmailAddress$	= c2p.header.EmailAddress$(1,x-1)	! strip multiple email addresses  #257342 - 2019-09-17 - RCS
+	}
+
+	memoryFH = _obj'CreateMemoryFile()
+
+	SWITCH c2p.header.D531_C2PWebInvCreated$
+		CASE isYES$
+			documentCode$	= "IUA/RQ" ! Updating RCS Hardcoded based on V/I issue 2018-02-19
+			BREAK
+		DEFAULT
+			documentCode$	= "ICA/RQ" ! Creating RCS Hardcoded based on V/I issue 2018-02-19
+			BREAK
+	END SWITCH
+
+	coDocument'FIND(documentCode$)
+	coDocument'GetValue("documentPath$", documentPath$)
+
+	_obj'LoadHeader()
+	
+	!
+	cLineCnt				= 0
+	SELECT *,REC=c2p.detail$ FROM cArInvDtlFH, KNO="kDISPLAY"		\
+		BEGIN	c2p.header.invoiceNo$:c2p.header.InvoiceType$		\
+		END		c2p.header.invoiceNo$:c2p.header.InvoiceType$:$FE$
+
+		! Suppress comment lines without comments. #242935 - 2018-10-12 RCS
+		if c2p.detail.ItemType$ = "4" {
+			If not(nul(c2p.detail.CommentText$)) {
+				c2p.detail.ItemCodeDesc$	= c2p.detail.CommentText$
+			} else {
+				CONTINUE
+			}
+		}
+	
+		cLineCnt++
+		
+		! 2019-02-18 RCS - hide line logic
+		! // Option to suppress the line in C2P invoice payment web page.  Future option.
+		c2p.hideLine$		= isNO$ !
+
+		_obj'LoadLine()
+		
+		if cLineCnt >= cLevel3LineLimit { ! Level III max
+			BREAK
+		}
+
+	NEXT RECORD
+
+	retVal 					= _obj'SendRequest(documentCode$, documentPath$, memoryFH)
+
+	_obj'LoadResponse()
+	
+	SWITCH retVal
+		CASE retSUCCESS ! was able to send the request and get an answer
+			if c2p.statusCode = 50003 {
+				_obj'GetLinkCode(				\
+					c2p.header.ArDivisionNo$,	\
+					c2p.header.CustomerNo$,		\
+					c2p.header.InvoiceNo$,		\
+					c2p.header.InvoiceType$,	\
+					c2p.D531_C2PLinkCode$,		\
+					c2p.statusCode,				\
+					c2p.statusClassCode,		\
+					c2p.errorMessage$)
+			}
+
+			BREAK
+		CASE retWARNING ! request connected at an insecure level
+			if not(coSession'Updating) {
+				_obj'TlsWarning()
+			}
+			if c2p.statusCode = 50003 {
+				_obj'GetLinkCode(				\
+					c2p.header.ArDivisionNo$,	\
+					c2p.header.CustomerNo$,		\
+					c2p.header.InvoiceNo$,		\
+					c2p.header.InvoiceType$,	\
+					c2p.D531_C2PLinkCode$,		\
+					c2p.statusCode,				\
+					c2p.statusClassCode,		\
+					c2p.errorMessage$)
+			}
+
+			BREAK
+		DEFAULT
+			! failed to send transaction
+			! Display in the calling program
+ 			retVal			= retFAILURE
+			BREAK
+	END SWITCH
+
+	! log errors.
+	! done in the calling program
+	
+	c2p.BlocksProcessed		++
+	if c2p.BlocksProcessed	> 50 {
+		tlsChk = _obj'ResetDotNet()
+		c2p.BlocksProcessed	= 0
+		if tlsChk = retWARNING and not(coSession'Updating) {
+			_obj'TlsWarning()
+		}
+	}
+	
+	
+RETURN retVal
+!
+
+PROCESS_SO_INVOICE:
+ENTER (InvoiceNo$),(InvoiceType$),c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$,c2p.D531_C2PLinkCode$
+
+	hld.InvoiceNo$			= InvoiceNo$
+	hld.InvoiceType$		= InvoiceType$
+	c2p.Currency$			= def.Currency$	! reset to default.
+
+	if not(cSoInvHdrFH) {
+		cSoInvHdrFH			= coSession'OpenTable("SO_InvoiceHeader","COMPANY")
+	}
+	if not(cSoInvDtlFH) {
+		cSoInvDtlFH			= coSession'OpenTable("SO_InvoiceDetail","COMPANY")
+	}
+	
+	READ (cSoInvHdrFH, KEY=hld.InvoiceNo$, REC=c2p.header$)
+	READ (c2p.ArCustFH,key	= c2p.header.ARDivisionNo$:c2p.header.CustomerNo$, rec=c2p$)		! DB# 1287 - 2020-03-12 - RCS
+	
+	_OBJ'SetC2PCurrency(c2p.header.SOMC_234_EntryCurrency$, c2p.Currency$) ! #248049 - 2019-05-23 - RCS
+	
+	c2p.timeStamp$			= DTE(0, TIM:"%Y-%Mz-%DzT%Hz:%mz:%sz")
+	c2p.InvoiceDate$		= c2p.header.InvoiceDate$(1,4)+"-"+c2p.header.InvoiceDate$(5,2)+"-"+c2p.header.InvoiceDate$(7,2)+"T00:01:00"
+	if nul(c2p.header.InvoiceDueDate$) {
+		c2p.header.InvoiceDueDate$	= c2p.header.InvoiceDate$	! no terms or due on receipt.
+	}
+	c2p.InvoiceDueDate$		= c2p.header.InvoiceDueDate$(1,4)+"-"+c2p.header.InvoiceDueDate$(5,2)+"-"+c2p.header.InvoiceDueDate$(7,2)+"T00:01:00"
+	c2p.OrderDescription$	= "Products and Services"
+	_obj'FindNames(c2p.header.ShipToName$,c2p.header.ShipToFirstName$,c2p.header.ShipToLastName$)
+	_obj'FindNames(c2p.header.BillToName$,c2p.header.BillToFirstName$,c2p.header.BillToLastName$)
+	c2p.CustomerPO$ 		= c2p.header.CustomerPONo$
+	if nul(c2p.header.CustomerPONo$) {
+		c2p.CustomerPO$		= "Verbal"
+	}
+	if nul(c2p.header.EmailAddress$) and not(nul(c2p.EmailAddress$)) {
+		c2p.header.EmailAddress$ = c2p.EmailAddress$ ! #238741 RCS - 2018-07-09 - default if no email address on the order for C2P. DB# 1287 - 2020-03-12 - RCS
+	}
+	x	= pos(";"=c2p.header.EmailAddress$)
+	if x {
+		c2p.header.EmailAddress$	= c2p.header.EmailAddress$(1,x-1)	! strip multiple email addresses  #257342 - 2019-09-17 - RCS
+	}
+	
+	if nul(c2p.header.EmailAddress$) {
+		c2p.statusCode			= 30001
+		c2p.statusClassCode		= 3
+		c2p.errorMessage$		= "The CustomerEmail field is not a valid e-mail address."
+		retVal					= retFAILURE
+		RETURN retVal
+	}
+		
+
+	
+	SWITCH c2p.header.D531_C2PWebInvCreated$ ! Updating RCS Hardcoded based on V/I issue 2018-02-19
+		CASE isYES$
+			documentCode$	= "IUS/OQ" ! Updating
+			BREAK
+		DEFAULT
+			documentCode$	= "ICS/OQ" ! Creating
+			BREAK
+	END SWITCH
+
+	memoryFH				= _obj'CreateMemoryFile()
+
+ 	coDocument'FIND(documentCode$)
+ 	coDocument'GetValue("documentPath$", documentPath$)
+
+ 	_obj'LoadHeader()
+
+ 	cLineCnt				= 0
+	SELECT *,REC=c2p.detail$ FROM cSoInvDtlFH, KNO="kDISPLAY"	\
+		BEGIN	c2p.header.invoiceNo$							\
+		END		c2p.header.invoiceNo$:$FE$
+		
+		! Suppress comment lines without comments. #242935 - 2018-10-12 RCS
+		if c2p.detail.ItemType$ 	= "4" {
+			If not(nul(c2p.detail.CommentText$)) {
+				c2p.detail.ItemCodeDesc$	= c2p.detail.CommentText$
+			} else {
+				CONTINUE
+			}
+		}
+		cLineCnt			++
+		! 2019-02-18 RCS - hide line logic
+		! // Option to suppress the line in C2P invoice payment web page.  Future option.
+		c2p.hideLine$		= isNO$
+		
+		! line commodty processing #248453 - 2019-02-20 RCS
+		if c2p.detail.ItemType$		= "1" {
+			c2p.LineCommodityCode$	= tbl(nul(c2p.detail.CommodityCode$),c2p.detail.CommodityCode$,c2p.APSItemCommodityCode$)
+		} else {
+			c2p.LineCommodityCode$	= c2p.APSItemCommodityCode$
+		}
+		
+		! 2018-03-29 RCS - line discount and percentage processing
+		! unit cost
+		IF c2p.detail.ItemType$		= "3" {
+			tmpUnitCost=PRC(c2p.detail.ExtensionAmt,4)
+		} ELSE {
+			tmpUnitCost=PRC(c2p.detail.UnitPrice,4)
+		}
+		! item discount amount
+		cLineDiscountPercent		= c2p.detail.LineDiscountPercent
+		if cLineDiscountPercent {
+			tLineDiscountPercent	= cLineDiscountPercent * .01
+		} else {
+			tLineDiscountPercent	= 0
+		}
+		tmpItemDiscAmt				= prc((tmpUnitCost * tLineDiscountPercent),2)
+		IF c2p.detail.ItemType$		= "3" {
+			tmpItemDiscAmt			= 0
+		}
+		c2p.lineDiscount			= tmpItemDiscAmt
+
+		! item discount rate
+		tmpItemDiscRate				= prc(cLineDiscountPercent,2)
+		c2p.lineDiscountPercent		= tmpItemDiscRate
+
+		_obj'LoadLine()
+
+		if cLineCnt >= cLevel3LineLimit { ! Level III max
+			BREAK
+		}
+
+	NEXT RECORD
+
+	retVal = _obj'SendRequest(documentCode$, documentPath$, memoryFH)
+
+	_obj'LoadResponse()
+
+	SWITCH retVal
+		CASE retSUCCESS ! was able to send the request and get an answer
+			! 
+			if c2p.statusCode = 50003 {
+				_obj'GetLinkCode(				\
+					c2p.header.ArDivisionNo$,	\
+					c2p.header.CustomerNo$,		\
+					c2p.header.InvoiceNo$,		\
+					c2p.header.InvoiceType$,	\
+					c2p.D531_C2PLinkCode$,		\
+					c2p.statusCode,				\
+					c2p.statusClassCode,		\
+					c2p.errorMessage$)
+			}
+			BREAK
+		CASE retWARNING ! request connected at an insecure level
+			if not(coSession'Updating) {
+				_obj'TlsWarning()
+			}
+			if c2p.statusCode = 50003 {
+				_obj'GetLinkCode(				\
+					c2p.header.ArDivisionNo$,	\
+					c2p.header.CustomerNo$,		\
+					c2p.header.InvoiceNo$,		\
+					c2p.header.InvoiceType$,	\
+					c2p.D531_C2PLinkCode$,		\
+					c2p.statusCode,				\
+					c2p.statusClassCode,		\
+					c2p.errorMessage$)
+			}
+
+			BREAK
+		DEFAULT
+			! failed to send transaction
+			! reported in the calling program
+			retVal				= retFAILURE
+			BREAK
+	END SWITCH
+
+	! log errors.
+	! done in the calling program
+
+	c2p.BlocksProcessed			++
+	if c2p.BlocksProcessed > 50 {
+		tlsChk = _obj'ResetDotNet()
+		c2p.BlocksProcessed		= 0
+		if tlsChk = retWARNING and not(coSession'Updating) {
+			_obj'TlsWarning()
+		}
+	}
+
+RETURN retVal
+!
+	
+QUOTE_ENCODE: ! RCS #239544 - 2018-10-04 
+ENTER InVal$
+
+	retVal$			= isNULL$
+	inVal$			= cvs(inVal$,19)	! remove leading and trailing control characters and non printables. 2018-10-04 RCS
+	tmpVal$			= mid(InVal$,2,len(InVal$)-2)
+	
+	if not(pos(quo	= tmpVal$)) { 		! check if quotes are in the data (not starting and ending quotes)
+		retVal$		= InVal$
+		RETURN retVal$
+	}
+	
+	IF LEN(inVal$) > 2 {
+		retVal$ = inVal$(1,1) ! leading quote
+ 		FOR x=2 TO LEN(inVal$)-1
+ 			IF inVal$(x,1) = QUO {
+				retVal$	+= "\"+inVal$(x,1)	! escape quotes per Peter 2018-10-04
+  			} ELSE {
+				retVal$	+= inVal$(x,1)
+  			}
+ 		NEXT x
+ 		retVal$	+= QUO	! trailing quote
+	}
+
+RETURN retVal$
+!
+
+RESET_DOT_NET: ! flush .NET
+
+	IF coSPM {
+		DELETE OBJECT coSPM, ERR=*NEXT
+		coSPM	= 0
+	}
+	if coHTTP {
+		z		= coHTTP'PvxFree()
+		DELETE OBJECT coHTTP, ERR=*NEXT
+	}
+	if coNET {
+		z		= coNET'PvxFree()
+ 		DELETE OBJECT coNET, ERR=*NEXT
+	}
+
+	coSPM		= 0
+	coHTTP		= 0
+	coNET		= 0
+	tlsChk		= 0
+	retVal		= retFAILURE
+
+	DEF OBJECT coNET,"[.NET]"
+	ok			= isFALSE
+	coNET'Add("System",ERR=*NEXT); ok		= isTRUE
+	IF NOT(ok) {
+		coSession'LastErrorMsg$				= msg(-1)
+		RETURN retFAILURE
+	}
+	ok			= isFALSE
+	coNet'Add("System.Net",ERR=*NEXT); ok	= isTRUE
+	IF NOT(ok) {
+		coSession'LastErrorMsg$ = msg(-1)
+		RETURN retFAILURE
+	}
+
+	tmpNameSpace$		= "System,System.Net"
+	coNET'NameSpace$	= tmpNameSpace$
+
+	! Set TLS level #230282
+	coSPM				= EVN("coNet'Create("+quo+"ServicePointManager"+quo+")",0,err=*next) ! part of System.Net
+
+	tlsChk				= isFALSE
+	coSPM'set_SecurityProtocol("Tls12",err=*next); tlsChk	= isTRUE
+
+	IF NOT(tlsChk) { coSPM'SecurityProtocol = 3072; tlschk	= isTRUE } ! direct cast
+
+	if coSPM {
+		tlsChk			= isFALSE
+		coSPM'set_SecurityProtocol("Tls12",err=*next); tlsChk	= isTRUE
+
+		IF NOT(tlsChk) {
+			tlsChk 		= _obj'TlsDirectCast()
+		}
+	}
+
+	if NOT(tlsChk) {
+		retVal			= retWARNING
+	} ELSE {
+		retVal			= retSUCCESS
+	}
+
+	ok					= isFALSE
+	coHTTP				= coNET'Create("WebClient",ERR=*NEXT); ok	= isTRUE
+	IF NOT(ok) {
+		coSession'LastErrorMsg$ = msg(-1)
+		RETURN retFAILURE
+	}
+
+RETURN retVal
+!
+
+SET_C2P_FLAGS:
+
+	if nul(prefixKey$) {
+		prefixKey$	= "c2p."
+	}
+	tmp$		= prefixKey$ + "D531_C2PWebInvCreated$"
+	via tmp$	= isNO$
+	tmp$		= prefixKey$ + "D531_C2PWebInvUpdated$"
+	via tmp$	= isNO$
+	tmp$		= prefixKey$ + "D531_C2PLinkCode$"
+	via tmp$	= isNULL$
+RETURN retSUCCESS
+!
+
+
+SEND_REQUEST:
+ENTER (documentCode$), (documentPath$), memoryFH, ERR=*NEXT
+
+	cDocumentCode$				= documentCode$
+	coDocument'FIND(documentCode$)
+	coDocument'GetValue("displayTransaction$", displayTransaction$)
+
+	c2p.documentCode$			= MID(documentCode$, 1, 2)
+	c2p.moduleCode$				= coSession'moduleCode$
+
+	retVal						= retFAILURE
+	tlsChk						= retSUCCESS
+	
+	! Set the values for the transaction log. #241845 2018-09-17 RCS
+	_obj'GetRequestData("3",customerID$,memoryFH)
+	_obj'GetRequestData("4",invoiceID$,memoryFH)
+	c2p.ARDivisionNo$			= mid(customerID$, 1, 2)
+	c2p.CustomerNo$				= mid(customerID$, 3)
+	c2p.InvoiceNo$				= mid(invoiceID$, 1, len(invoiceID$)-2)
+	c2p.InvoiceType$			= mid(invoiceID$, len(InvoiceId$)-1)
+
+	if not(cBlocksProcessed) {
+		tlsChk					= _obj'ResetDotNet()
+		cblocksProcessed		++
+	}
+	IF NOT(tlsChk) {
+  		retVal					= retFAILURE
+  		LastErrorNum$			= "SY_531APC2PFailedConnection"
+		LastErrorMsg$			= MSG("SY_531APC2PFailedConnection")
+  		coSession'LastErrorMsg$ = msg(-1)
+  		c2p.timeStamp$			= DTE(0, TIM:"%Y-%Mz-%Dz-%Hz:%mz:%sz")
+		c2p.moduleCode$			= MID(cDocumentCode$, 3, 3)
+		c2p.errorMessage$		= "Unable to instantiate .NET communications."
+		c2p.response$			= msg(-1)
+		c2p.response$			= SUB(c2p.response$, SEP, "/")
+		c2p.statusClassCode		= 3
+		timeSeq					= 0
+
+		WHILE 1
+			c2p.timeStamp$		= DTE(0, TIM:"%Y-%Mz-%Dz-%Hz:%mz:%sz")+"-"+STR(timeSeq:"000000") ! record in the error log.
+			WRITE (cTransactionLogFH, REC=c2p$,DOM=*next); BREAK
+			timeSeq				++
+		WEND
+
+		RETURN retVAL
+	}
+
+	if c2p.documentCode$ = "PQ" {
+		IF coSession'UI and c2pDisplay {
+			progressBarOption$  = "init"
+			progressBarTitle$   = "APS Retrieving transactions from gateway"
+			progressBarMessage$ = "Retrieving block 1"
+			coSession'UI'ProgressBar(progressBarOption$, progressBarTitle$, progressBarMessage$, 0)
+			wait .1
+		}
+		progressCounter		= 0
+	}
+
+	c2p.request$		= _OBJ'formatRequest$(memoryFH)
+
+	! clean up data, removing SEP and changing line feed
+	c2p.request$		= SUB(c2p.request$, SEP, lf$)
+	TRANSLATE c2p.request$, $0D00$+$0A020D0A$
+
+	WHILE 1
+
+
+		c2p.header$		= cMethod$ + " /" + documentPath$ + " HTTP/1.0" + cLF$
+		c2p.header$		+= "Accept-Language: en-us" + cLF$
+		c2p.header$		+= "Host: " + Domain$ + cLF$
+		c2p.header$		+= "User-Agent: Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0; GTB6; SLCC1; .NET CLR 2.0.50727; Media Center PC 5.0; .NET CLR 1.1.4322; .NET CLR 3.5.30729; .NET CLR 3.0.30618)" + cLF$
+
+		c2p.header$		+= "Content-Type: text/" + DataFormat$ + cLF$
+		c2p.header$		+= "Content-Length: " + STR(LEN(c2p.request$)) +cLF$
+
+		c2p.header$		+= "Accept:application/" + DataFormat$ + cLF$
+
+		c2p.header$		+="Cache-Control: no-cache" + cLF$
+		c2p.header$		+= cLF$
+
+		IF displayTransaction$ = isYES$ {
+			displayText$	= c2p.request$
+			_OBJ'formatDisplay(displayText$)
+			_OBJ'displayTransaction(displayText$, "APS Click to Pay Request")
+		}
+
+		APIUrl$				= Domain$+documentPath$
+		coHttp.BaseAddress$	= Domain$+documentPath$
+		coHTTP'Headers'Add("Content-Type","text/json")
+		coHTTP'Headers'Add("MediaType","text/json")
+		coHTTP'Headers'Add("Accept","text/json")
+		coHTTP'Headers'Add("ContentLength",STR(LEN(C2P.Request$)))
+		coHTTP'Headers'Add("UserAgent","Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0; GTB6; SLCC1; .NET CLR 2.0.50727; Media Center PC 5.0; .NET CLR 1.1.4322; .NET CLR 3.5.30729; .NET CLR 3.0.30618)")
+
+		C2P.response$				= "bad"
+		C2P.response$				= coHTTP'UploadString$(APIUrl$,cMethod$,C2P.Request$,ERR=*NEXT)
+		IF C2P.response$			= "bad" {
+	  		retVal					= retFAILURE
+	  		LastErrorNum$			= "SY_531APC2PFailedConnection"
+			LastErrorMsg$			= MSG("SY_531APC2PFailedConnection")
+	  		coSession'LastErrorMsg$	= msg(-1)
+	  		c2p.timeStamp$			= DTE(0, TIM:"%Y-%Mz-%Dz-%Hz:%mz:%sz")
+			c2p.moduleCode$			= MID(cDocumentCode$, 3, 3)
+			c2p.errorMessage$		= "Bad Transaction"
+			c2p.statusClassCode		= 3
+			c2p.response$			= msg(-1)
+			c2p.response$			= SUB(c2p.response$, SEP, "/")
+			timeSeq					= 0
+			
+			WHILE 1
+				c2p.timeStamp$	= DTE(0, TIM:"%Y-%Mz-%Dz-%Hz:%mz:%sz")+"-"+STR(timeSeq:"000000") ! record in the error log.
+				WRITE (cTransactionLogFH, REC=c2p$,DOM=*next); BREAK
+				timeSeq				++
+			WEND
+			! log bad transaction
+			_obj'WriteLog("Failed Connection",c2p.ErrorMessage$+cLF$+"URL: "+APIUrl$+cLF$+"Method: "+cMethod$+cLF$+"Request: "+c2p.Request$+cLF$,logFile$) ! #238741 RCS 2018-07-06
+			! reset memory file
+			CLOSE (memoryFH, ERR=*NEXT)
+			memoryIOL$				= CPL("IOList member$, sageField$, value$")
+			memoryFH				= _OBJ'CreateMemoryFile(memoryIOL$)
+			memberTree$				= "c2p."
+			member$					= "statusClassCode", sageField$="c2p.statusClassCode",value$="1"
+			member$					= memberTree$ + member$
+			WRITE (memoryFH, KEY = member$)
+			member$					= "errorMesage", sageField$="c2p.errorMessage$",value$="Bad Transaction"
+			member$					= memberTree$ + member$
+			WRITE (memoryFH, KEY = member$)
+			member$					= "statusCode", sageField$="c2p.statusCode",value$="30000"
+			member$					= memberTree$ + member$
+			WRITE (memoryFH, KEY = member$)
+			member$					= "exceptionID", sageField$="c2p.exceptionID$",value$=isNULL$
+			member$					= memberTree$ + member$
+			WRITE (memoryFH, KEY = member$)
+			BREAK
+		}
+
+		if c2p.documentCode$ = "PQ" and c2p.response$ <> "bad" {
+			c2p.Temp$				= c2p.Response$
+			x						= pos("["=c2p.Temp$),c2p.Test$=mid(c2p.Temp$,1,x)
+			c2p.Temp$				= c2p.Temp$(x+1)
+			y						= pos("statusClassCode"=c2p.temp$),dummy$=mid(c2p.temp$,y)
+			z						= pos(":"=dummy$)+1,zz=pos(","=mid(dummy$,z))-1
+			chk$					= dummy$(z,zz),c2p.statusClassCode=num(chk$)
+			w						= pos("errorMessage"=c2p.Temp$),c2p.Temp$=mid(c2p.Temp$,1,w-4) ! RCS 2018-09-04 - fix related to multiblock transactions.
+			if len(c2p.BlockResponse$) {
+				c2p.BlockResponse$	+= ","+c2p.temp$
+			} else {
+				c2p.BlockResponse$	= c2p.temp$
+			}
+		}
+
+		! create translation
+		cTranslationFH				= _OBJ'createTranslation()
+
+		! reset memory file
+		CLOSE (memoryFH, ERR=*NEXT)
+		memoryIOL$					= CPL("IOList member$, sageField$, value$")
+		memoryFH					= _OBJ'CreateMemoryFile(memoryIOL$)
+		memberTree$					= "c2p."
+		_OBJ'formatResponse(c2p.response$, memoryFH, memberTree$)
+
+		IF displayTransaction$		= isYES$ {
+			displayText$ 			= c2p.response$
+			_OBJ'formatDisplay(displayText$)
+			_OBJ'displayTransaction(displayText$, "APS Click to Pay Response")
+		}
+
+		cKey$						= "c2p.blockNumber"
+		recFound					= isFALSE
+		LastBlockReceived			= 0
+		read (memoryFH,key=cKey$,dom=*next); recFound = isTRUE
+		if recFound {
+			VIA sageField$			= NUM(value$)
+		}
+		LastBlockReceived			= c2p.blockNumberReceived
+
+		cKey$						= "c2p.isEndOfSet"
+		recFound					= isFALSE
+		c2p.EndOfSet$				= isYES$ ! default to single block transaction
+		read (memoryFH,key=cKey$,dom=*next); recFound=1
+		if recFound {
+			VIA sageField$ 			= tbl(num(value$),isNO$,isYES$)
+		}
+
+		EndOfSet$					= c2p.EndOfSet$
+		timeSeq						= 0
+		c2p.moduleCode$				= MID(cDocumentCode$, 3, 3)
+
+		! fix logging issues
+		cKey$						= "c2p.errorMessage$"
+		recFound					= isFALSE
+		c2p.errorMessage$			= isNULL$ ! default to null
+		read (memoryFH,key=cKey$,dom=*next); recFound = isTRUE
+		if recFound and value$<>"null" {
+			VIA sageField$			= value$
+		}
+
+		cKey$						= "c2p.statusClassCode"
+		recFound					= isFALSE
+		c2p.statusClassCode			= isTRUE ! default to success
+		read (memoryFH,key=cKey$,dom=*next); recFound = isTRUE
+		if recFound {
+			VIA sageField$			= num(value$,err=*next)
+		}
+
+		if c2p.errorMessage$ = isNULL$ {
+			SWITCH tlsChk
+				CASE retSUCCESS
+					c2p.errorMessage$	= "Connecting at TLS 1.2"
+					BREAK
+				CASE retWARNING
+					c2p.errorMessage$	= "TLS security is not available!"
+					BREAK
+				CASE retFAILURE
+					c2p.ErrorMessage$	= "Unable to instantiate .NET communications."
+					BREAK
+			END SWITCH
+		}
+
+		IF NUL(c2p.D531_C2PLinkCode$) {
+			LinkCode$					= isNULL$
+			_obj'ParseData(c2p.response$,"clickToPayLinkCode",LinkCode$)
+			if nul(LinkCode$) {
+				_obj'ParseData(c2p.request$,"clickToPayLinkCode",LinkCode$)
+			}
+			c2p.D531_C2PLinkCode$		= LinkCode$
+		}
+		WHILE 1
+			c2p.timeStamp$ 				= DTE(0, TIM:"%Y-%Mz-%Dz-%Hz:%mz:%sz")+"-"+STR(timeSeq:"000000")
+			WRITE (cTransactionLogFH, REC=c2p$,DOM=*next); BREAK
+			timeSeq						++
+		WEND
+
+		retVal 							= retSUCCESS
+
+		! block processing check
+		IF c2p.documentCode$<>"PQ" {
+			LastBlockReceived			= isTRUE
+			EndOfSet$					= isYES$
+			BREAK
+		}
+
+		cblocksProcessed				++
+		if cBlocksProcessed > 50 {
+			tmpChk = _obj'ResetDotNet() ! flush and reload the .NET programs.
+			cBlocksProcessed			= 0
+			if tmpChk = retWARNING {
+				tlsChk					= tmpChk
+			}
+		}
+
+		! block processing
+		if not(EndOfSet$=isYES$) and c2p.statusClassCode=1 {
+
+			c2p.BlockNumber				= LastBlockReceived+1
+			member$						= "blockNumber"
+			request$					= c2p.Request$
+			memberStart					= POS(QUO+member$+QUO+":"=request$) + LEN(member$) + 3
+			memberStart					+= MID(request$, memberStart, 1)=QUO
+			memberLength				= POS(QUO+",}":MID(request$, memberStart)) - 1
+			value$						= MID(request$, memberStart, memberLength)
+			blkno$						= str(c2p.BlockNumber)
+			! request the next block to process
+			c2p.Request$				= c2p.Request$(1,memberstart-1)+blkno$+c2p.Request$(memberStart+memberLength)
+			IF coSession'UI and c2pDisplay {
+				progressBarOption$  	= "update"
+				progressBarTitle$   	= "APS Retrieving transactions from gateway"
+				progressBarMessage$ 	= "Retrieving block "+blkno$
+				coSession'UI'ProgressBar(progressBarOption$, progressBarTitle$, progressBarMessage$, 0)
+				wait .1
+				progressCounter 		= 0
+			}
+		}
+
+		if c2p.statusClassCode > 1 {
+			EndOfSet$=isYES$
+			if not(LastBlockReceived) {
+				LastBlockReceived		= isTRUE
+			}
+		}
+
+		if EndOfSet$=isYES$ and coSession'UI and c2pDisplay {
+			coSession'UI'ProgressBar("close"); wait .1
+		}
+
+		if EndOfSet$ = isYES$ and LastBlockReceived = isTRUE { ! single block download.
+			BREAK
+		}
+		! last block received and it is a multiblock download.  Revised: 2018-09-05 RCS #232007
+		if EndOfSet$ = isYES$ and LastBlockReceived > 1 and c2p.statusClassCode = retSUCCESS {
+			c2p.Temp$					= c2p.Response$
+			endHeaderBlock				= POS("["=c2p.Response$)
+			cBlockResponse$				= c2p.Response$(1,endHeaderblock)+c2p.blockResponse$
+
+			member$						= "errorMessage"
+			endPaymentblock				= POS(QUO+member$+QUO+":"=c2p.Response$)-2
+			cBlockResponse$				= cBlockResponse$+c2p.Response$(endPaymentblock)
+
+			! create string with all blocks merged
+			c2p.Temp$					= c2p.BlockResponse$
+			c2p.BlockResponse$			= cBlockResponse$
+
+			! create translation
+			cTranslationFH 				= _OBJ'createTranslation()
+
+			! reset memory file and reload using the merged blocks
+			CLOSE (memoryFH, ERR=*NEXT)
+			memoryIOL$					= CPL("IOList member$, sageField$, value$")
+			memoryFH 					= _OBJ'CreateMemoryFile(memoryIOL$)
+			memberTree$ 				= "c2p."
+			_OBJ'formatResponse(c2p.BlockResponse$, memoryFH, memberTree$)
+			BREAK
+		}
+		if EndOfSet$ = isYES$ and c2p.statusClassCode > 1 { ! last response was an error.
+			retVal 						= retFAILURE
+			BREAK
+		}
+	WEND
+
+	if EndOfSet$ = isYES$ and c2p.statusClassCode = retSUCCESS {
+		retVal 							= retSUCCESS
+	}
+	
+	if tlsChk = retWARNING and retVal = retSUCCESS {
+		retVal 							= tlsChk ! set the TLS warning.
+	}
+RETURN retVal
+!
+
+TLS_DIRECT_CAST:
+	retVal								= retFAILURE
+	SETERR TLS_DIRECT_CAST_END
+	coSPM'SecurityProtocol				= 3072 ! direct cast
+	retVal 								= retSUCCESS
+TLS_DIRECT_CAST_END:
+	seterr 0
+RETURN retVal
+!
+
+TLS_WARNING:
+
+	if c2pDisplay {
+		coSession'UI'MessageBox$(isNULL$,"TLS security is not available!\"+ \
+						"You must upgrade to .NET 4.0 or above to use this application securely.\"+ \
+						"You may also need to have Windows SP1 in Windows 7 or Server 2008 R2\"+ \
+						"with TLS 1.2 enabled in the registry.  Please consult the APS Manual.\"+ \
+						"Please note that on and after March 31st, 2018, you will not be able to process\"+ \
+						"unsecure transactions with the APS payment gateway.", \
+						"Style=OK,Title=Insecure Connection to APS,Icon=S")
+	}
+	tlsWarning							= isTRUE
+
+RETURN retSUCCESS
+!
+
+WRITE_LOG:
+ENTER LogType$, LogMessage$, logFile$
+
+	_obj'CreateLog(logFile$,cAPSlogCH)
+	IF cAPSlogCH {
+		time$					= dte(0:"%Hz:%mz:%Sz")
+		date$					= dte(0:"%Mz/%Dz/%Yz")
+		stamp$					= "APS ClickToPay Log - Date: "+date$+" Time: "+time$+" Mode: "+LogType$+" User: "+coSession'UserCode$
+		MaskedRequestLog$		= LogMessage$
+		PRINT (cAPSlogCH)CrLf$+stamp$
+		PRINT (cAPSlogCH)MaskedRequestLog$+CrLf$
+		CLOSE(cAPSlogCH)
+		cAPSlogCH 				= 0
+ 	}
+
+RETURN retSUCCESS
+!

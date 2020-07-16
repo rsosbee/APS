@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<projectDescription>
+	<name>APSPays620</name>
+	<comment></comment>
+	<projects>
+	</projects>
+	<buildSpec>
+		<buildCommand>
+			<name>com.pvx.ooadide.provideXBuilder</name>
+			<arguments>
+				<dictionary>
+					<key>P_PROJECT_OUTPUT_DIRECTORY</key>
+					<value></value>
+				</dictionary>
+				<dictionary>
+					<key>P_PROJECT_OUTPUT_LINK_DIRECTORY</key>
+					<value>compiled</value>
+				</dictionary>
+				<dictionary>
+					<key>P_PROJECT_SRC_DIRECTORY</key>
+					<value></value>
+				</dictionary>
+				<dictionary>
+					<key>P_PROJECT_SRC_LINK_DIRECTORY</key>
+					<value>src</value>
+				</dictionary>
+			</arguments>
+		</buildCommand>
+	</buildSpec>
+	<natures>
+		<nature>com.pvx.ooadide.provideXNature</nature>
+	</natures>
+</projectDescription>

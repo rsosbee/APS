@@ -1,0 +1,195 @@
+! $Id: AR_531APSConvertByPayment_Bus.pvc $
+! Copyright 2017-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #236076 - 2019-04-30 - RCS
+
+DEF CLASS "AR_531APSConvertByPayment_Bus" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+
+	LIKE "SY_MaintSet", "SY_Maint"
+
+	! Public Properties
+
+	PROPERTY RowsMax							! these are all pushed in from the UDT maintenance UI class
+	PROPERTY TableRcds							! or are ignored when this class is used by VI or others
+	PROPERTY PhysToMem
+	PROPERTY KeyDesc$
+	PROPERTY UDTWhereClause$
+	PROPERTY UDTWhereBegin$
+	PROPERTY UDTWhereEnd$
+	PROPERTY UDTWhereKNO$
+
+	! Local/Private Properties
+
+	LOCAL cMainTable$ = "AR_531APSConvertPaymentTypes"
+	LOCAL cIsSysDB    = isFALSE
+	LOCAL cScriptSkip = isTRUE
+
+	! Public Functions (Methods)
+
+	FUNCTION InitWorkTable()						INIT_WORK_TABLE
+	FUNCTION GetWhereEnd$()							GET_WHERE_END
+	FUNCTION SetKey(keyVal$)						SET_KEY
+
+	! Local/Private Functions (Methods)
+	
+	FUNCTION LOCAL BuildPaymentType()				BUILD_PAYMENT_TYPE
+	FUNCTION LOCAL SetChildColl()					SET_CHILD_COLL
+
+	! Elements Defined Elsewhere, but Referenced Locally
+
+	LOCAL coSession
+	LOCAL coChildColl		! sy_service
+	LOCAL cChildObjCH		! sy_service
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	PRECISION 3 FOR OBJECT
+
+	cIsSysDB    = isFALSE
+	_obj'BuildPaymentType()
+	_OBJ'OpenMainTable()
+	IF NOT(cFH) {
+		coSession'LastErrorNum$ = "TBD"
+		coSession'LastErrorMsg$ = "Unable to open table"
+		EXIT errOBJECT
+	}
+
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+SET_CHILD_COLL:
+
+	! Referential lookups
+	_OBJ'InitChildCollection("ARPaymentType", "AR_PaymentTYpe_svc", "PaymentType$", $$, $$)
+
+RETURN retSUCCESS
+!
+
+INIT_WORK_TABLE:
+
+	IF cMode$<>"SET" {
+		LastErrorNum$ = "CI_NotInSetMode"
+		LastErrorMsg$ = MSG(LastErrorNum$)
+		RETURN retFAILURE
+	}
+
+	LOCAL tmpWHERE$, tmpEND$, tmpKNO$, tmpKEC$, tmpCOUNT, tmpMAX, tmpTMS
+
+	rowStatus$ = $$
+
+	tmpWHERE$  = TBL( NUL(UDTWhereClause$), UDTWhereClause$, "1"  )
+	tmpEND$    = TBL( NUL(UDTWhereEnd$),    UDTWhereEnd$,    $FE$ )
+	tmpKNO$    = TBL( NUL(UDTWhereKNO$),    UDTWhereKNO$,    "kPRIMARY" )
+
+	SELECT * FROM cPhysicalFH,KNO=tmpKNO$ BEGIN UDTWhereBegin$ END tmpEND$
+
+		tmpKEC$ = KEC(cPhysicalFH)
+		tmpCOUNT++
+
+		IF coSession'UI AND tmpTMS<>TMS AND NOT(NUL(KeyDesc$)) AND TableRcds {
+			coSession'UI'ProgressBar("update", $$, KeyDesc$+": "+tmpKEC$, (tmpCOUNT/TableRcds)*100 )
+			tmpTMS = TMS
+		}
+
+		IF NOT(EVN(tmpWHERE$,ERR=*CONTINUE)) { CONTINUE }			! do not include these in the SELECT
+		IF RowsMax AND ++tmpMAX>RowsMax      { BREAK    }			! so the progress bar works
+
+		WRITE (cFH, KEY=tmpKEC$)
+
+	NEXT RECORD
+
+	READ DATA FROM $$ TO IOL=IOL(cFH)
+	READ (cFH, KEY=$$, DOM=*NEXT)
+
+RETURN retSUCCESS
+!
+
+SET_KEY:
+	
+ENTER (keyVAL$)
+
+	retVal    = _OBJ'SetKey(FROM "SY_Maint", keyVAL$)
+
+	WHILE retVal=edtNEW AND cMode$="SET"
+
+		PhysToMem = isFALSE
+
+		FIND  (cPhysicalFH, KEY=keyVAL$, DOM=*BREAK)
+		WRITE (cFH, KEY=keyVAL$)
+
+		retVal    = _OBJ'SetKey(FROM "SY_Maint", keyVAL$)
+		PhysToMem = isTRUE
+		BREAK
+
+	WEND
+
+RETURN retVal
+!
+
+GET_WHERE_END:
+
+	LOCAL retVal$
+
+	IF RowsMax AND TableRcds AND RowsMax<TableRcds {
+		retVal$ = KEY(cPhysicalFH, RNO=RowsMax, ERR=*NEXT)
+	}
+
+RETURN retVal$
+!
+
+BUILD_PAYMENT_TYPE: ! build AR_531APSPaymentType
+	tmpAR_PaymentTypeFH = _obj'OpenTable("AR_PaymentType",pthCOMPANY$)
+	tstIOL$ = UCS(LST(IOL(tmpAR_PaymentTypeFH)))
+	IF NOT(POS("D531APSMERCHANTID$"=tstIOL$) AND POS("D531APSPASSWORD$"=tstIOL$)) {
+		CLOSE(tmpAR_PaymentTypeFH)
+		coSession'CreateTable("AR_PaymentType",pthCOMPANY$)
+		tmpAR_PaymentTypeFH = _obj'OpenTable("AR_PaymentType",pthCOMPANY$)
+	}
+	tstIOL$ = UCS(LST(IOL(cFH)))
+	IF NOT(POS("D531APSMERCHANTID$"=tstIOL$) AND POS("D531APSPASSWORD$"=tstIOL$)) {
+		CLOSE(cFH)
+		coSession'CreateTable(cMainTable$,pthCOMPANY$)
+		cFH = _obj'OpenTable(cMainTable$,pthCOMPANY$)
+	}
+
+	SELECT *,REC=pay$ FROM tmpAR_PaymentTypeFH BEGIN $$ END $FE$ WHERE POS(pay.PaymentMethod$="RA") ! PLW 2017-03-27
+		pay.CreditCardSetupTested$		= isYES$
+		pay.DisplayAVSCVVResponse$		= isNO$
+		pay.DisplayAVSCVVResponse$		= isNO$
+		pay.PriorMerchantID$			= pay.VirtualTerminalID$
+		pay.PriorMerchantKey$			= pay.MerchantKey$
+		READ DATA FROM $$,REC=new$ TO IOL=IOL(cFH)
+		EXTRACT(cFH,KEY=pay.PaymentType$,REC=new$,DOM=*NEXT)
+		IF NOT(NUL(new.D531APSMerchantID$))  {
+			pay.D531APSMerchantID$		= new.D531APSMerchantID$
+		}
+		IF NOT(NUL(new.D531APSPassword$)) {
+			pay.D531APSPassword$		= new.D531APSPassword$
+		}
+		if nul(Pay.D531APSSendEmail$) { 	Pay.D531APSSendEmail$		= "N" } ! #231618 changed to N by default per Zac 2018-03-27
+		if nul(Pay.D531APSRequireCVV$) { 	Pay.D531APSRequireCVV$		= "Y" } ! RCS #237825 - 2018-05-23, changed to Y by default per Zac
+		if nul(Pay.D531APSRetailAccount$) { Pay.D531APSRetailAccount$	= "N" } ! RCS #237825 - 2018-05-23
+		IF not(Pay.PaymentMethod$="R") {	Pay.D531APSRequireCVV$ 		= "N" } ! RCS #237825 - 2018-05-23 for non cRedit card payment types.
+		WRITE (cFH,REC=pay$)
+	NEXT RECORD
+	
+	SELECT *,REC=new$ FROM cFH BEGIN $$ END $FE$
+		invalid = isTRUE
+		READ(tmpAR_PaymentTypeFH,KEY=new.PaymentType$,REC=pay$,DOM=*NEXT); invalid=isFALSE
+		IF invalid {
+			REMOVE(cFH,KEY=new.PaymentType$)
+		}
+	NEXT RECORD
+	CLOSE (tmpAR_PaymentTypeFH)
+	
+RETURN retSUCCESS
+!

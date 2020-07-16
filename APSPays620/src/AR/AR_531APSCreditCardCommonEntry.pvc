@@ -1,0 +1,145 @@
+! $Id: AR_531APSCreditCardCommonEntry.pvc $
+! Sage 100 ERP AR_531APSCreditCardCommonEntry.PVC Business Object for Credit Card Entry
+! (c) 2016-2018 Accounting Systems, Inc. All Rights Reserved.
+!
+DEF CLASS "AR_531APSCreditCardCommonEntry" CREATE REQUIRED DELETE REQUIRED
+
+	! Inheritance
+	LIKE "AR_CreditCardCommonEntry"
+
+	! Private properties
+
+	! Public properties
+	
+	! Public Methods
+	
+	! Local/Private Functions (Methods)
+	! ** Post-Write Credit Card updates
+ 	! ** @Param skipCleanUpValue {optional} [input, boolean] when true, will not remove credit card GUIDs from vault
+	! ** @returns [boolean] True = success, False = failure (post write failures are converted to warnings in base class PostWriteRec()).
+	FUNCTION LOCAL CreditCardPostWrite()										CREDIT_CARD_POST_WRITE
+	FUNCTION LOCAL CreditCardPostWrite(skipCleanUpVault)						CREDIT_CARD_POST_WRITE
+	
+	FUNCTION LOCAL ValidatePaymentType(value$)									VALIDATE_PAYMENT_TYPE
+	FUNCTION LOCAL ValidateGroupCreditCard()									VALIDATE_GROUP_CREDIT_CARD
+
+END DEF
+!
+
+ON_CREATE:
+
+ENTER coSession
+
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+CREDIT_CARD_POST_WRITE: ! 235036 - 2018-11-12 Set validate flag for CVV and masked card for hosted form #236076. RCS
+
+	ENTER (skipCleanUpVault), ERR=*NEXT
+
+	retVal		= retSUCCESS
+	
+	! hold variables
+	
+	hldIOL$		= cpl("Iolist tmpDivNo$, tmpCustNo$, CreditCardGUID$, CreditCardID$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$, SaveCreditCard$") ! #236076 - 2018-11-20 RCS
+
+	tmpDivNo$	= ARDivisionNo$
+	tmpCustNo$	= CustomerNo$
+
+	IF NOT(NUL(BillToCustomerNo$)) {
+		tmpDivNo$	= BillToDivisionNo$
+		tmpCustNo$	= BillToCustomerNo$
+	}
+
+	hldRec$			= rec(hldIOL$)
+			
+	! do base which writes the card on file.
+	retVal			= _obj'CreditCardPostWrite(FROM "AR_531APSCreditCardCommonEntry_base",(skipCleanUpVault))
+
+	! update APS fields if the card is on file.
+	if retVal {
+		read data from hldRec$ to iol = hldIOL$ ! reload data
+		tmpCH		= coSession'OpenTable("AR_CustomerCreditCard", pthCOMPANY$)
+		onFile		= isFALSE
+		READ (tmpCH, KEY=tmpDivNo$:tmpCustNo$:CreditCardGUID$, REC=tmp$, DOM=*NEXT); onFile = isTRUE
+		IF onFile {
+			tmp.D531APSValidated$		= D531APSValidated$			! #235036 - 2018-11-12 RCS
+			tmp.D531APSMaskedCard$		= D531APSMaskedCard$		! #236076 - 2018-11-12 RCS
+			tmp.D531APSAchAccountType$	= D531APSAchAccountType$	! #236076 - 2018-11-20 RCS
+			WRITE (tmpCH, REC=tmp$)
+		}
+		CLOSE (tmpCH)
+	}
+
+RETURN retVal
+!	
+
+VALIDATE_GROUP_CREDIT_CARD: ! #231968 - 2018-02-16 RCS
+
+	IF coSession'ModuleLevel < 5.4 { ! 2018-05-14 RCS
+		retVal = _obj'ValidateGroupCreditCard(FROM "AR_531APSCreditCardCommonEntry_base")
+		RETURN retVal
+	}
+
+	SWITCH %C2P_Import
+		CASE isTRUE ! from C2P Import
+			SWITCH UCS(_OBJ'_CLASS$)
+				CASE "AR_CASHRECEIPTS_BUS" ! in case we need to add anything
+					retVal = _OBJ'ValidateGroupPayment() AND _OBJ'PaymentTypeMethod$ = pmtCREDIT$
+					BREAK
+				DEFAULT
+					retVal = _OBJ'ValidateGroupPayment() AND _OBJ'PaymentTypeMethod$ = pmtCREDIT$
+				BREAK
+			END SWITCH
+			BREAK
+		DEFAULT ! Normal processing
+			retVal = _obj'ValidateGroupCreditCard(FROM "AR_531APSCreditCardCommonEntry_base")
+			BREAK
+	END SWITCH
+
+RETURN retVal
+!
+
+VALIDATE_PAYMENT_TYPE:
+ENTER (value$)
+	
+	retVal = _obj'ValidatePaymentType(FROM "AR_531APSCreditCardCommonEntry_base",value$)
+
+	IF retVal {
+		coPaymentTypeChild'GetValue("PaymentMethod$",pmtMethod$)
+		
+		coPaymentTypeChild'GetValue("D531APSUseEmvDevice$",cEmvDevChk$)	! #236076 - 2019-03-28 RCS - test if payment type is EMV
+		%cEmvDevice$			= isNO$
+		IF pmtMethod$ = pmtCREDIT$ and cEmvDevChk$ = isYES$ {
+			if not(%EmvEnabled) {
+				LastErrorNum$	= "AR_531APSEmvNotRunning"
+				LastErrorMsg$	= MSG("AR_531APSEmvNotRunning")
+				retVal			= retFAILURE
+				RETURN retVal
+			} else {
+				%cEmvDevice$	= cEmvDevChk$
+				if invoiceType$	= "CM" {
+					%cEmvDevice$= isNO$ ! do not process credit memos on EMV.
+					%CreditMemo	= isTRUE
+				}
+			}
+		}
+! // below may be needed for EMV.  Check!
+!  		IF pmtMethod$ = pmtCREDIT$ {
+! 			tmpIOL$ = CPL("IOLIST " + _OBJ'CreditCardAddressCols$)
+!  			_OBJ'GetPartialRecord(addressColVals$, tmpIOL$)
+!  			IF NUL(AVSCity$) AND NUL(AVSAddressLine1$) and coHeaderBus {  ! PLW 2017-01-30 Added check for coHeaderBus
+! 				tmpIOL$ = CPL("IOLIST " + _OBJ'CustomerAddressCols$)
+!  				coHeaderBus'GetPartialRecord(addressColVals$, tmpIOL$)
+!  				tmpIOL$ = CPL("IOLIST " + _OBJ'CreditCardAddressCols$)
+!  				_OBJ'SetPartialRecord(addressColVals$, tmpIOL$)
+!  			}
+!  		}
+	}
+
+RETURN retVal
+!

@@ -1,0 +1,298 @@
+! AR_531Util02.m4p
+! Update APS Vault with full customer information
+! Author: Bob Sosbee
+! Copyright 2018-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #238217 - 2018-07-13
+! #236076 - 2019-03-08 RCS 
+! DI# 927 2020-01-24 #257696 - RCS
+!
+INIT:
+!
+	coSession=%sys_ss, retFAILURE=0,retSUCCESS=1,isTRUE=1,isFALSE=0,cDisplay=isTrue,isNULL$=$$,chk$=arg(5,err=*next)	! #236076 - 2019-06-05 - RCS - added error handler.
+	
+	if ucs(chk$)="AUTO" {
+		cDisplay	= isFALSE
+	} ELSE {
+		retVal$=coSession'UI'MessageBox$("","Update APS Payments Vault from A/R Customer Credit Cards on File?","Style=C,Title=APS Payments File Utility 02")
+		if retVal$ = "CANCEL" {
+			run "SOA"
+		}
+	}
+
+!
+Open_files:
+	ccFH			= coSession'OpenTable("AR_CustomerCreditCard","COMPANY")
+	ptFH			= coSession'OpenTable("AR_PaymentType","COMPANY")
+	ARCustomerFH	= coSession'OpenTable("AR_Customer","COMPANY")
+	ccConvFH		= coSession'OpenTable("AR_531APSCustomerCreditCard","COMPANY")	! DI# 927 2020-01-24 #257696 - RCS
+	
+	cConvRecExist	= isFALSE														! DI# 927 2020-01-24 #257696 - RCS
+	dummyKey$		= key(ccConvFH,end=*next); cConvRecExist	= isTRUE			! DI# 927 2020-01-24 #257696 - RCS
+
+	ARCreditCard	= new("AR_CreditCard",coSession)
+
+	IF cDisplay { coSession'UI'ProgressBar("init", "Scanning... ", "APS Customer Credit Card", 1, "") }
+
+Set_defaults:
+	! check for activation
+	coAPSActivation	= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation()
+		tmpRetVal		= coAPSActivation'RetrieveVersionInfo(APSVersion$,APSAdditional$)
+		DROP OBJECT coAPSActivation
+		tmp				= coSession'GetParameter("SYS","Version$",LMversionNo$)
+	}	
+	clrIOL$ 		= cpl("Iolist CardholderName$, AVSAddressLine1$, AVSAddressLine2$, AVSCity$, AVSState$, AVSCountryCode$, EmailAddress$, AVSZipCode$, CreditCardComment$")
+	APSProcIOL$		= CPL("IOLIST APSStatus$, ResponseCode$, ResponseText$, authCode$, transID$, vaultID$, AVSResult$, CVVResult$, ApiKey$, VaultService$, CCNumber$, CCexp$, cardType$, amount, taxAmount, tmpShipping, UseEmvDevice$,sourceRef$")
+	defaultIOL$		= CPL("IOLIST CardHolderName$, Address1$, Address2$, Zip$, City$, State$, Country$, EMailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")
+
+	CR$				= $0D$
+	CrLf$			= $0A0D$
+	
+	if not(cAPSActivated) {
+		retVal$		= coSession'UI'MessageBox$("","APS is not Active for this company.","Style=O,Title=APS Payments File Utility 02")
+		run "SOA"
+	}
+	
+Mainline:
+
+	! AR_Customer
+	Select *,rec=AR$ from ARCustomerFH begin $00$ end $FE$
+		tmpCustNo$	= ar.ARDivisionNo$+ar.CustomerNo$
+		! AR_CustomerCreditCard
+		Select * from ccFH begin ar.ARDivisionNo$:ar.CustomerNo$ end ar.ARDivisionNo$:ar.CustomerNo$+$FE$
+			! DI #927 - 2020-01-27 RCS
+			if cAPSActivated and cConvRecExist {
+				cConvKey$	= kec(ccFH)
+				convRec		= isFALSE
+				read (ccConvFH,rec=conv$,key=cConvKey$,dom=*next); convRec	= isTRUE
+				if convRec = isTRUE and len(conv.CreditCardGUID$) < 16 {	! SPS' GUID are very long. APS' are short. We skip if long
+					remove (ccConvFH,key=cConvKey$,dom=*next)	! Clean the conversion file if APS is activated. DI# 927 2020-01-24 #257696 - RCS
+				}
+			}
+			read (ptFH,rec=PT$,key=PaymentType$,dom=*continue)
+			! Clean the record while we are here.
+			SWITCH PT.PaymentMethod$
+				CASE "R" ! Credit Card
+					Last4BankRoutingNos$				= isNULL$
+					Last4BankAccountNos$				= isNULL$
+					BankAccountType$					= isNULL$
+					BankName$							= isNULL$
+					D531APSAchAccountType$				= "B"
+					BREAK
+				CASE "A" ! ACH
+					ExpirationDateYear$					= isNULL$
+					ExpirationDateMonth$				= isNULL$
+					CardType$							= isNULL$
+					CorporateCustIDPurchOrder$			= isNULL$
+					Last4UnencryptedCreditCardNos$		= isNULL$
+					D531APSValidated$					= isNO$
+					D531APSMaskedCard$					= isNULL$
+					BREAK
+				DEFAULT
+					CONTINUE
+					BREAK
+			END SWITCH
+			RequestString$				= isNULL$
+			CustomerVaultRequestString$	= isNULL$
+			MainRequestStr$				= isNULL$
+			QueryRequestStr$			= isNULL$
+
+			! check the data and fill in as needed.
+			CardholderName$			= tbl(nul(CardholderName$),CardholderName$,ar.CustomerName$)
+			AVSAddressLine1$		= tbl(nul(AVSAddressLine1$),AVSAddressLine1$,ar.AddressLine1$)
+			AVSAddressLine2$		= tbl(nul(AVSAddressLine2$),AVSAddressLine2$,ar.AddressLine2$)
+			AVSZipCode$				= tbl(nul(AVSZipCode$),AVSZipCode$,ar.ZipCode$)
+			AVSCity$				= tbl(nul(AVSCity$),AVSCity$,ar.City$)
+			AVSState$				= tbl(nul(AVSState$),AVSState$,ar.State$)
+			AVSCountryCode$			= tbl(nul(AVSCountryCode$),AVSCountryCode$,mid(ar.CountryCode$,2))
+			AVSCountryCode$			= tbl(nul(AVSCountryCode$),AVSCountryCode$,"US")	! default to US
+
+			! #238217 - 2018-07-24 - RCS - Used copy from AR_531APSCreditCardCommon, wrong data variable CreditCardEmailAddress.  Fixed.
+			EmailAddress$			= tbl(nul(EmailAddress$),EmailAddress$,ar.EmailAddress$)
+			EmailAddress$			= tbl(not(pos("@"=EmailAddress$)),EmailAddress$,isNULL$)	! not a valid email address.
+
+			! Update the card on file.
+			WRITE (ccFH)
+			
+			! get the merchant info and create the MainRequestStr$
+			APS_MerchantID$				= pt.D531APSMerchantID$
+			APS_Password$				= pt.D531APSPassword$			
+			
+			ARCreditCard'CreateRequestStrings(APS_MerchantID$,APS_Password$,MainRequestStr$,QueryRequestStr$)
+			ARCreditCard'FindNames(CardholderName$,ReturnFirstName$,ReturnLastName$)	! #243530 - 2018-11-18
+			
+			! start building the vault record
+			CustomerVaultRequestString$		+="&customer_vault=update_customer"
+
+			IF NOT(NUL(ar.CustomerName$)) {
+				CustomerVaultRequestString$	+="&company="+ARCreditCard'APSURLEncoding$(ar.CustomerName$)
+			}
+			IF NOT(NUL(CardholderName$)) {
+				CustomerVaultRequestString$	+="&firstname="+ARCreditCard'APSURLEncoding$(ReturnFirstName$)	! #243530 - 2018-11-18
+				CustomerVaultRequestString$	+="&lastname="+ARCreditCard'APSURLEncoding$(ReturnLastName$)	! #243530 - 2018-11-18
+			}
+			IF NOT(NUL(AVSAddressLine1$)) {
+				CustomerVaultRequestString$	+="&address1="+ARCreditCard'APSURLEncoding$(AVSAddressLine1$)
+			}
+			IF NOT(NUL(AVSAddressLine2$)) {
+				CustomerVaultRequestString$	+="&address2="+ARCreditCard'APSURLEncoding$(AVSAddressLine2$)
+			}
+			IF NOT(NUL(AVSZipCode$)) {
+				CustomerVaultRequestString$	+="&zip="+ARCreditCard'APSURLEncoding$(AVSZipCode$)
+			}
+			IF NOT(NUL(AVSCity$)) {
+				CustomerVaultRequestString$	+="&city="+ARCreditCard'APSURLEncoding$(AVSCity$)
+			}
+			IF NOT(NUL(AVSState$)) {
+				CustomerVaultRequestString$	+="&state="+ARCreditCard'APSURLEncoding$(AVSState$)
+			}
+			IF NOT(NUL(AVSCountryCode$)) {
+				CustomerVaultRequestString$	+="&country="+ARCreditCard'APSURLEncoding$(AVSCountryCode$)
+			}
+			IF NOT(NUL(EmailAddress$)) {
+				CustomerVaultRequestString$	+="&email="+ARCreditCard'APSURLEncoding$(EmailAddress$)
+			}
+			if NOT(NUL(CorporateCustIDPurchOrder$)) {
+				CustomerVaultRequestString$	+="&ponumber="+ARCreditCard'APSURLEncoding$(CorporateCustIDPurchOrder$)
+			}
+			IF NOT(NUL(ar.TelephoneNo$)) {
+				CustomerVaultRequestString$	+="&phone="+ARCreditCard'APSURLEncoding$(ar.TelephoneNo$)
+			}
+			IF NOT(NUL(ar.FaxNo$)) {
+				CustomerVaultRequestString$	+="&fax="+ARCreditCard'APSURLEncoding$(ar.FaxNo$)
+			}
+			SWITCH PT.PaymentMethod$
+				CASE "A" ! ACH
+					CustomerVaultRequestString$	+= "&payment=check"
+					CustomerVaultRequestString$	+= "&account_type="+TBL(UCS(BankAccountType$)="S","checking","savings")
+					CustomerVaultRequestString$	+= "&checkname="+ARCreditCard'APSURLEncoding$(CardholderName$) ! was +BankName$ #243530 - 2018-11-18
+					BREAK
+				CASE "R" ! Credit Card
+					CustomerVaultRequestString$	+= "&payment=creditcard"
+					CustomerVaultRequestString$	+= "&stored_credential_indicator=stored"	! #243530 - 2018-11-18 - moved from request string - CC only.
+			END SWITCH
+			
+			! now build the request
+			RequestString$		= MainRequestStr$	
+			RequestString$		+= "&customer_vault_id="+ARCreditCard'APSURLEncoding$(CreditCardGUID$)
+			RequestString$		+= CustomerVaultRequestString$
+
+			! version info 
+			sType$				= tbl(coSession'CS+coSession'SQL,"S","A","P")							! Sage 100 Standard, Advanced, SQL
+			RequestString$		+= "&merchant_defined_field_1="+ARCreditCard'APSURLEncoding$(CreditCardID$)
+			RequestString$		+= "&merchant_defined_field_2="+ARCreditCard'APSURLEncoding$(APSVersion$) ! APS version level
+			RequestString$		+= "&merchant_defined_field_3="+ARCreditCard'APSURLEncoding$(APSAdditional$) ! APS Addtional information
+			RequestString$		+= "&merchant_defined_field_4="+ARCreditCard'APSURLEncoding$("Sage 100-"+sType$+" "+LMversionNo$) ! Sage revision
+			RequestString$		+= "&merchant_defined_field_5="+ARCreditCard'APSURLEncoding$(%C$) ! Sage company code
+			RequestString$		+= "&merchant_defined_field_6="+ARCreditCard'APSURLEncoding$(tmpCustNo$) ! Sage customer code
+			
+
+			! process the request
+			ARCreditCard'isXML	= isFALSE
+			ARCreditCard'ProcessHostedForm	= isFALSE
+			retVal				= ARCreditCard'ProcessAPSTransaction(RequestString$, APSProcRec$, APSProcIOL$, defaultRec$, defaultIOL$)
+			read data from APSProcRec$ to iol= APSProcIOL$
+			read data from defaultRec$ to iol= defaultIOL$
+			
+			switch retval
+				CASE 1 ! processed
+					SWITCH UCS(APSStatus$)
+						CASE "SUCCESS"
+							CALL PGN+";Write_log",APSStatus$,"Record "+tmpCustNo$+"-"+CreditCardID$+" updated successfully."
+							BREAK
+						DEFAULT
+							retVal			= retFAILURE
+							ARCreditCard'TranslateError(ResponseCode$,ErrorText$)
+							LastErrorNum$	= "CI_Error"
+							errMsg1$		= ResponseText$
+							errMsg2$		= ErrorText$
+							LastErrorMsg$	= MSG(LastErrorNum$,errMsg1$,errMsg2$)
+							errrecs			++
+							CALL PGN+";Write_log",APSStatus$,"Record "+tmpCustNo$+"-"+CreditCardID$+" did not update successfully. Reason: "+ResponseCode$+"-"+ErrorText$
+							BREAK
+					END SWITCH
+					BREAK
+				DEFAULT
+					! Unable to send request to HTTP Host
+					LastErrorNum$	= ARCreditCard'LastErrorNum$
+					LastErrorMsg$	= ARCreditCard'LastErrorMsg$
+					errrecs			++
+					CALL PGN+";Write_log",APSStatus$,"Record "+tmpCustNo$+"-"+CreditCardID$+" did not update successfully. Reason: "+LastErrorMsg$
+					! retry?
+					BREAK
+			end switch
+			! close connection to the payment server and log file
+			ARCreditCard'ClosePaymentServerConnection()
+			HostCH	= 0
+			recs	++
+			! clear common vars
+			read data from isNULL$ to iol=clrIOL$
+		Next Record
+		recs++
+	next record
+
+	! check for orphan records.  DI #927 - 2020-01-27 RCS
+	select * from ccConvFH begin $$
+		custNOF		= isTRUE
+		convKey$	= KEC(ccfh)
+		read (ARCustomerFH,key=ARDivisionNo$:CustomerNo$,dom=*next); custNOF = isFALSE
+		if custNOF {
+			remove (ccConvFH,key=convKey$,dom=*next)
+		}
+	next record
+
+	close (ARCustomerFH)
+	close (ccConvFH)
+	close (ccFH)
+	close (ptFH)
+	
+	status$		= "Scan Completed"
+	if errrecs {
+		Status$	+= " with errors.  Please review the error log."
+	} else {
+		Status$	+= "."
+	}
+	if cDisplay { coSession'UI'MessageBox$ ("",Status$,"Style=O,Title=APS File Utility 02") }
+	CALL PGN+";Write_log","Scan Completed","Records processed: "+str(recs)+", Errors: "+str(errrecs)
+	drop object oCC,err=*next
+
+run "SOA"
+!
+
+CREATE_LOG:
+	cAPSlogCH	= HFN
+	coSession	= %sys_ss
+	log$		= coSession'PathCompany$+"APS_Util02"+dte(0:"%Yl%Mz")+".log"
+	WHILE 1
+		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+		IF ERR<>12 {
+			CLOSE (cAPSlogCH)
+			OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+ 		}
+		SERIAL log$,ERR=*NEXT
+		CLOSE (cAPSlogCH)
+		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
+		cAPSlogCH=0
+		BREAK
+	WEND
+RETURN
+!
+
+WRITE_LOG:
+ENTER LogType$, LogMessage$
+	IF cAPSCreditCardLog$=isYES$ {
+		gosub Create_Log
+		IF cAPSlogCH {
+			time$=dte(0:"%Hz:%mz:%Sz")
+			date$=STR(DAY)
+			stamp$="Date: "+date$+" Time: "+time$+" "+LogType$+": "
+			PRINT (cAPSlogCH)CrLf$+stamp$
+			PRINT (cAPSlogCH)LogMessage$+CrLf$
+			CLOSE(cAPSlogCH)
+			cAPSlogCH = 0
+	 	}
+	}
+EXIT
+!

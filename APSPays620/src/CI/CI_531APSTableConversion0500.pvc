@@ -1,0 +1,216 @@
+! $Id: CI_531APSTableConversion0500.pvc $ 
+! Copyright 2013-2016 Accounting Systems, Inc.  Columbia, SC
+! Irina Kouptsova, PLWhirley, Robert Sosbee
+!
+DEF CLASS "CI_531APSTableConversion0500"		CREATE REQUIRED DELETE REQUIRED
+
+	LIKE "CI_TableConversion0500"
+		
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL cAPSActivated
+	LOCAL cAPSMerchantID$
+	LOCAL cAPSMerchantPassword$
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	! ** Add Card to Sage Exchange Vault
+	! ** @Param encryptedCardNo$ [input, string] The encrypted credit card number.
+	! ** @Param expMonth$ [input, string] Expiration month for card.
+	! ** @Param expYear$ [input, string] Expiration year for card.
+	! ** @Param payType$ [input, string] Payment type.
+	! ** @Param formattedCust$ [input, string] The formatted customer for use logging inability to decrypt.
+	! ** @Param last4$ [input, string] The Last 4 Unencrypted credit card numbers for use logging inability to decrypt.
+	! ** @Param rawCard$ [output, string] Unencrypted credit card number.
+	! ** @Param guid$ [output, string] Guid of the card added to vault.
+	! ** @Returns [boolean] Success if card added to the vault, failure if internet is down or 'GetPaymentTypeData() fails, warning if guid not entered for any other reason.
+	FUNCTION LOCAL AddToVault(APSencryptedCardNo$, APSexpMonth$, APSexpYear$, 	\
+					APSpayType$, APSformattedCust$, APSlast4$, APSrawCard$, APSguid$)	ADD_TO_VAULT
+	! ** Determine Card Type from card number.
+	! ** @Param rawCard$ [input, string] The unencrypted credit card number.
+	! ** @Returns cardType$ [string] String value representing card type (i.e. 4 = Visa)
+	!FUNCTION LOCAL DetermineCardType$(rawCard$)							DETERMINE_CARD_TYPE
+
+	! ** Determines CountryCode$ from ZipCode$ by reading SY_ZipCode file.
+	! ** @Param zipCode$ [input, string] The Zip Code to use to try and determine the correct Country Code.
+	! ** @Returns [string] The CountryCode$ read from SY_ZipCode or null. 
+	!FUNCTION LOCAL DetermineCountryCode$(zipcode$)						DETERMINE_COUNTRY_CODE	
+	
+	! ** Determine merchant ID and password from the Payment Type
+	FUNCTION LOCAL GetPaymentTypeAPSData(payType$, APSm_id$, APSm_pswd$)			GET_PAYMENT_TYPE__APS_DATA
+	
+	! Elements defined in SY_TableConversionCommon
+	LOCAL cProgressBarStarted ! PLW 2016-02-25
+	
+END DEF
+
+
+ON_CREATE:
+! check for activation
+	coAPSActivation=NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated=coAPSActivation'CheckAPSActivation ()
+		DROP OBJECT coAPSActivation
+	}
+RETURN
+!
+
+ON_DELETE:
+	CLOSE (cAPSActivationFh,ERR=*NEXT)
+RETURN
+!
+
+ADD_TO_VAULT:
+	
+ENTER APSencryptedCardNo$, APSexpMonth$, APSexpYear$, APSpayType$, APSformattedCust$, APSlast4$, APSrawCard$, APSguid$
+	
+	! check for APS activation
+	IF NOT(cAPSActivationFh) {
+		cAPSActivationFh = _OBJ'OpenTable("SY_531APSActivation", "SYSTEM")
+	}
+	APSActivated		= 0
+	TMP.APSActivated$	= $$
+	READ (cAPSActivationFh, KEY=cCompanyKey$, REC=TMP$, DOM=*NEXT)
+			IF TMP.APSActivated$ = "Y" { APSActivated = 1 }
+	
+	IF APSActivated AND NOT(cInvalidEncryption) {
+	
+		APSguid$	= $$
+		retVal		= retSUCCESS
+				
+		IF APSpayType$ <> cLastPaymentType$ { _OBJ'GetPaymentTypeAPSData(APSpayType$, cAPSMerchantID$, cAPSMerchantPassword$) }
+		
+		IF NOT(NUL(cAPSMerchantID$)) AND NOT(NUL(cAPSMerchantPassword$)) {
+			
+			cLastPaymentType$	= APSpayType$
+			retVal				= retWARNING
+			
+			decryptVal			= _OBJ'GetUnencryptedCard(APSencryptedCardNo$, APSrawCard$)
+
+			IF decryptVal {
+				expiration$		= APSexpMonth$ + APSexpYear$
+				number$			= APSrawCard$
+				
+				IF NOT(coARCreditCard) { coARCreditCard = NEW("AR_CreditCard", coSession,ERR=*NEXT) }
+				
+				IF coARCreditCard {
+					! insert data to vault
+					cAdded++
+					APSguid$	= coARCreditCard'AddAPSCreditCard$(cAPSMerchantID$, cAPSMerchantPassword$, number$, expiration$)
+					
+					IF NUL(STP(APSguid$)) {
+						! log inability to add this credit card to vault but continue with conversion
+						_OBJ'WriteToLog("Unable to add credit card to APS vault for Customer = " 	\
+						+ APSformattedCust$ + ", Last 4 Nos. = " + APSlast4$+", "+coARCreditCard'LastErrorNum$)
+					} ELSE {
+						retVal	= retSUCCESS
+					}
+				} ELSE {
+					retVal			= retFAILURE
+					LastErrorNum$	= coSession'LastErrorNum$
+					LastErrorMsg$	= coSession'LastErrorMsg$
+				}
+			
+			} ELSE {
+				! log inability to decrypt but continue with conversion
+				_OBJ'WriteToLog("Unable to decrypt credit card for Customer = " + APSformattedCust$ + ", Last 4 Nos. = " + APSlast4$)
+			}
+			IF NOT(MOD(cAdded, 25)) { coSession'Ping() }
+		} ELSE {
+			retVal=_OBJ'AddToVault(FROM "CI_531APSTableConversion0500_BASE", APSencryptedCardNo$, APSexpMonth$,	\ 
+					APSexpYear$, APSpayType$, APSformattedCust$, APSlast4$, APSrawCard$, APSguid$)
+		}
+	} ELSE {
+		retVal=_OBJ'AddToVault(FROM "CI_531APSTableConversion0500_BASE", APSencryptedCardNo$, APSexpMonth$,	\ 
+				APSexpYear$, APSpayType$, APSformattedCust$, APSlast4$, APSrawCard$, APSguid$)
+	}
+RETURN retVal
+!
+
+DETERMINE_CARD_TYPE:
+ENTER rawCard$
+	
+	cardType$		= $$
+	SWITCH MID(rawCard$, 1, 1)
+		CASE "1"
+			IF MID(rawCard$, 1, 4) = "1800"	{
+				cardType$ = "7" 		! JCB
+			}
+		BREAK
+		CASE "2"
+			IF MID(rawCard$, 1, 4) = "2131" {
+				cardType$ = "7" 		! JCB
+			}
+		BREAK
+		CASE "3"
+			IF MID(rawCard$, 1, 2) = "34" OR MID(rawCard$, 1, 2) = "37" {
+				cardType$ = "3" 		! American Express
+			} ELSE {
+				cardType$ = "7" 		! JCB
+			}
+		BREAK
+		CASE "4"
+			cardType$ = "4" 			! Visa
+		BREAK
+		CASE "5"
+			IF NUM(MID(rawCard$, 2, 1)) <= 5 AND NUM(MID(rawCard$, 2, 1)) >= 1 {
+				cardType$ = "5" 		! MasterCard	
+			}
+		BREAK
+		CASE "6"
+			IF MID(rawCard$, 1, 4) = "6011" {
+				cardType$ = "6" 		! Discover 
+			}
+		BREAK
+	END SWITCH
+	
+RETURN cardType$
+!	
+	
+DETERMINE_COUNTRY_CODE:
+ENTER zipCode$
+
+	countryCode$			= $$
+	
+	IF NOT(NUL(zipCode$)) {
+		zip.countryCode$	= $$
+		FIND(cSY_ZipCodeFH, REC = zip$, KEY=MID(zipCode$,1,5), DOM=*NEXT)
+		countryCode$		= zip.CountryCode$
+	}
+	
+RETURN countryCode$
+!
+	
+GET_PAYMENT_TYPE__APS_DATA:
+ENTER (payType$), APSm_id$, APSm_pswd$
+	
+	retVal					= retSUCCESS
+	
+	IF NOT(cAR_PaymentTypeFH) { cAR_PaymentTypeFH = _OBJ'OpenTable("AR_PaymentType", pthOTHERCOMPANY$ + cCompanyCode$) }
+			
+	tmp.CreditCardEnable$	= isNO$
+	READ (syCompanyCh, KEY=cCompanyCode$, KNO = "kCOMPANYCODE", REC = tmp$, ERR=*NEXT)
+	
+	pmtTypeExists			= isFALSE
+	READ (cAR_PaymentTypeFH, KEY=payType$, REC=pmt$, DOM=*NEXT); pmtTypeExists = isTRUE
+								
+	IF pmtTypeExists {
+		APSm_id$			= pmt.D531APSMerchantID$
+		APSm_pswd$			= pmt.D531APSPassword$
+		
+		IF NOT(NUL(APSm_id$)) AND NOT(NUL(APSm_pswd$)) {
+			IF pmt.CreditCardSetupTested$ 	= isYES$ {
+				pmt.CreditCardSetupTested$	= isNO$
+				pmt.D531APSSendEmail$		= isYES$ ! RCS #226560 - 2017-07-28
+				WRITE (cAR_PaymentTypeFH, REC=pmt$)
+			}
+		}
+	} ELSE {
+		retVal				= retFAILURE
+		APSm_id$			= $$
+		APSm_pswd$			= $$
+	}
+RETURN retVal
+!

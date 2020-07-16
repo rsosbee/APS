@@ -1,0 +1,655 @@
+! $Id: SO_531APSInvoice_Ui.Pvc $
+! Copyright 2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #232007 - 2018-02-07 - RCS
+
+DEF CLASS "SO_531APSInvoice_Ui"	CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+
+	LIKE "SO_Invoice_Ui"
+
+	! Public Properties
+
+	! Local Properties
+	LOCAL APS.SoOrdPayFH
+	LOCAL cEmvEnabled
+	LOCAL cAPSActivated
+	LOCAL doCleanup
+
+	! Local Objects
+	LOCAL coTerminalSvc
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	
+	! ** Assign values to variables on Credit Card tab
+	! ** @returns [boolean] True = success.
+	FUNCTION LOCAL AssignCreditCardPanelVars()					ASSIGN_CREDITCARD_PANEL_VARS
+
+	FUNCTION LOCAL BT_Accept()									BT_ACCEPT
+
+	FUNCTION LOCAL BT_QuickPrint()								BT_QUICK_PRINT
+	
+	FUNCTION LOCAL ChangeDB_PaymentType() 						CHANGE_DB_PAYMENT_TYPE
+	FUNCTION LOCAL ChangeML_Customer()							CHANGE_ML_CUSTOMER		! #242016 2018-09-19 RCS
+	FUNCTION LOCAL CheckCcAuthExpiry()							CHECK_CC_AUTH_EXPIRY
+	FUNCTION LOCAL ClearCcMessage()								CLEAR_CC_MESSAGE
+	
+	FUNCTION LOCAL GetCCRecord(Get_Rec$,Get_IOL$)				GET_CC_RECORD
+	
+	FUNCTION LOCAL SwitchToTotals()								SWITCH_TO_TOTALS
+	FUNCTION LOCAL SwitchToPayment()							SWITCH_TO_PAYMENT
+
+	! Defined Elsewhere, but Referenced Locally
+
+END DEF
+!
+
+ON_CREATE:
+
+	PRECISION 6 FOR OBJECT
+	! check for activation
+	cEmvEnabled			= isFALSE
+	%EmvEnabled			= isFALSE
+	isEnabled			= isFALSE
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation ()
+		DROP OBJECT coAPSActivation
+		coAPSActivation	= 0
+	}
+
+	APS.SoOrdPayFH		= coSession'OpenTable("SO_SalesOrderPayment","COMPANY")
+
+	if cAPSActivated {
+		coTerminalSvc	= new("SY_531APSTerminal_Svc",coSession)
+		cEmvEnabled		= coTerminalSvc'CheckProcessingPaymentTypesExist()
+		if cEmvEnabled {
+			isEnabled	= coTerminalSvc'CheckTerminalEnabled()
+			if isEnabled {
+				isRunning	= coTerminalSvc'CheckTerminalStatus()
+				if isRunning= retWARNING {
+					bye		! user selected Cancel
+				}
+				%EmvEnabled	= isRunning
+			}
+		}
+	}
+RETURN
+!
+
+ON_DELETE:
+	
+	if APS.SoOrdPayFH	{ CLOSE(APS.SoOrdPayFH); 	APS.SoOrdPayFH	= 0 }
+	if APS.SoInvPayFH	{ CLOSE(APS.SoInvPayFH); 	APS.SoInvPayFH	= 0 }
+	
+	DROP OBJECT coTerminalSvc,ERR=*NEXT
+	coTerminalSvc		= 0
+	
+RETURN
+!
+
+ASSIGN_CREDITCARD_PANEL_VARS: ! does NOT call back to base in SO_CommonEntry_ui
+!	preinput -1301; escape ! so_invoice_ui;AssignCreditCardPanelVars
+	! initialize deposit column
+	fromIOL$    = CPL("IOLIST CorporateSalesTax, CorporateTaxOverrd$, CreditCardAuthorizationNo$, TransactionAmt," \
+				+ "AuthorizationDate$, AuthorizationTime$, CreditCardTransactionID$")
+	toIOL$      = CPL("IOLIST ML_CorporateSalesTax_Dep, ML_CorporateTaxOverrd_Dep$, ML_CreditCardAuthorizationNo_Dep$," \
+				+ "ML_TransactionAmt_Dep, ML_AuthorizationDate_Dep$, ML_AuthorizationTime_Dep$, ML_CreditCardTransactionID_Dep$")
+
+	READ DATA FROM $$ TO IOL = toIOL$
+
+	CB_PayBalance$       = cPayBalance$
+	cCreditCardResponse$ = $$
+
+	IF CB_PayBalance$ = isNo$ {
+		ML_CC_Balance = 0
+	}
+
+	IF coBusiness'AllowCreditCard() {
+		retVal = coBusiness'PaymentObj'SetPaymentKey(typDEPOSIT$)
+
+		IF retVal {
+			coBusiness'PaymentObj'GetPartialRecord(tmpRec$, fromIOL$)
+			READ DATA FROM tmpRec$ TO IOL = toIOL$
+		}
+
+		retVal = coBusiness'PaymentObj'SetPaymentKey(typPAYMENT$)
+
+		IF retVal {
+			coBusiness'PaymentObj'GetRecord(tmpRec$, tmpIOL$)
+			READ DATA FROM tmpRec$ TO IOL = tmpIOL$
+			IF TransactionAmt <> 0 {
+				cPayBalance$ = isYES$
+			}
+		}
+!		escape
+! 		IF retVal = edtNEW				\
+! 			AND InvoiceType$ = "CM"		\
+! 			AND NOT(NUL(ApplyToInvoiceNo$)) {
+! 			FindIOL$	= CPL("IOLIST PaymentType$, CreditCardID$, CardType$, Last4UnencryptedCreditCardNos$, ExpirationDateYear$, ExpirationDateMonth$, CorporateCustIDPurchOrder$, CorporateTaxOverrd$, CardholderName$, CreditCardTransactionID$, AVSAddressLine1$, AVSAddressLine2$, AVSCity$, AVSState$, AVSZipCode$, AVSCountryCode$, CreditCardEmailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")
+! 			Findrec$	= REC(FindIOL$)
+! 
+! 			retVal	= _obj'FindApplyToTransactionID(ApplyToInvoiceNo$,	\ 
+! 						cCreditCardTransactionID$, 						\
+! 						cAmount, 										\
+! 						cMaskedCard$, 									\
+! 						cValidatedCard$, 								\
+! 						cCCExp$, 										\
+! 						cCreditAvail, 									\
+! 						cPaymentType$,									\
+! 						cCardType$,										\
+! 						FindRec$,										\
+! 						FindIOL$)
+! 			if retVal {
+! 				read data from FindRec$ to IOL = FindIOL$
+! 				coBusiness'PaymentObj'SetPartialRecord(FindRec$, FindIOL$)
+! 
+! 				if cCreditAvail <= 0 {
+! 					msgbox "No credit available on the original transaction.  You cannot refund to this card." ! *SC-OK*
+! 				}
+! 				if cCreditAvail >0 and cCreditAvail < TransactionAmt {
+! 					msgbox "Amount exceeds original transaction amount. \Adjusting to available to credit." ! *SC-OK*
+! 					! what do I do?					
+! 				}
+! 			}
+! 		}
+
+		! This is PaymentTypeCategory$ from the header file, not the payment file
+		coBusiness'GetValue("PaymentTypeCategory$", DB_PaymentTypeCategory$)
+		IF NUL(DB_PaymentTypeCategory$) {
+			DB_PaymentTypeCategory$		= typDEPOSIT$
+		}
+
+		IF coBusiness'PaymentObj'SPSPaymentType {
+			IF NOT(NUL(CreditCardAuthorizationNo$)) OR NOT(NUL(ML_CreditCardAuthorizationNo_Dep$)) {
+				cCreditCardResponse$	= MSG("AR_CreditCard_Authorized", "", \
+											TBL(coBusiness'PaymentObj'PaymentTypeMethod$=pmtACH$, "credit card", "ACH payment"))
+			}
+
+			IF coBusiness'PaymentObj'PaymentTypeMethod$ = pmtCREDIT$	\
+				AND NOT(NUL(CreditCardAuthorizationNo$))				\
+				AND PostAuthorizationProcessed$ <> isYES$				\
+				AND NOT(NUL(AuthorizationDate$))						\
+				AND InvoiceType$ <> "CM" {
+
+				IF coAR_PaymentType'CheckCreditCardAuthorizationExpiry(PaymentType$,	\
+																AuthorizationDate$,		\
+																AuthorizationTime$) {
+
+					cCreditCardResponse$ = MSG("AR_CreditCard_PreAuthExpired")
+				}
+			}
+		}
+	}
+
+RETURN retSUCCESS
+!
+
+BT_ACCEPT:
+
+	_OBJ'AssignCreditCardPanelVars(FROM "SO_CommonEntry_ui")
+	
+	retval = _obj'CheckCcAuthExpiry()
+
+	if retVal {
+		retVal = _OBJ'BT_Accept(FROM "SO_531APSInvoice_ui_base")
+	}
+
+RETURN retVal
+!
+
+BT_QUICK_PRINT:
+
+	invoice$ = InvoiceNo$
+
+	IF PrintInvoice$<>isYES$ {
+		coBusiness'SetValue("PrintInvoice$",(isYES$))
+	}
+
+	_OBJ'AssignCreditCardPanelVars(FROM "SO_CommonEntry_ui")
+	
+	retval = _obj'CheckCcAuthExpiry()
+
+	if retVal {
+		retVal = _OBJ'BT_QuickPrint(FROM "SO_531APSInvoice_ui_base")
+	}
+
+RETURN retVal
+!
+
+CHANGE_DB_PAYMENT_TYPE: ! does NOT call back to base!
+
+	retVal = retSUCCESS ! assume success
+
+	IF ( cOldPaymentType$ = "ACH" AND DB_PaymentType$ = "CREDIT CARD" ) OR \
+	   ( cOldPaymentType$ = "CREDIT CARD" AND DB_PaymentType$ = "ACH" ) {
+		coBusiness'SetValue("PaymentType$", $$)
+	}
+
+	IF DB_PaymentType$ = "CREDIT CARD" OR DB_PaymentType$ = "ACH" {
+		cCreditCardEnable = isTRUE
+
+		! Default credit card from payment history
+		IF DB_PaymentType$ = "CREDIT CARD" AND InvoiceType$ = "CM" AND NOT(NUL(ApplyToInvoiceNo$)) {
+			retVal = coHeader'PaymentObj'CheckForCCPayments(ApplyToInvoiceNo$, "IN", isTRUE)
+
+			IF retVal <> retSUCCESS {
+				coSession'UI'MessageBox$ (coHeader'PaymentObj'LastErrorNum$, coHeader'PaymentObj'LastErrorMsg$)
+			}
+		} ELSE {
+			IF NUL(BillToCustomerNo$) {
+				tmpCustSvc = coCustomerSvc
+				tmpDivNo$  = ARDivisionNo$
+				tmpCustNo$ = CustomerNo$
+			} ELSE {
+				tmpCustSvc = coHeader'BillToSvcObj
+				tmpDivNo$  = BillToDivisionNo$
+				tmpCustNo$ = BillToCustomerNo$
+			}
+
+			tmpCustSvc'SetKeyValue("ARDivisionNo$", tmpDivNo$)
+			tmpCustSvc'SetKeyValue("CustomerNo$", tmpCustNo$)
+			tmpCustSvc'FIND()
+			tmpPaymentType$ = $$
+			tmpCustSvc'GetValue("DefaultCreditCardPmtType$", tmpPaymentType$)
+
+			IF NOT(NUL(tmpPaymentType$)) {
+				IF NOT(coAR_PaymentType) {
+					coAR_PaymentType = coBusiness'GetChildHandle("PaymentType")
+				}
+				tmpRetVal = coAR_PaymentType'FIND(tmpPaymentType$)
+				IF tmpRetVal {
+					coAR_PaymentType'GetValue("PaymentMethod$", pmtMethod$)
+					IF ( DB_PaymentType$ = "CREDIT CARD" AND pmtMethod$ = pmtCREDIT$ ) OR \
+					   ( DB_PaymentType$ = "ACH" AND pmtMethod$ = pmtACH$ ) {
+						retVal = coBusiness'SetValue("PaymentType$", tmpPaymentType$)
+						IF NOT(retVal = retSUCCESS) {
+							coSession'UI'MessageBox$(coBusiness'LastErrorNum$, coBusiness'LastErrorMsg$)
+						}
+					}
+				}
+			}
+		}
+
+		IF retVal {
+			IF NOT(NUL(coHeader'PaymentObj'CreditCardDefaultErrorNum$)) {
+				! Need to display possible SetDefault() warning / Cannot default  CC from customer
+				coSession'UI'MessageBox$(coHeader'PaymentObj'CreditCardDefaultErrorNum$, MSG(coHeader'PaymentObj'CreditCardDefaultErrorNum$))
+			}
+			_obj'SwitchToPayment()
+		}
+	} ELSE {
+		cCreditCardEnable = isFALSE
+
+		IF DB_PaymentType$ = "NONE" {
+			tmpPaymentType$ = $$
+		} ELSE {
+			tmpPaymentType$ = DB_PaymentType$
+		}
+
+		coHeader'SetValue("PaymentType$", tmpPaymentType$)
+	}
+
+	IF retVal {
+		_OBJ'AssignTotalsPanelVars()
+		_OBJ'EnablepTotalsControls()
+	}
+
+RETURN retVal
+!
+
+CHANGE_ML_CUSTOMER: ! #242016 2018-09-19 RCS
+	
+	hld.cOldCustomer$ = cOldCustomer$
+	
+	if not(nul(hld.cOldCustomer$)) and 			\
+		ML_Customer$<>hld.cOldCustomer$ and 	\
+		not(nul(D531_C2PLinkCode$)) and			\
+		InvoicePrinted$ = isYES$ {
+
+		answer$ = coSession'UI'MessageBox$("","This invoice was printed.  If it was sent it to the previous customer, the previous customer\"+	\
+					"will get an "+quo+"Invoice Not Found"+quo+" message if they try to pay the invoice on ClickToPay.\"+				\
+					"Please notify the previous customer that the sent invoice is no longer valid if you change the Customer No.\ \"+		\
+					"Do you want to continue?","custom=Yes/No,defBtn=2,Title=APS ClickToPay,Icon=!")
+
+		if answer$ = "NO" {
+			ML_Customer$		= cOldCustomer$
+			%hld.cOldCustomer$	= $$
+			retVal				= retFAILURE
+			RETURN retVal
+		} else {
+			%hld.cOldCustomer$	= hld.cOldCustomer$ ! need to remove the C2P web invoice before writing the new.
+		}
+	}
+	if not(nul(hld.cOldCustomer$)) and 			\
+		ML_Customer$<>hld.cOldCustomer$ and 	\
+		not(nul(D531_C2PLinkCode$)) and			\
+		InvoicePrinted$ = isNO$ {
+			%hld.cOldCustomer$	= hld.cOldCustomer$ ! need to remove the C2P web invoice before writing the new (silent mode, never printed).
+		}
+
+	retVal = _OBJ'ChangeML_Customer(FROM "SO_531APSInvoice_ui_base")
+	
+	if not(nul(%hld.cOldCustomer$)) {
+		%hld.cOldCustomer$	= $$
+		retVal				= _obj'BT_Accept() ! force write if C2P enabled.
+	}
+	
+RETURN retVal
+!
+
+CHECK_CC_AUTH_EXPIRY: ! #231968 - 2018-03-27 RCS
+
+	coHeader'GetValue("D531_APSDoExpiredCapture$",tmp$)
+	if nul(tmp$) {
+		coHeader'SetValue("D531_APSDoExpiredCapture$",isNO$) ! #231968 - 2018-03-27 RCS changed to SetValue 2018-10-12 RCS
+		D531_APSDoExpiredCapture$ = isNO$
+	}
+	coHeader'GetValue("D531_APSDoForcedSale$",tmp$)
+	if nul(tmp$) {
+		coHeader'SetValue("D531_APSDoForcedSale$",isNO$) ! #231968 - 2018-08-28 RCS changed to SetValue 2018-10-12 RCS
+		D531_APSDoForcedSale$ = isNO$
+	}
+
+	_obj'AssignCreditCardPanelVars() ! gets the status of the auth.
+
+	retVal = retSUCCESS
+	
+	! check if auth is expired.
+	If cCreditCardResponse$ <> MSG("AR_CreditCard_PreAuthExpired") {
+		RETURN retval
+	}
+	! check if auth is captured.
+	coBusiness'PaymentObj'GetValue("PostAuthorizationProcessed$",tmp$)
+	if tmp$ = isYES$ {
+		RETURN retVal
+	}
+	
+	! we have an expired auth... 2018-09-10 #232007 - Updated NO verbiage per Zac. RCS
+	answer$ = coSession'UI'MessageBox$("","The credit card authorization for this invoice has met your predefined\"+	\
+				"limit in Payment Type Maintenance.  Do you want to continue?\ \"+										\
+				"* Select YES to continue and capture the existing authorization.\"+									\
+				"* Select NO to create a new sale from the existing card data.\"+										\
+				"* Select CANCEL to return to previous screen to change your Payment Method.\ \ \"+						\
+				"**Using the current authorization may result in an increased chance of\"+								\
+				"an issuer chargeback.",																				\
+				"custom=Yes/No/Cancel,defBtn=2,Title=APS Authorization Expired,Icon=!")
+
+	SWITCH UCS(answer$)
+		CASE "YES" ! Capture existing.
+			! // logic change - set a flag and let the sales journal do the capture per Zac 2018-03-26.
+			D531_APSDoExpiredCapture$ = isYES$
+			coHeader'SetValue("D531_APSDoExpiredCapture$",isYES$)
+			D531_APSDoForcedSale$ = isNO$
+			coHeader'SetValue("D531_APSDoForcedSale$",isNO$)
+			BREAK
+
+		CASE "NO" ! process as a deposit.
+			D531_APSDoExpiredCapture$ = isNO$
+			coHeader'SetValue("D531_APSDoExpiredCapture$",D531_APSDoExpiredCapture$)
+			D531_APSDoForcedSale$ = isYES$
+			coHeader'SetValue("D531_APSDoForcedSale$",D531_APSDoForcedSale$)
+
+			! advise user.
+			coSession'UI'MessageBox$("","The credit card authorization for this invoice will be processed as a deposit in the Sales Journal.", \
+										"style=O,Title=APS Authorization Convert to Deposit,Icon=I")
+			BREAK
+
+		CASE "CANCEL" ! void, clear, and go back to payment entry
+			D531_APSDoExpiredCapture$ = isNO$
+			coHeader'SetValue("D531_APSDoExpiredCapture$",isNO$)
+			D531_APSDoForcedSale$ = isNO$
+			coHeader'SetValue("D531_APSDoForcedSale$",isNO$)
+			IF NOT(coSession'CheckSecurityEvent("SE_CCAllowVoidReAuthTrans")) { ! Not authorized to void this document
+				retVal			= retFAILURE
+				LastErrorNum$	= "CI_CCVoid"
+				LastErrorMsg$	= MSG(LastErrorNum$, "This document")
+				coSession'UI'MessageBox$(LastErrorNum$,LastErrorMsg$)
+				BREAK
+			}
+			
+			_obj'SwitchToPayment()	! to prevent error 65 if Cancel is pressed.
+			
+			ccObj		= new("AR_CreditCard",coSession)
+
+			! void the existing record
+			whatToVoid$	= "OLD"
+			retval		= _obj'VoidCCTrans(whatToVoid$) ! which doesn't actually void the auth but does set flags.
+			get_IOL$	= cpl("IOLIST InvoiceNo$, PaymentSeqNo$, PaymentType$, PaymentTypeCategory$, CreditCardID$, "	\
+						+ "CreditCardGUID$, CardType$, Last4UnencryptedCreditCardNos$, CardholderName$, "				\
+						+ "PostAuthorizationProcessed$, CreditCardTrackingID$, CreditCardTransactionID$, "				\
+						+ "CreditCardAuthorizationNo$" )
+			Clr_IOL$	= cpl("IOLIST CreditCardTrackingID$, CreditCardTransactionID$, CreditCardAuthorizationNo$, "	\
+						+ "AuthorizationDate$, AuthorizationTime$, ValueAddedTaxNo$, ValueAddedTaxInvoiceNo$, "			\
+						+ "TransactionAmt, CorporateSalesTax, ValueAddedTaxTaxAmt, ValueAddedTaxTaxRate, DutyAmt, "		\
+						+ "NationalTaxAmt" )
+
+
+			retval		= _obj'GetCCRecord(get_rec$,get_iol$)
+			read data from get_rec$,rec=HLD$ to iol=get_IOL$
+			
+			retval		= ccObj'VoidPreAuth(hld.PaymentType$,hld.CreditCardTransactionID$,APSStatus$) ! void this transaction ID.
+			
+			if retVal and APSStatus$ = "SUCCESS" {
+				! void physical
+				fileCh		= cPhysicalFH
+				selectBeg$	= InvoiceNo$+PaymentSeqNo$
+				selectEnd$	= selectBeg$ + $FE$
+				IF fileCh {
+					SELECT * FROM fileCh \
+						BEGIN selectBeg$ \
+						END   selectEnd$ \
+						WHERE CreditCardTransactionID$ = hld.CreditCardTransactionID$
+							retVal			= coBusiness'PaymentObj'VoidPreAuth(PaymentType$,CreditCardTransactionID$,APSStatus$)
+							if retVal {
+								read data from $$ to iol=Clr_IOL$ ! clear auth fields
+								WRITE (fileCh)
+								WRITE (cFH)
+							}
+					NEXT RECORD
+				}
+				fileCh			= 0
+				if not(nul(SalesOrderNo$)) {
+					fileCh		= APS.SoOrdPayFH
+					selectBeg$	= SalesOrderNo$
+					selectEnd$	= SalesOrderNo$ + "999999" + $FE$
+					IF fileCh {
+						SELECT * FROM fileCh \
+							BEGIN selectBeg$ \
+							END   selectEnd$ \
+							WHERE CreditCardTransactionID$ = hld.CreditCardTransactionID$	\
+								AND PaymentTypeCategory$ = "P"
+								read data from $$ to iol=Clr_IOL$ ! clear auth fields
+								WRITE (fileCh)
+						NEXT RECORD			
+					}
+					fileCh		= 0
+				}
+			}
+			! clear the existing entry
+			_obj'BT_Clear()
+			_obj'SwitchToTotals()
+
+			! advise user.
+			coSession'UI'MessageBox$("","The credit card authorization for this invoice is voided.\" +	\
+					"Please select a new card on the payment tab.",										\
+					"style=O,Title=APS Authorization Expired,Icon=I")
+			
+
+			! change to the payment tab
+			DB_PaymentType$	= "CREDIT CARD"
+			retVal 			= _obj'ChangeDB_PaymentType()
+			_obj'SwitchToPayment()
+			retVal			= retFAILURE
+			drop object ccObj,err=*next
+			ccObj			= 0
+			BREAK
+
+	END SWITCH
+
+RETURN retVal
+!
+
+CLEAR_CC_MESSAGE:
+	
+	ML_Credit_Card_Response$	= $$
+	cCreditCardResponse$		= $$
+	refresh_flg					= isTRUE
+	
+RETURN retSUCCESS
+!
+
+GET_CC_RECORD:
+ENTER tmpRec$,tmpIOL$
+
+	IF coBusiness'AllowCreditCard() {
+
+		retVal = coBusiness'PaymentObj'SetPaymentKey(typPAYMENT$)
+
+		IF retVal {
+			coBusiness'PaymentObj'GetPartialRecord(tmpRec$, tmpIOL$)
+		}
+	}
+
+RETURN retVal
+!
+
+ENABLE_PCREDITCARD_CONTROLS:
+	retVal = _OBJ'EnablepCreditCardControls(FROM "SO_531APSInvoice_ui_base")
+	
+	if not(cEmvEnabled) {
+		HIDE CONTROL BT_InitEmv.ctl
+	}
+	
+	
+RETURN retVal
+!
+
+FIND_APPLY_TO_TRANSACTION_ID:
+
+	ENTER (in.InvoiceNo$), CCTranID$, (CCTranAmt), cMaskedCard$, cValidatedCard$, CCexp$, (in.CreditCardID$), cCreditAvail, cPaymentType$, cCardType$, FindRec$, FindIOL$
+
+	IF NOT(cAR_TransactionPaymentHistoryCh) {
+		cAR_TransactionPaymentHistoryCh = _OBJ'OpenTable("AR_TransactionPaymentHistory", pthCOMPANY$)
+	}
+
+	tmpCustomerCCSvc	= NEW("AR_CustomerCreditCard_svc",coSession)
+	tmpPaymentTypeSvc	= NEW("AR_PaymentType_Svc", coSession)
+	tmpDiv$           	= ARDivisionNo$
+	tmpCust$          	= CustomerNo$
+	tmpInvoiceType$	  	= "IN" ! credits are only applied to "IN" type.  Never "DM".
+	ccTranID$			= isNULL$
+	retVal				= retFAILURE
+
+	IF NOT(NUL(BillToCustomerNo$)) {
+		tmpDiv$  		= BillToDivisionNo$
+		tmpCust$ 		= BillToCustomerNo$
+	}
+
+	SELECT *, REC=pmtHist$ FROM cAR_TransactionPaymentHistoryCh 					\
+		BEGIN tmpDiv$ : tmpCust$ : in.InvoiceNo$ : tmpInvoiceType$ + $00$
+		! #255414 - 2019-08-26 - RCS - revised because end select logic fails.
+		if pmtHist.InvoiceNo$		<> in.InvoiceNo$ { BREAK }
+		if pmtHist.TransactionType$	<> "P" { CONTINUE }
+		if NUL(pmtHist.PaymentType$) { CONTINUE }
+		if pmtHist.CreditCardID$	<> in.CreditCardID$ { CONTINUE }
+		if pmtHist.TransactionAmt	<> CCTranAmt { CONTINUE }
+
+		tmpPayMethod$		= isNULL$
+		IF tmpPaymentTypeSvc'Find(pmtHist.PaymentType$) {
+			tmpPaymentTypeSvc'GetValue("PaymentMethod$",	tmpPayMethod$)
+			IF tmpPayMethod$ <>  pmtCREDIT$ {
+				CONTINUE		! only credit cards allowed for CM
+			}
+		}
+		if nul(ccTranID$) {
+			ccTranID$		= pmtHist.CreditCardTransactionID$
+			cCreditAvail	= pmtHist.TransactionAmt
+		}
+
+		if not(nul(ccTranID$)) and cCreditAvail > 0 and pmtHist.TransactionAmt < 0 {
+			cCreditAvail	+= pmtHist.TransactionAmt
+		}
+
+		cValidatedCard$		= pmtHist.D531APSValidated$
+		cMaskedCard$		= pmtHist.D531APSMaskedCard$
+		if nul(cMaskedCard$) {
+			cMaskedCard$	= "************" + pmtHist.Last4UnencryptedCreditCardNos$
+		}
+		CCexp$				= pmtHist.ExpirationDateMonth$ + pmtHist.ExpirationDateYear$
+		cPaymentType$		= pmtHist.PaymentType$
+		cCardtype$			= pmtHist.CardType$
+		
+		if nul(pmtHist.CreditCardID$) {
+			ccTranID$		= pmtHist.CreditCardTransactionID$		! #250600 - 2019-04-25 - RCS - handle one off cards
+		}
+		IF NOT(NUL(pmtHist.CreditCardID$)) {
+			tmpCustomerCCSvc'SetKeyValue("ARDivisionNo$",	tmpDiv$)
+			tmpCustomerCCSvc'SetKeyValue("CustomerNo$",		tmpCust$)
+			tmpCustomerCCSvc'SetKeyValue("CreditCardID$",	pmtHist.CreditCardID$)
+
+			IF tmpCustomerCCSvc'Find() {
+				tmpCustomerCCSvc'GetValue("Last4UnencryptedCreditCardNos$",	tmpLast4$)
+				tmpCustomerCCSvc'GetValue("PaymentType$",	tmpPaymentType$)
+
+				IF tmpLast4$ = pmtHist.Last4UnencryptedCreditCardNos$	\
+					AND tmpPaymentType$ = pmtHist.PaymentType$ {
+
+					IF CreditCardID$	= pmtHist.CreditCardID$ {
+						ccTranID$		= pmtHist.CreditCardTransactionID$
+					}
+				}
+			}
+		}
+		if cCreditAvail		< 0 {
+			cCreditAvail	= 0
+			ccTranID$		= isNULL$
+			CONTINUE
+		}
+		IF NOT(NUL(ccTranID$)) {
+			FindRec$		= rec(FindIOL$,rec=pmtHist$)
+			retVal			= retSUCCESS
+			BREAK ! We've got a good transaction ID
+		}
+	NEXT RECORD
+
+	drop object tmpCustomerCCSvc,err=*next
+	drop object tmpPaymentTypeSvc,err=*next
+	tmpCustomerCCSvc		= 0
+	tmpPaymentTypeSvc		= 0
+	close(cAR_TransactionPaymentHistoryCh,err=*next)
+	cAR_TransactionPaymentHistoryCh		= 0
+	
+RETURN retVal
+!
+
+SWITCH_TO_PAYMENT:
+	
+	retVal 		= retSUCCESS
+	
+	PRINT 'CI',
+	fldrOK      = isFALSE
+	NEXT_FOLDER = TBL(cGridViewExpanded, EVN("fldr.pCreditCard.ctl", ERR=*NEXT), EVN("fldr.pCreditCardW.ctl", ERR=*NEXT)); fldrOK = isTRUE
+
+	IF fldrOK {
+		SET_FOCUS NEXT_FOLDER
+	}
+	
+RETURN retVal
+!
+
+SWITCH_TO_TOTALS:
+	
+	retVal 		= retSUCCESS
+
+	PRINT 'CI',
+	fldrOK      = isFALSE
+	NEXT_FOLDER = TBL(cGridViewExpanded, EVN("fldr.pTotals.ctl", ERR=*NEXT), EVN("fldr.pTotalsW.ctl", ERR=*NEXT)); fldrOK = isTRUE
+
+	IF fldrOK {
+		SET_FOCUS NEXT_FOLDER
+	}
+	
+RETURN retVal
+!

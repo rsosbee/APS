@@ -1,0 +1,323 @@
+! $Id$: AR_531APSConvertToAPS_UI.pvc $
+! Copyright 2016-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! ASI - PLW 2016-09-30
+!
+
+DEF CLASS "AR_531APSConvertToAPS_UI" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "SY_CommonUI"
+	LIKE "AR_531APSConvertToAPS"
+	LIKE "SY_Password"
+
+	! Public Properties
+
+	! Local Objects
+
+	! Local/Private Properties
+	
+	LOCAL cAPSApiKey$
+	LOCAL cConfirmationAnswer
+	LOCAL cD531APSApiKey$
+	LOCAL cDB_Refresh_Clear$
+	LOCAL cEncryptedAPSMerchantID$
+	LOCAL cEncryptedAPSMerchantPassword$
+	LOCAL cFormattedExpireDate$
+	LOCAL cUnencryptedAPSMerchantID$
+	LOCAL cUnencryptedAPSMerchantPassword$
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	
+	! Buttons
+	FUNCTION LOCAL BT_Cancel()												BT_CANCEL
+	FUNCTION LOCAL BT_No()													BT_NO
+	FUNCTION LOCAL BT_OK2()													BT_OK2
+	FUNCTION LOCAL BT_Proceed()												BT_PROCEED
+	FUNCTION LOCAL BT_Yes()													BT_YES
+
+	! Multilines
+	
+	FUNCTION LOCAL ChangeD531APSMerchantID()								CHANGE_APS_MERCHANT_ID
+	FUNCTION LOCAL ChangeD531APSApiKey()									CHANGE_APS_API_KEY
+	FUNCTION LOCAL ChangeDB_Refresh_Clear()									CHANGE_DB_REFRESH_CLEAR
+	FUNCTION LOCAL ChangeMerchantPassword()									CHANGE_MERCHANT_PASSWORD
+	FUNCTION LOCAL ChangeMerchantID()										CHANGE_MERCHANT_ID
+	FUNCTION LOCAL ChangeML_APSPassword()									CHANGE_ML_APS_PASSWORD
+
+	! Checkboxes
+	FUNCTION LOCAL ChangeClearExpiredCreditCards()							CHANGE_CLEAR_EXPIRED_CREDIT_CARDS
+
+	! Dates
+	FUNCTION LOCAL ChangeML_ExpireDate()									CHANGE_ML_EXPIREDATE
+
+	! Other functions
+	FUNCTION LOCAL CheckToDisableBT_Proceed()								CHECK_TO_DISABLE_BT_PROCEED
+	FUNCTION LOCAL PostLoad()												POST_LOAD
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+
+END DEF
+!
+
+ON_CREATE:
+
+ENTER coSession
+
+	SCREEN_LIB$			= "AR_531APSConvertToAPS.m4l"
+	SCREEN_ID$			= "dMain"
+	cDB_Refresh_Clear$	= "R"
+
+	coSession'GetParameter("SYS", "CreditCardEnable$", CreditCardEnable$)
+
+RETURN
+!
+
+ON_DELETE:
+
+RETURN
+!
+
+BT_CANCEL:
+
+	CMD_STR$			= "E"
+
+RETURN
+!
+
+BT_NO:
+
+	ARG_1$				= isNO$
+	CMD_STR$			= "E"
+
+RETURN retSUCCESS
+!
+
+BT_OK2:
+
+	cConfirmationAnswer	= (stp(UCS(ML_CONFIRM2$),3)="YES")
+	CMD_STR$			= "E"
+
+RETURN retSUCCESS
+!
+
+BT_PROCEED:
+
+	IF NOT(_obj'UpdatesURLs()) {
+		coSession'UI'MessageBox$(LastErrorNum$,LastErrorMsg$)
+		RETURN retFAILURE
+	}
+	LastErrorNum$		= isNULL$ ! RCS 2018-06-20 #232007
+	LastErrorMsg$		= isNULL$ ! RCS 2018-06-20 #232007
+	IF NOT(_obj'ValidateCredentials(cEncryptedAPSMerchantID$,		\
+									cEncryptedAPSMerchantPassword$,	\
+									cEncryptedVaultOnlyID$,			\
+									cEncryptedVaultOnlyKey$,		\
+									cD531APSApiKey$) = retSUCCESS) {	! RCS #236076 - 2018-12-21
+		coSession'UI'MessageBox$(LastErrorNum$, LastErrorMsg$)
+		RETURN retFAILURE
+	}
+
+	! Set the vault only credentials PLW 2016-07-18 added logic to get vault only credentials
+	coSession'GetParameter("SYS","CreditCardVaultOnlyID$",	cEncryptedVaultOnlyID$)
+	coSession'GetParameter("SYS","CreditCardVaultOnlyKey$",	cEncryptedVaultOnlyKey$)
+	_obj'DecryptPassword(cEncryptedVaultOnlyID$,			cCreditCardVaultOnlyID$)
+	_obj'DecryptPassword(cEncryptedVaultOnlyKey$,			cCreditCardVaultOnlyKey$)
+
+	SCREEN_ID$			= "dConfirm"
+	retVal				= _OBJ'PROCESS(answer$)
+
+	IF answer$ = isYES$ {
+		coSession'UI'ProgressBar("init", "Copying SPS Card Information to APS", "Converting credit card data", 0); wait .1
+		coSession'WriteLog$(logACTIVITY$,"A/R Convert to APS Utility was run.")
+
+		IF ClearExpiredCreditCards$ = isYES$ {
+			retVal		= _OBJ'ClearExpiredCreditCards(ML_ExpireDate$)
+			IF retVal {
+				coSession'WriteLog$(logACTIVITY$, "Expired credit cards were cleared to " + cFormattedExpireDate$)
+			}
+		}
+
+		IF NOT(coSession'SQL) {
+			_OBJ'RemoveObsoleteWrkTables()
+		}
+
+		retVal = _obj'ConvertCardsToAPS()
+
+		IF retVal {
+			resp$		= coSession'UI'MessageBox$(isNULL$,"Do you want to completely enable APSPays processing?","title=APSPays,style=Y,icon=?,defbtn=2")
+
+			IF resp$	= "YES" {
+
+				SCREEN_ID$	= "dConfirm2"
+				retVal		= _OBJ'PROCESS()
+				IF cConfirmationAnswer {
+					retVal	= _obj'EnableAPS()
+				} ELSE {
+					coSession'UI'MessageBox$("APSPays will not be enabled.  You can run 'Convert Cards to APS' again.")
+				}
+			}
+		}
+		coSession'UI'ProgressBar("close")
+	}
+
+	CMD_STR$			= "E"
+
+RETURN retVal
+!
+
+BT_YES:
+
+	ARG_1$				= isYES$
+	CMD_STR$			= "E"
+
+RETURN retSUCCESS
+!
+
+CHANGE_APS_API_KEY:		! RCS #236076 - 2018-12-11
+	retVal				= retSUCCESS
+	cD531APSApiKey$		= D531APSApiKey$
+	cAPSApiKey$			= D531APSApiKey$
+ 	_obj'CheckToDisableBT_Proceed()
+RETURN retVal
+!
+
+CHANGE_APS_MERCHANT_ID:
+	retVal						= retSUCCESS
+	cUnencryptedAPSMerchantID$	= D531APSMerchantID$
+	_obj'EncryptPassword(cUnencryptedAPSMerchantID$,cEncryptedAPSMerchantID$)
+ 	_obj'CheckToDisableBT_Proceed()
+RETURN retVal
+!
+
+CHANGE_CLEAR_EXPIRED_CREDIT_CARDS:
+
+	IF ClearExpiredCreditCards$ = isYES$ {
+		ENABLE CONTROL ML_ExpireDate.ctl, ML_ExpireDate.ctl + 3000
+		ENABLE CONTROL BT_Proceed.ctl
+		ML_ExpireDate$			= coSession'ModuleDate$
+	} ELSE {
+		DISABLE CONTROL ML_ExpireDate.ctl, ML_ExpireDate.ctl + 3000
+		ML_ExpireDate$			= isNULL$
+		_OBJ'CheckToDisableBT_Proceed()
+	}
+
+RETURN retSUCCESS
+!
+
+CHANGE_DB_REFRESH_CLEAR:
+	retVal						= retSUCCESS
+	cDB_Refresh_Clear$			= DB_REFRESH_CLEAR$
+	_obj'CheckToDisableBT_Proceed()
+RETURN retVal
+!
+
+CHANGE_MERCHANT_ID:
+	retVal							= retSUCCESS
+	IF NOT(NUL(MerchantID$)) {
+		cUnencryptedVaultID$		= MerchantID$
+		_obj'EncryptPassword(cUnencryptedVaultID$, cEncryptedVaultID$)
+		ENABLE CONTROL MerchantPassword.ctl
+		ENABLE CONTROL D531APSApiKey.ctl
+	} ELSE {
+		cUnencryptedVaultID$		= isNULL$
+		cEncryptedVaultID$			= isNULL$
+		cUnencryptedMerchantKey$	= isNULL$
+		cEncryptedMerchantKey$		= isNULL$
+		cD531APSApiKey$				= isNULL$
+		refresh_flg					= isTrue
+		DISABLE CONTROL MerchantPassword.ctl
+		DISABLE CONTROL D531APSApiKey.ctl
+	}
+RETURN retVal
+!
+
+CHANGE_MERCHANT_PASSWORD:
+	retVal 						= retSUCCESS
+	IF NOT(NUL(MerchantPassword$)) {
+		cUnencryptedMerchantKey$=MerchantPassword$
+		_obj'EncryptPassword(cUnencryptedMerchantKey$,cEncryptedMerchantKey$)
+	} ELSE {
+		cUnencryptedMerchantKey$	= isNULL$
+		cEncryptedMerchantKey$		= isNULL$
+	}
+RETURN retVal
+!
+
+CHANGE_ML_APS_PASSWORD:
+	retVal 						= retSUCCESS
+	cUnencryptedAPSMerchantPassword$	= ML_APSPassword$
+	_obj'EncryptPassword(cUnencryptedAPSMerchantPassword$,cEncryptedAPSMerchantPassword$)
+	_obj'CheckToDisableBT_Proceed()
+RETURN retVal
+!
+
+CHANGE_ML_EXPIREDATE:
+
+	retVal 						= retSUCCESS
+
+	! ClassValidateDate$() logic in SY_CommonUI already executed since multi-line has DATE class
+	IF UCS(coSession'LastErrorNum$) 	= "CI_INVALIDDATE" {
+		coSession'UI'MessageBox$(coSession'LastErrorNum$, coSession'LastErrorMsg$)
+		retVal					= retFAILURE
+		NEXT_ID					= ML_ExpireDate.ctl
+		coSession'LastErrorNum$	= isNULL$
+		coSession'LastErrorMsg$	= isNULL$
+	}
+
+	IF retVal {
+		IF NUL(ML_ExpireDate$) {
+			retVal				= retFAILURE
+			LastErrorNum$		= "CI_Required"
+			LastErrorMsg$		= MSG("CI_Required", "Credit Card Expired date")
+		}
+
+		IF NOT(retVal) {
+			coSession'UI'MessageBox$(LastErrorNum$, LastErrorMsg$)
+			NEXT_ID				= ML_ExpireDate.ctl
+			ML_ExpireDate$		= cOrigDate$
+		}
+	}
+
+RETURN retVal
+!
+
+CHECK_TO_DISABLE_BT_PROCEED:
+
+	IF NUL(ML_APSPassword$) OR NUL(D531APSMerchantID$) or NUL(D531APSApiKey$) {	! RCS #236076 - 2018-12-10
+		DISABLE CONTROL BT_Proceed.ctl
+	} ELSE {
+		ENABLE CONTROL BT_Proceed.ctl
+	}
+
+RETURN retSUCCESS
+!
+
+POST_LOAD:
+
+	IF UCS(SCREEN_ID$)	= "DCONFIRM" {
+		! Confirmation dialog messages based on selections made
+
+		IF ClearExpiredCreditCards$ = isYES$ {
+			coSession'FormatDate(ML_ExpireDate$, cFormattedExpireDate$)
+			ML_Line1$	= "Clear expired credit cards dated on or before " + cFormattedExpireDate$ + "."
+		} ELSE {
+			ML_Line1$	= "Clear expired credit cards not selected."
+		}
+
+		ML_Line2$		= "SPS Cards will be copied to the APS vault but APS will not be enabled."
+		ML_Line3$   	= isNULL$
+	}
+
+	IF UCS(SCREEN_ID$) = "DMAIN" {
+		DB_REFRESH_CLEAR$	= cDB_Refresh_Clear$
+		refresh_flg			= isTrue
+	}
+
+	! Append Company and Date to panel caption
+	retVal				= _OBJ'AppendTitleBar()
+
+RETURN retVal
+!

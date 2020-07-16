@@ -1,0 +1,334 @@
+! $Id: AR_531APSInvoice_Ui.Pvc $
+! Copyright 2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #232007, #242016 - 2018-02-07 - RCS
+
+DEF CLASS "AR_531APSInvoice_Ui"	CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+
+	LIKE "AR_Invoice_Ui"
+
+	! Public Properties
+
+	! Local Properties
+	LOCAL cOldCustomer$
+	LOCAL cEmvEnabled
+	LOCAL cAPSActivated
+
+	! Local Objects
+	LOCAL coTerminalSvc
+
+	! Public Functions (Methods)
+	FUNCTION PostReadRec()										POST_READ_REC
+	
+	! Local/Private Functions (Methods)
+	
+	FUNCTION LOCAL ChangeML_Customer()							CHANGE_CUSTOMER
+	FUNCTION LOCAL CheckCcAuthExpiry()							CHECK_CC_AUTH_EXPIRY
+	FUNCTION LOCAL ClearCcMessage()								CLEAR_CC_MESSAGE
+	
+	FUNCTION LOCAL GetCCRecord(Get_Rec$,Get_IOL$)				GET_CC_RECORD
+	
+	FUNCTION LOCAL SwitchToTotals()								SWITCH_TO_TOTALS
+	FUNCTION LOCAL SwitchToPayment()							SWITCH_TO_PAYMENT
+
+	! Defined Elsewhere, but Referenced Locally
+
+
+END DEF
+!
+
+ON_CREATE:
+
+	PRECISION 6 FOR OBJECT
+	! check for activation
+	cEmvEnabled			= isFALSE
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation ()
+		DROP OBJECT coAPSActivation
+		coAPSActivation	= 0
+	}
+
+	if cAPSActivated {
+		coTerminalSvc	= new("SY_531APSTerminal_Svc",coSession)
+		cEmvEnabled		= coTerminalSvc'CheckProcessingPaymentTypesExist()
+		if cEmvEnabled {
+			isEnabled	= coTerminalSvc'CheckTerminalEnabled()
+			if isEnabled {
+				isRunning	= coTerminalSvc'CheckTerminalStatus()
+				if isRunning= retWARNING {
+					exit	! user selected Cancel
+				}
+				%EmvEnabled	= isRunning
+			}
+		}
+	}
+	
+RETURN
+!
+
+ON_DELETE:
+	
+	DROP OBJECT coTerminalSvc,ERR=*NEXT
+	coTerminalSvc		= 0
+	
+RETURN
+!
+
+CHANGE_CUSTOMER: ! #242016 2018-09-19 RCS
+
+	hld.cOldCustomer$ = cOldCustomer$
+	
+	if not(nul(hld.cOldCustomer$)) and 			\
+		ML_Customer$<>hld.cOldCustomer$ and 	\
+		not(nul(D531_C2PLinkCode$)) and			\
+		ActuallyPrinted$ = isYES$ {
+
+		answer$ = coSession'UI'MessageBox$("","This invoice was printed.  If it was sent it to the previous customer, the previous customer\"+	\
+					"will get an "+quo+"Invoice Not Found"+quo+" message if they try to pay the invoice on ClickToPay.\"+				\
+					"Please notify the previous customer that the sent invoice is no longer valid if you change the Customer No.\ \"+		\
+					"Do you want to continue?","custom=Yes/No,defBtn=2,Title=APS ClickToPay,Icon=!")
+
+		if answer$ = "NO" {
+			ML_Customer$		= cOldCustomer$
+			%hld.cOldCustomer$	= $$
+			retVal				= retFAILURE
+			RETURN retVal
+		} else {
+			%hld.cOldCustomer$	= hld.cOldCustomer$ ! need to remove the C2P web invoice before writing the new.
+		}
+	}
+	if not(nul(hld.cOldCustomer$)) and 			\
+		ML_Customer$<>hld.cOldCustomer$ and 	\
+		not(nul(D531_C2PLinkCode$)) and			\
+		ActuallyPrinted$ = isNO$ {
+			%hld.cOldCustomer$	= hld.cOldCustomer$ ! need to remove the C2P web invoice before writing the new (silent mode, never printed).
+		}
+
+	retVal = _OBJ'ChangeML_Customer(FROM "AR_531APSInvoice_ui_base")
+	
+	if not(nul(%hld.cOldCustomer$)) {
+		%hld.cOldCustomer$	= $$
+		retVal				= _obj'BT_Accept() ! force write if C2P enabled.
+	}
+	if nul(cOldCustomer$) {
+		cOldCustomer$		= ML_Customer$
+	}
+	
+RETURN retVal
+!
+
+CHECK_CC_AUTH_EXPIRY: ! #231968 - 2018-03-27 RCS
+
+	coHeader'GetValue("D531_APSDoExpiredCapture$",tmp$)
+	if nul(tmp$) {
+		coHeader'SetValue("D531_APSDoExpiredCapture$",isNO$) ! #231968 - 2018-03-27 RCS changed to SetValue 2018-10-12 RCS
+		D531_APSDoExpiredCapture$ = isNO$
+	}
+	coHeader'GetValue("D531_APSDoForcedSale$",tmp$)
+	if nul(tmp$) {
+		coHeader'SetValue("D531_APSDoForcedSale$",isNO$) ! #231968 - 2018-08-28 RCS changed to SetValue 2018-10-12 RCS
+		D531_APSDoForcedSale$ = isNO$
+	}
+
+	_obj'AssignCreditCardPanelVars() ! gets the status of the auth.
+
+	retVal = retSUCCESS
+	
+	! check if auth is expired.
+	If cCreditCardResponse$ <> MSG("AR_CreditCard_PreAuthExpired") {
+		RETURN retval
+	}
+	! check if auth is captured.
+	coBusiness'PaymentObj'GetValue("PostAuthorizationProcessed$",tmp$)
+	if tmp$ = isYES$ {
+		RETURN retVal
+	}
+	
+	! we have an expired auth... 2018-09-10 #232007 - Updated NO verbiage per Zac. RCS
+	answer$ = coSession'UI'MessageBox$("","The credit card authorization for this invoice has met your predefined\"+	\
+				"limit in Payment Type Maintenance.  Do you want to continue?\ \"+										\
+				"* Select YES to continue and capture the existing authorization.\"+									\
+				"* Select NO to create a new sale from the existing card data.\"+										\
+				"* Select CANCEL to return to previous screen to change your Payment Method.\ \ \"+						\
+				"**Using the current authorization may result in an increased chance of\"+								\
+				"an issuer chargeback.",																				\
+				"custom=Yes/No/Cancel,defBtn=2,Title=APS Authorization Expired,Icon=!")
+
+	SWITCH UCS(answer$)
+		CASE "YES" ! Capture existing.
+			! // logic change - set a flag and let the sales journal do the capture per Zac 2018-03-26.
+			D531_APSDoExpiredCapture$ = isYES$
+			coHeader'SetValue("D531_APSDoExpiredCapture$",isYES$)
+			D531_APSDoForcedSale$ = isNO$
+			coHeader'SetValue("D531_APSDoForcedSale$",isNO$)
+			BREAK
+
+		CASE "NO" ! process as a deposit.
+			D531_APSDoExpiredCapture$ = isNO$
+			coHeader'SetValue("D531_APSDoExpiredCapture$",D531_APSDoExpiredCapture$)
+			D531_APSDoForcedSale$ = isYES$
+			coHeader'SetValue("D531_APSDoForcedSale$",D531_APSDoForcedSale$)
+
+			! advise user.
+			coSession'UI'MessageBox$("","The credit card authorization for this invoice will be processed as a deposit in the Sales Journal.", \
+										"style=O,Title=APS Authorization Convert to Deposit,Icon=I")
+			BREAK
+
+		CASE "CANCEL" ! void, clear, and go back to payment entry
+			D531_APSDoExpiredCapture$ = isNO$
+			coHeader'SetValue("D531_APSDoExpiredCapture$",isNO$)
+			D531_APSDoForcedSale$ = isNO$
+			coHeader'SetValue("D531_APSDoForcedSale$",isNO$)
+			IF NOT(coSession'CheckSecurityEvent("SE_CCAllowVoidReAuthTrans")) { ! Not authorized to void this document
+				retVal			= retFAILURE
+				LastErrorNum$	= "CI_CCVoid"
+				LastErrorMsg$	= MSG(LastErrorNum$, "This document")
+				coSession'UI'MessageBox$(LastErrorNum$,LastErrorMsg$)
+				BREAK
+			}
+			
+			ccObj		= new("AR_CreditCard",coSession)
+
+			! void the existing record
+			whatToVoid$	= "OLD"
+			retval		= _obj'VoidCCTrans(whatToVoid$) ! which doesn't actually void the auth but does set flags.
+			get_IOL$	= cpl("IOLIST InvoiceNo$, PaymentSeqNo$, PaymentType$, PaymentTypeCategory$, CreditCardID$, "	\
+						+ "CreditCardGUID$, CardType$, Last4UnencryptedCreditCardNos$, CardholderName$, "				\
+						+ "PostAuthorizationProcessed$, CreditCardTrackingID$, CreditCardTransactionID$, "				\
+						+ "CreditCardAuthorizationNo$" )
+			Clr_IOL$	= cpl("IOLIST CreditCardTrackingID$, CreditCardTransactionID$, CreditCardAuthorizationNo$, "	\
+						+ "AuthorizationDate$, AuthorizationTime$, ValueAddedTaxNo$, ValueAddedTaxInvoiceNo$, "			\
+						+ "TransactionAmt, CorporateSalesTax, ValueAddedTaxTaxAmt, ValueAddedTaxTaxRate, DutyAmt, "		\
+						+ "NationalTaxAmt" )
+
+
+			retval		= _obj'GetCCRecord(get_rec$,get_iol$)
+			read data from get_rec$,rec=HLD$ to iol=get_IOL$
+			
+			retval		= ccObj'VoidPreAuth(hld.PaymentType$,hld.CreditCardTransactionID$,APSStatus$) ! void this transaction ID.
+			
+			if retVal and APSStatus$ = "SUCCESS" {
+				! void physical
+				fileCh		= cPhysicalFH
+				selectBeg$	= InvoiceNo$+PaymentSeqNo$
+				selectEnd$	= selectBeg$ + $FE$
+				IF fileCh {
+					SELECT * FROM fileCh \
+						BEGIN selectBeg$ \
+						END   selectEnd$ \
+						WHERE CreditCardTransactionID$ = hld.CreditCardTransactionID$
+							retVal			= coBusiness'PaymentObj'VoidPreAuth(PaymentType$,CreditCardTransactionID$,APSStatus$)
+							if retVal {
+								read data from $$ to iol=Clr_IOL$ ! clear auth fields
+								WRITE (fileCh)
+								WRITE (cFH)
+							}
+					NEXT RECORD
+				}
+				fileCh			= 0
+				if not(nul(SalesOrderNo$)) {
+					fileCh		= APS.SoOrdPayFH
+					selectBeg$	= SalesOrderNo$
+					selectEnd$	= SalesOrderNo$ + "999999" + $FE$
+					IF fileCh {
+						SELECT * FROM fileCh \
+							BEGIN selectBeg$ \
+							END   selectEnd$ \
+							WHERE CreditCardTransactionID$ = hld.CreditCardTransactionID$	\
+								AND PaymentTypeCategory$ = "P"
+								read data from $$ to iol=Clr_IOL$ ! clear auth fields
+								WRITE (fileCh)
+						NEXT RECORD			
+					}
+					fileCh		= 0
+				}
+			}
+			! clear the existing entry
+			_obj'BT_Clear()
+			_obj'SwitchToTotals()
+
+			! advise user.
+			coSession'UI'MessageBox$("","The credit card authorization for this invoice is voided.\" +	\
+					"Please select a new card on the payment tab.",										\
+					"style=O,Title=APS Authorization Expired,Icon=I")
+			
+
+			! change to the payment tab
+			DB_PaymentType$	= "CREDIT CARD"
+			retVal 			= _obj'ChangeDB_PaymentType()
+			_obj'SwitchToPayment()
+			retVal			= retFAILURE
+			drop object ccObj,err=*next
+			ccObj			= 0
+			BREAK
+
+	END SWITCH
+
+RETURN retVal
+!
+
+CLEAR_CC_MESSAGE:
+	
+	ML_Credit_Card_Response$	= $$
+	cCreditCardResponse$		= $$
+	refresh_flg					= isTRUE
+	
+RETURN retSUCCESS
+!
+
+GET_CC_RECORD:
+ENTER tmpRec$,tmpIOL$
+
+	IF coBusiness'AllowCreditCard() {
+
+		retVal = coBusiness'PaymentObj'SetPaymentKey(typPAYMENT$)
+
+		IF retVal {
+			coBusiness'PaymentObj'GetPartialRecord(tmpRec$, tmpIOL$)
+		}
+	}
+
+RETURN retVal
+!
+
+POST_READ_REC:
+	
+	retVal = _OBJ'PostReadRec(FROM "AR_531APSInvoice_ui_base")
+	
+	cOldCustomer$	= ARDivisionNo$+CustomerNo$
+
+	
+RETURN retVal
+!
+
+SWITCH_TO_PAYMENT:
+	
+	retVal 		= retSUCCESS
+	
+	PRINT 'CI',
+	fldrOK      = isFALSE
+	NEXT_FOLDER = TBL(cGridViewExpanded, EVN("fldr.pCreditCard.ctl", ERR=*NEXT), EVN("fldr.pCreditCardW.ctl", ERR=*NEXT)); fldrOK = isTRUE
+
+	IF fldrOK {
+		SET_FOCUS NEXT_FOLDER
+	}
+	
+RETURN retVal
+!
+
+SWITCH_TO_TOTALS:
+	
+	retVal 		= retSUCCESS
+
+	PRINT 'CI',
+	fldrOK      = isFALSE
+	NEXT_FOLDER = TBL(cGridViewExpanded, EVN("fldr.pTotals.ctl", ERR=*NEXT), EVN("fldr.pTotalsW.ctl", ERR=*NEXT)); fldrOK = isTRUE
+
+	IF fldrOK {
+		SET_FOCUS NEXT_FOLDER
+	}
+	
+RETURN retVal
+!

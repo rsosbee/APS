@@ -1,0 +1,43 @@
+! $Id: AR_531APSCreditCardSubmit_bus.pvc $
+! $Copyright 2013-2018 Accounting Systems, Inc.  Columbia, SC
+! Irina Kouptsova, Bob Sosbee
+!
+DEF CLASS "AR_531APSCreditCardSubmit_bus" CREATE REQUIRED DELETE REQUIRED
+
+! Inherits from the following class(es)
+	LIKE "SY_MaintSet"
+  	LIKE "SY_Maint"
+	LIKE "CI_Country_val"
+ 	LIKE "CI_ZipCode_val"
+ 	LIKE "AR_Constant"
+
+! Public Properties
+
+! Local/Private Properties
+	LOCAL cMainTable$="*SKIP*"
+ 	LOCAL cIsSysDB=isFALSE
+
+! Local/Private Functions (Methods)
+ 	FUNCTION LOCAL SetChildColl()SET_CHILD_COLL
+
+! Public Functions (Methods)
+
+! Elements Defined Elsewhere, but Referenced Locally
+
+END DEF
+!
+
+ON_CREATE:
+	ENTER coSession, ERR=*NEXT
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+SET_CHILD_COLL:
+	_OBJ'InitChildCollection("AVSZipCode","SY_ZipCode_Svc","AVSZipCode$",$$,$$,"City$,StateCode$,CountryCode$","AVSCity$,AVSState$,AVSCountryCode$")
+ 	_OBJ'InitChildCollection("AVSCountryCode","SY_Country_svc","AVSCountryCode$",$$,$$)
+RETURN
+!

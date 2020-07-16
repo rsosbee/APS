@@ -1,0 +1,67 @@
+! $Id: AR_531APSGetWebInvoice.m4p $
+! Copyright 2017-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! Call program to display the C2P web invoice screen.  Can be called from a CM button or script.
+! ** @Author Bsosbee
+! ** @Date 2017.12.28 52 at 02:29:41 PM EST
+!
+ENTER (InvoiceNo$),(HeaderSeqNo$),coSession,err=*next ! if called.
+
+Process_BT_C2PWEB: ! from Nomads if Performed.
+
+	if not(coSession) { coSession = %sys_ss }
+
+	if nul(HeaderSeqNo$) { HeaderSeqNo$="000000" }
+
+	c2p.companyCode$	= LCS(coSession'companyCode$)
+	c2p.companyKey$		= coSession'companyKey$
+
+	coCompany			= NEW ("SY_Company_SVC", coSession)
+	coCompany'FIND(c2p.companyKey$)
+
+	c2p.CustomerURL$	= coCompany'C2PPrimary$
+
+	c2p.ArCustFH		= coSession'OpenTable("AR_Customer","COMPANY")
+	c2p.cArInvHistFH	= coSession'OpenTable("AR_InvoiceHistoryHeader","COMPANY")
+
+	READ (c2p.cArInvHistFH,key=InvoiceNo$:HeaderSeqNo$,rec=c2p$,dom=No_Link)
+
+	D531_C2PCustomer$	= isNO$
+	D531_C2PUrlLink$	= $$
+	D531_C2PLinkCode$	= $$
+
+	IF c2p.invoiceType$ = "XD" { goto No_Link } ! skip deleted.
+	IF c2p.invoiceType$ = "CM" { goto No_Link } ! skip credit memos.
+
+	! Opt in/Opt Out
+	READ (c2p.ArCustFH,rec=TMP$,key=c2p.ARDivisionNo$:c2p.CustomerNo$)
+	if tmp.OpenItemCustomer$ <> "Y" {
+		goto No_Link ! skip balance foward.
+	}
+
+	If not(nul(c2p.D531_C2PLinkCode$)) {
+		D531_C2PUrlLink$	= c2p.CustomerURL$ + "?code=" + c2p.D531_C2PLinkCode$
+	} else {
+		coSession'UI'MessageBox$("","No Link in history - you must print from history to generate the link.","title=APS Web Link,style=OK,icon=!")
+	}
+
+	if not(nul(D531_C2PUrlLink$)) {
+		system_help D531_C2PUrlLink$
+	}
+
+End_Pgm:
+
+	IF c2p.ArCustFH {
+ 		CLOSE (c2p.ArCustFH,err=*next)
+ 		c2p.ArCustFH = 0
+ 	}
+	IF c2p.cArInvHistFH {
+ 		CLOSE (c2p.cArInvHistFH,err=*next)
+ 		c2p.cArInvHistFH = 0
+ 	}
+
+EXIT
+!
+No_Link:
+	coSession'UI'MessageBox$("","No Link available for this invoice.","title=APS Web Link,style=OK,icon=I")
+goto End_Pgm
+!

@@ -1,0 +1,30 @@
+! DuplicateC2P.M4P
+! Phil Whirley/Bob Sosbee #241845
+! 
+BEGIN 
+	Hist		=%sys_ss'OpenTable("AR_InvoiceHistoryHeader","COMPANY")
+	Cust		=%sys_ss'OpenTable("AR_Customer","COMPANY")
+	Mem			=HFN
+	OPEN (Mem)"*MEMORY*"
+	MEM_IOL: IOLIST Code$,Invoices$,Count
+	SELECT * FROM Hist BEGIN $$ END $FE$ WHERE LEN(D531_C2PLinkCode$)
+		READ (Cust,KEY=ARDivisionNo$+CustomerNo$,REC=Cust$,ERR=*CONTINUE)
+		Date$	= InvoiceDate$
+		Code$	= D531_C2PLinkCode$
+		Invoices$	= ""
+		Count	= 0
+		READ (Mem,KEY=Code$,DOM=*NEXT)IOL=MEM_IOL
+		IF Count<101 THEN {
+			Invoices$		+= ", "+InvoiceNo$
+			IF MID(Invoices$,1,1)="," { 
+				Invoices$	=  Invoices$(2)
+			}
+		}
+		Count++
+		WRITE (Mem,KEY=Code$)IOL=MEM_IOL
+	NEXT RECORD 
+	SELECT IOL=MEM_IOL FROM Mem BEGIN $$ END $FE$ WHERE Count>1
+		PRINT ++Counter,"  ",Count,"  ",MID(Invoices$,1,30),"  ",Code$
+		LINES++; IF LINES>20 THEN LINES=0; INPUT "CR: ",*
+	NEXT RECORD 
+	CALL "*cmd/FD",STR(Mem)

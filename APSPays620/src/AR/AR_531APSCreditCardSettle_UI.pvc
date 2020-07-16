@@ -1,0 +1,178 @@
+! $Id: AR_531APSCreditCardSettle_UI.pvc $
+! Sage 100 ERP AR Credit Card Settlement Report UI Object
+! (c)2016-2018 Accounting Systems, Inc.  All Rights Reserved.
+
+DEF CLASS "AR_531APSCreditCardSettle_UI" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "AR_ReportUI"
+	LIKE "SY_Password"
+
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL cReportLib$									! SCREEN_LIB is specified in ON_CREATE
+	LOCAL cReportObject$ = "AR_531APSCreditCardSettle_rpt"
+	LOCAL cUseSysDB      = isFALSE
+	LOCAL cTransDateStartDefault$
+	LOCAL cTransDateEndDefault$
+
+	! ** Channel for Lock file to ensure only one user runs the report at one time.
+	LOCAL cLockFH
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL PostLoad()							POST_LOAD
+	FUNCTION LOCAL OnFocusReportSetting()				ONFOCUS_REPORTSETTING
+	FUNCTION LOCAL ChangeVirtualTerminalID()			CHANGE_VIRTUAL_TERMINAL_ID
+	FUNCTION LOCAL OnFocusTrans_Date_Start()			ON_FOCUS_TRANS_DATE
+	FUNCTION LOCAL OnFocusTrans_Date_End()				ON_FOCUS_TRANS_DATE
+	FUNCTION LOCAL ChangeCB_Trans_Date_All()			CHANGE_CB_TRANS_DATE_ALL
+	FUNCTION LOCAL ChangeTrans_Date_Start()				CHANGE_TRANS_DATE_START
+	FUNCTION LOCAL ChangeTrans_Date_End()				CHANGE_TRANS_DATE_END
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coReport										! SY_ReportUI
+
+END DEF
+!
+
+ON_CREATE:
+
+ENTER coSession
+	! check for activation
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation ()
+		DROP OBJECT coAPSActivation
+	}
+	if not(cAPSActivated) {
+		coSession'UI'MessageBox$("","APS Payments is not activated for this company.","Style=OK,Title=APS Payments,Icon=!")
+		exit
+	}
+
+	cLockFH = coSession'CreateLock("AR_CreditCardSettlementRpt", 1)
+	IF NOT(cLockFH) {
+		coSession'UI'MessageBox$ ( "CI_Batch_InUse" , MSG( "CI_Batch_InUse", " APS Credit Card Settlement Report" ) )
+		EXIT
+	}
+
+	SCREEN_LIB$ = "AR_531APSCreditCardSettle.M4L" ! need this here to suppress display of panel on error
+
+RETURN retSUCCESS
+!
+
+ON_DELETE:
+
+	IF cLockFH {
+		CLOSE ( cLockFH, ERR = *PROCEED ); cLockFH = 0
+		coSession'DropTable( "AR_CreditCardSettlementRpt.LCK","LOCK" )
+	}
+
+RETURN retSUCCESS
+!
+
+POST_LOAD:
+
+	_OBJ'PostLoad( FROM "AR_ReportUI" )
+
+	payTypeFH = _OBJ'OpenTable("AR_PaymentType", "COMPANY")
+
+	SELECT * FROM payTypeFH BEGIN $$ END $FE$	\
+		WHERE NOT(NUL(D531APSMerchantID$)) AND 	\
+			NOT(NUL(D531APSPassword$)) AND		\
+			CreditCardSetupTested$="Y"
+		_OBJ'DecryptPassword((D531APSMerchantID$), MerchantID$)
+		IF NUL(defaultID$) {
+			defaultID$ = MerchantID$
+		}
+		tmpCode$  =STP(MerchantID$) + "/"
+		IF NOT(POS(tmpCode$ = tmpCodeList$)) { tmpCodeList$ += tmpCode$ }
+	NEXT RECORD
+
+	DROP_BOX LOAD VirtualTerminalID.CTL, tmpCodeList$
+	VirtualTerminalID$ = defaultID$
+	CLOSE (payTypeFH)
+
+RETURN retSUCCESS
+!
+
+ONFOCUS_REPORTSETTING:
+
+	! Override base class enable of print/preview buttons
+	_OBJ'OnFocusReportSetting( FROM "AR_ReportUI" )
+
+	_OBJ'ChangeVirtualTerminalID()
+
+RETURN retSUCCESS
+!
+
+CHANGE_VIRTUAL_TERMINAL_ID:
+
+	IF NOT(NUL(VirtualTerminalID$)) {
+		_OBJ'SetControlState( "PRINTPREVIEW.GRP$", ctlENABLE )
+	} ELSE {
+		_OBJ'SetControlState( "PRINTPREVIEW.GRP$", ctlDISABLE )
+	}
+
+RETURN retSUCCESS
+!
+
+ON_FOCUS_TRANS_DATE:
+
+	CB_Trans_Date_All$ = "N"
+	retVal = coReport'SetTransDateAll(CB_Trans_Date_All$)
+
+RETURN retVal
+!
+
+CHANGE_CB_TRANS_DATE_ALL:
+
+	retVal  = retSUCCESS
+
+	tmpRtn1 = coReport'SetTransDateAll(CB_Trans_Date_All$)
+
+	IF CB_Trans_Date_All$ = isYES$ {
+		Trans_Date_Start$ = cTransDateStartDefault$
+		Trans_Date_End$   = cTransDateEndDefault$
+		tmpRtn2           = coReport'SetTransDateEnd(Trans_Date_End$)
+		tmpRtn3           = coReport'SetTransDateStart(Trans_Date_Start$)
+	}
+
+	IF NOT(tmpRtn1) OR NOT(tmpRtn2) OR NOT(tmpRtn3) { retVal = retFAILURE }
+
+RETURN retVal
+!
+
+CHANGE_TRANS_DATE_START:
+
+	retVal = retSUCCESS
+
+	IF Trans_Date_End$=cTransDateEndDefault$ OR Trans_Date_End$ < Trans_Date_Start$ {
+		Trans_Date_End$ = Trans_Date_Start$
+		tmpRtn1         = coReport'SetTransDateEnd(Trans_Date_End$)
+	}
+
+	tmpRtn2 = coReport'SetTransDateStart(Trans_Date_Start$)
+
+	IF NOT(tmpRtn1) OR NOT(tmpRtn2) { retVal = retFAILURE }
+
+RETURN retVal
+!
+
+CHANGE_TRANS_DATE_END:
+
+	retVal = retSUCCESS
+
+	IF Trans_Date_End$ < Trans_Date_Start$ {
+		Trans_Date_Start$ = Trans_Date_End$
+		tmpRtn1           = coReport'SetTransDateStart(Trans_Date_Start$)
+	}
+
+	tmpRtn2 = coReport'SetTransDateEnd(Trans_Date_End$)
+
+	IF NOT(tmpRtn1) OR NOT(tmpRtn2) { retVal = retFAILURE }
+
+RETURN retVal
+!

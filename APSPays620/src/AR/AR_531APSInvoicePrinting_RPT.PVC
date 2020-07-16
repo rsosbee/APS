@@ -1,0 +1,202 @@
+! $Id: AR_531APSInvoicePrinting_RPT.pvc $
+! Copyright 2017-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+!
+
+DEF CLASS "AR_531APSInvoicePrinting_RPT"
+
+	! Inherits from the following class(es)
+	LIKE "AR_InvoicePrinting_RPT"
+	LIKE "SY_531APSMultiCurrencyCommon" ! PLW 2019-02-12 Ticket #248049
+
+	! Public Properties
+
+	! Local/Private Properties
+	
+	! object
+	LOCAL coRequest
+	LOCAL coCompany
+
+	LOCAL c2p.Enabled
+	LOCAL c2p.Option
+	LOCAL c2p.APIKey$
+	LOCAL c2p.Currency$
+
+	LOCAL c2p.DataFormat$
+	LOCAL c2p.CustomerURL$
+
+	LOCAL arInvoiceHdrFH
+	LOCAL arInvoiceHdrSrc$
+	LOCAL arInvoiceHdrDst$
+	LOCAL c2p.ArCustFH
+
+	LOCAL D531_C2PLinkCode$
+	LOCAL D531_C2PUrlLink$
+	LOCAL D531_C2PCustomer$
+	LOCAL c2p.Display			! #239836 2018-08-08 RCS
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL PERFORM postTableRead(TableName$) 			POST_TABLE_READ
+	FUNCTION LOCAL PERFORM SetFormulas() 							SET_FORMULAS
+	FUNCTION LOCAL PERFORM PreWorkTableWriteForPaperlessOffice()	PRE_WORK_TABLE_WRITE_FOR_PAPERLESS_OFFICE
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	c2p.companyKey$		= coSession'companyKey$
+
+	coCompany			= NEW ("SY_Company_SVC", coSession)
+	coCompany'FIND(c2p.companyKey$)
+
+	c2p.Enabled			= coCompany'C2PEnabled
+	c2p.Option			= coCompany'C2POption
+	c2p.CustomerURL$	= coCompany'C2PPrimary$
+
+	coRequest			= NEW("SY_531APSRequest", coSession)
+
+	c2p.Display			= coRequest'c2pDisplay ! #239836 2018-08-08 RCS
+
+	c2p.ArCustFH		= coSession'OpenTable("AR_Customer","COMPANY")
+
+RETURN
+!
+
+ON_DELETE:
+	DROP OBJECT coRequest, ERR=*PROCEED;	coRequest	= 0
+	DROP OBJECT coCompany, ERR=*PROCEED;	coCompany	= 0
+	IF c2p.ArCustFH {
+ 		CLOSE (c2p.ArCustFH)
+ 		c2p.ArCustFH	= 0
+ 	}
+
+RETURN
+!
+
+POST_TABLE_READ:
+ENTER (asiTableName$)	! #252126 - 2019-05-17 RCS
+
+ 	retVal = _OBJ'postTableRead(FROM "AR_531APSInvoicePrinting_RPT_base", asiTableName$)	! #252126 - 2019-05-17 RCS
+ 	
+	IF retVal and c2p.Enabled {
+
+		IF UCS(asiTableName$)=UCS("AR_InvoiceHeader") {	! #252126 - 2019-05-17 RCS
+
+			IF NOT(POS(UCS("D531_C2PLinkCode$")=UCS(LST(arInvoiceHdrSrc$)))) {
+				arInvoiceHdrSrc$ = CPL(LST(arInvoiceHdrSrc$)+",D531_C2PLinkCode$")
+				arInvoiceHdrDst$ = CPL(LST(arInvoiceHdrDst$)+",wrk.D531_C2PLinkCode$")
+			}
+
+			READ (arInvoiceHdrFH, KEY=KEC(arInvoiceHdrFH), REC=c2p$)
+
+			! Set flags
+			D531_C2PCustomer$	= isNO$
+			D531_C2PUrlLink$	= isNULL$
+			D531_C2PLinkCode$	= isNULL$
+
+			! Skip ADjustments, CAsh invoices, Credit Memos, Debit Memos, deleted, and Finance Charges #251756 - 2019-05-22 RCS
+			IF pos(c2p.InvoiceType$	= "AD|CA|CM|DM|FC|XD") {
+				c2p.D531_C2PWebInvCreated$	= isNO$
+				c2p.D531_C2PWebInvUpdated$	= isNO$
+				c2p.D531_C2PLinkCode$		= isNULL$
+				RETURN retVal
+			}
+
+			if NOT(NUL(c2p.CreditCardTransactionID$)) and NOT(NUL(c2p.CreditCardAuthorizationNo$)) {
+				RETURN retVal ! skip fully paid invoices.
+			}
+
+			! Opt in/Opt Out
+			cCustRecRead		= isFALSE ! RCS 2018-03-13 #235665
+			READ (c2p.ArCustFH,rec=TMP$,key=c2p.ARDivisionNo$:c2p.CustomerNo$,dom=*next); cCustRecRead = isTRUE ! RCS 2018-03-13
+
+			! RCS 2018-03-13 - #235665 skip stub records
+			if cCustRecRead				= isFALSE {
+				c2p.D531_C2PLinkCode$	= isNULL$
+				D531_C2PCustomer$		= isNO$
+				RETURN retVal 
+			}
+
+			if tmp.OpenItemCustomer$ <> isYES$ {
+				c2p.D531_C2PLinkCode$	= isNULL$ ! #241845 - 2018-09-13 RCS
+				D531_C2PCustomer$		= isNO$
+				RETURN retVal ! skip balance forward.
+			}
+
+			cSkip				= coRequest'OptInOrOut(tmp.D531_C2POption$)
+			if cSkip {
+				D531_C2PUrlLink$		= isNULL$
+				D531_C2PCustomer$		= isNO$
+				RETURN retVal
+			}
+
+			D531_C2PCustomer$	= isYES$
+			! there is a balance...
+
+			_OBJ'SetC2PCurrency(c2p.ARMC_234_EntryCurrency$, c2p.Currency$) ! PLW 2019-02-12 Ticket #248049
+			IF NUL(c2p.D531_C2PLinkCode$) {
+				retVal		= coRequest'GetLinkCode(c2p.ArDivisionNo$,c2p.CustomerNo$,c2p.InvoiceNo$,c2p.InvoiceType$,c2p.D531_C2PLinkCode$,c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$,c2p.Currency$)
+				if retVal and not(nul(c2p.D531_C2PLinkCode$)) {
+					D531_C2PLinkCode$			= c2p.D531_C2PLinkCode$
+					c2p.D531_C2PWebInvCreated$	= isYES$
+				}
+
+				SWITCH retVal
+					CASE retSUCCESS ! was able to send the request and get an answer
+						IF c2p.statusClassCode		= retSUCCESS {
+							WRITE (arInvoiceHdrFH, REC=c2p$)
+							D531_C2PLinkCode$		= c2p.D531_C2PLinkCode$
+						}
+						BREAK
+					CASE retWARNING ! request connected at an insecure level
+						IF c2p.statusClassCode		= retSUCCESS {
+							WRITE (arInvoiceHdrFH, REC=c2p$)
+							D531_C2PLinkCode$		= c2p.D531_C2PLinkCode$
+						}
+						BREAK
+
+					DEFAULT
+						! failed to send transaction!
+						if c2p.Display {
+							coRequest'DisplayError(c2p.errorMessage$)
+						}
+						retVal=retFAILURE
+						BREAK
+				END SWITCH
+			}
+			D531_C2PLinkCode$	= c2p.D531_C2PLinkCode$
+			D531_C2PUrlLink$	= c2p.CustomerURL$ + "?code=" + D531_C2PLinkCode$ ! wrk.D531_C2PLinkCode$
+		}
+	}
+RETURN retVal
+!
+
+SET_FORMULAS:
+ 	retVal = _OBJ'SetFormulas(FROM "AR_531APSInvoicePrinting_RPT_base")
+	_OBJ'SetReportFormula("d531_C2PCustomerURL", "'" + c2p.CustomerURL$ + "'" )
+RETURN retSUCCESS
+!
+
+PRE_WORK_TABLE_WRITE_FOR_PAPERLESS_OFFICE:
+
+	retVal = _OBJ'PreWorkTableWriteForPaperlessOffice(FROM "AR_531APSInvoicePrinting_RPT_base")
+
+	wrk.D531_C2PUrlLink$		= isNULL$
+	wrk.D531_C2PCustomer$		= isNO$
+	if nul(D531_C2PUrlLink$) {
+		D531_C2PCustomer$		= isNO$
+	}
+
+	IF c2p.Enabled {
+		wrk.D531_C2PUrlLink$	= D531_C2PUrlLink$
+		wrk.D531_C2PCustomer$	= D531_C2PCustomer$
+	}
+
+RETURN retVal
+!

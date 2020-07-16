@@ -1,0 +1,203 @@
+! $Id: APS_CREATE_ENHANCEMENT_RECORDS $
+! Add records to the SY_EnhancementModule table for APS modification
+! Accounting Systems, Inc. 2015-2020. Bob Sosbee, Phil Whirley
+!
+	
+	coSession				= %sys_ss
+	
+	! Create records in the SY_EnhancementModule table
+	tmpEnhModuleFH			= coSession'OpenTable("SY_EnhancementModule","SYSTEM")
+	
+	! base
+	enh.DeveloperCode$		= "531"
+	enh.EnhancementCode$	= "ASIAPS"
+	enh.EnhancementLevel	= 6.2
+	enh.ConversionLevel		= 6.2
+	enh.Sublevel			= 8			! Tie to the build.
+	
+	! A/R
+	enh.ModuleCode$			= "A/R"
+	enh.EnhancedModuleCode$	= "A/R"
+	WRITE (tmpEnhModuleFH,REC=enh$)
+
+	! A/P
+! 	enh.ModuleCode$			= "A/P"
+!	enh.EnhancedModuleCode$	= "A/P"
+!	WRITE (tmpEnhModuleFH,REC=enh$)
+ 
+ 	! C/I
+ 	enh.ModuleCode$			= "C/I"
+ 	enh.EnhancedModuleCode$	= "C/I"
+ 	WRITE (tmpEnhModuleFH,REC=enh$)
+
+	! G/L
+!	enh.ModuleCode$			= "G/L"
+!	enh.EnhancedModuleCode$	= "G/L"
+
+	! S/O
+	enh.ModuleCode$			= "S/O"		! DB# 1316 2020-04-02 - RCS
+	enh.EnhancedModuleCode$	= "S/O"		! DB# 1316 2020-04-02 - RCS
+	WRITE (tmpEnhModuleFH,REC=enh$)		! DB# 1316 2020-04-02 - RCS
+
+Update_All_Companies:
+	
+	tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+ 	IF not(tmpSY_CompanyFH) { EXIT } ! sy_company not available
+
+ 	SELECT * from tmpSY_CompanyFH BEGIN $00$ END $FE$
+
+		! Set module conversion sublevel.
+		tmpCIEnhModuleFH				= coSession'OpenTable("CI_EnhancementActivation","COMPANY:"+CompanyCode$,ERR=*next)
+		if tmpCIEnhModuleFH {
+			SELECT *,rec=sy$ from tmpEnhModuleFH BEGIN $00$ END $FE$ WHERE sy.EnhancementCode$="ASIAPS"
+				ci.ModuleCode$			= sy.ModuleCode$
+				ci.DeveloperCode$		= "531"
+				ci.EnhancementCode$		= "ASIAPS"
+				cCI_Read				= 0
+			READ (tmpCIEnhModuleFH,REC	= ci$,KEY = ci.ModuleCode$:ci.DeveloperCode$:ci.EnhancementCode$,dom = *next); cCI_Read = 1
+			if cCI_Read {
+				ci.subLevel				= 0 ! set SUBlevel to 0 not dataLevel insure a conversion will take place if previously done.
+				WRITE (tmpCIEnhModuleFH,REC=ci$)
+			}
+			NEXT RECORD
+			CLOSE (tmpCIEnhModuleFH)
+			tmpCIEnhModuleFH	= 0
+		}
+
+	NEXT RECORD
+	CLOSE (tmpSY_CompanyFH, err=*next)
+	tmpSY_CompanyFH			= 0
+	CLOSE (tmpEnhModuleFH,ERR=*NEXT)
+	tmpEnhModuleFH			= 0
+
+	! create APS activation table
+	coSession'CreateTable("SY_531APSActivation","SYSTEM",err=*next)
+	
+	! create APS transaction log
+	tmp	= 0
+	tmp	= coSession'CreateTable("SY_531APSTransactionLog","SYSTEM",err=*next)
+	
+	if not(tmp) { ! Check during migration from 4.50
+		MSGBOX "Error updating SY_TransactionLog. Please reinstall APSC2P after migrating!" ! *SC-OK*
+		EXIT
+	}
+
+	! Create APS Company table
+	coSession'CreateTable("SY_531APSCompany","SYSTEM") ! company code file. #232007 - RCS
+	wait .5 ! Allow SQL/Windows to update
+
+	! Copy existing company data into the company file if present.
+	cSY_APSCompanyFH	= coSession'OpenTable("SY_531APSCompany","SYSTEM",err=*next)
+	if not(cSY_APSCompanyFH) { EXIT } ! new company code did not create
+	C2PIolist$			= IOL(cSY_APSCompanyFH)
+	tmpSY_CompanyFH		= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+ 	IF not(tmpSY_CompanyFH) { EXIT } ! sy_company not available
+		
+	IF POS("D531APS"	= UCS(LST(IOL(tmpSY_CompanyFH)))) { ! PLW 2017-12-11 changed to check for any D531APS column
+		! check for copy, remove data from SY_Company and write to SY_531APSCompany
+		cConvert_SyCompany	= 1 ! RCS 2017-12-13 Set conversion flag
+		SELECT * from tmpSY_CompanyFH BEGIN $00$ END $FE$
+			READ DATA FROM REC(IOL(cSY_APSCompanyFH)), REC=c2p$ TO IOL=IOL(cSY_APSCompanyFH) ! PLW 2017-12-09 corrected d531_APSCompanyFH to cSY_APSCompanyFH
+			cWrite			= 0
+			WRITE (cSY_APSCompanyFH, REC=c2p$,dom=*next); cWrite = 1 ! do not write if the record already exists
+			if cWrite { ! clear data from SY_Company
+				D531_APSCreditCardLog$			= $$
+				D531APSMerchantID$				= $$
+				D531APSPassword$				= $$
+				D531APSLevelIIIProcessing$		= $$
+				D531APSSummaryCommodityCode$	= $$
+				D531APSItemCommodityCode$		= $$
+				D531ShipFromPostal$				= $$
+				WRITE (tmpSY_CompanyFH)
+			}
+
+		NEXT RECORD
+ 	}
+ 	! should be a sy_531APSCompany record for each company
+ 	SELECT * from tmpSY_CompanyFH BEGIN $00$ END $FE$
+ 		READ DATA FROM "",rec=c2p$ TO C2PIolist$
+ 		c2p.CompanyKey$	= CompanyKey$
+ 		cRead			= 0
+ 		READ (cSY_APSCompanyFH, REC = c2p$,key = CompanyKey$,dom = *next); cRead = 1
+ 		if cRead {
+			! check defaults
+			if nul(c2p.D531APSLevelIIIProcessing$) {
+				c2p.D531APSLevelIIIProcessing$	= "N"
+			}
+			if nul(c2p.D531_C2PEnabled$) {
+				c2p.D531_C2PEnabled$			= "N"
+			}
+			if nul(c2p.D531_C2PCurrency$) {
+				c2p.D531_C2PCurrency$			= "USD"
+			}
+			if nul(c2p.D531_C2POptOut$) {
+				c2p.D531_C2POptOut$				= "N"
+			}
+ 		} else {
+			! Set defaults
+  			C2P.D531_APSCreditCardLog$			= "N"
+ 			c2p.D531APSLevelIIIProcessing$		= "N"
+ 			c2p.D531_C2PEnabled$				= "N"
+ 			c2p.D531_C2PCurrency$				= "USD"
+ 			c2p.D531_C2POptOut$					= "N"
+ 		}
+ 		WRITE (cSY_APSCompanyFH, REC = c2p$)
+
+		! Set module conversion sublevel.
+		tmpCIEnhModuleFH						= coSession'OpenTable("CI_EnhancementActivation","COMPANY:"+CompanyCode$,ERR=*next)
+		if tmpCIEnhModuleFH {
+			ci.ModuleCode$						= "A/R"
+			ci.DeveloperCode$					= "531"
+			ci.EnhancementCode$					= "ASIAPS"
+			cCI_Read							= 0
+			READ (tmpCIEnhModuleFH,REC = ci$,KEY = ci.ModuleCode$:ci.DeveloperCode$:ci.EnhancementCode$,dom = *next); cCI_Read = 1
+			if cCI_Read {
+				ci.subLevel						= 0 ! PLW 2017-12-12 set SUBlevel to 0 not dataLevel insure a conversion will take place if previously done.
+				WRITE (tmpCIEnhModuleFH,REC=ci$)
+			}
+			CLOSE (tmpCIEnhModuleFH)
+			tmpCIEnhModuleFH					= 0
+		}
+
+	NEXT RECORD
+	if cConvert_SyCompany { ! RCS 2017-12-13 only drop columns if needed.
+	
+		tstPath$			= PTH(tmpSY_CompanyFH) ! we do this to get the full spec of the SY_Company table
+		close (cSY_APSCompanyFH)
+		close (tmpSY_CompanyFH)
+		close (65000,err=*next) ! close GFN from sy_session RCS #246446 - 2018-12-20 fix error 13 when installing PU
+	
+		REPEAT
+			tstF			= FFN(tstPath$)
+			IF tstF>0 { CLOSE(tstF) }
+		UNTIL tstF<=0
+			
+		! Now all the SY_Companies should be closed - Drop the columns.
+	
+		coDict				= NEW("SY_DictionaryConversionCommon",coSession,$$,0)
+		
+		coDict'DropColumn("SY_Company","D531_APSCreditCardLog") ! drop this column by itself - when migrating from 4.50 it won't be contiguous. 2018-06-07 RCS
+		
+		coDict'DropColumn("SY_Company","D531_APSCREDITCARDLOG") ! Alternate way it may appear in the file. 2018-06-07 RCS
+
+		drop object coDict
+		coDict				= 0
+		coSession'CreateTable("SY_Company","SYSTEM") ! RCS 2018-06-11 force update to remove D531_APSCREDITCARDLOG from 4.50.
+		
+		wait .1 ! allow Windows and SQL to catch up.
+
+		! now for the rest of the columns.
+		
+		coDict				= NEW("SY_DictionaryConversionCommon",coSession,$$,0)
+		
+		coDict'DropColumn("SY_Company","D531APSMerchantID,D531APSPassword,D531APSLevelIIIProcessing,D531APSSummaryCommodityCode,D531APSItemCommodityCode,D531ShipFromPostal")
+		
+		wait .1 ! allow Windows and SQL to catch up.
+				
+		drop object coDict
+		coDict				= 0
+		coSession'CreateTable("SY_Company","SYSTEM") ! All columns were dropped now physical table must be updated.
+	}
+	
+EXIT 
+! 

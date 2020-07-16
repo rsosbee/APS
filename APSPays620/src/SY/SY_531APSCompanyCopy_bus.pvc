@@ -1,0 +1,82 @@
+! $Id$: SY_531APSCompanyCopy_bus.pvc $
+! Copyright 2013-2018 Accounting Systems, Inc.
+! Irina Kouptsova, PLWhirley, Bob Sosbee
+!
+DEF CLASS "SY_531APSCompanyCopy_bus" CREATE REQUIRED DELETE REQUIRED 
+	! Inherits from the following class(es)
+	LIKE "SY_CompanyCopy_bus"
+	
+	! Public Properties
+	
+	! Local/Private Properties
+	
+	! Public Functions (Methods)
+	 FUNCTION CopyCreditCardData(APSsrcCompanycode$,APSdstCompanyCode$)		COPY_CREDIT_CARD_DATA
+	 
+	! Local/Private Functions (Methods)
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	
+END DEF
+!
+
+ON_CREATE:
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+COPY_CREDIT_CARD_DATA:
+	
+ENTER (APSsrcCompanycode$),(APSdstCompanyCode$)	
+	
+	! check if APS is activated in the source company
+	cAPSActivated			= isFALSE
+	cC2PActivated			= isFALSE
+		
+	IF NOT(cAPSActivationFh)	{ cAPSActivationFh	= coSession'OpenTable("SY_531APSActivation",	"SYSTEM") }
+	IF NOT(cAPSCompanyFH)		{ cAPSCompanyFh		= coSession'OpenTable("SY_531APSCompany",		"SYSTEM") } ! #232007 - 2017-11-20 - RCS - C2P
+
+	TMP.APSActivated$		= isNO$
+	READ (cAPSActivationFh, KEY = APSsrcCompanycode$, KNO = "KCOMPANYCODE", REC = TMP$, DOM=*NEXT)
+	IF TMP.APSActivated$	= isYES$ { 
+		cAPSActivated 		= isTRUE
+	}
+
+	! #232007 - 2017-11-20 C2P - RCS - Start
+	TMP.D531_C2PEnabled$ 	= isNO$
+	cRecFound				= isFALSE
+	READ (cAPSCompanyFH, KEY=APSsrcCompanycode$, REC=TMP$, DOM=*NEXT); cRecFound = 1
+	IF TMP.D531_C2PEnabled$ = isYES$ { 
+		cC2PActivated		= isTRUE
+	}
+
+	if cRecFound { ! write ONLY if there is a record found.
+		tmp.CompanyKey$		= APSdstCompanyCode$
+		WRITE (cAPSCompanyFH,rec=TMP$)
+	}
+	
+	IF cAPSActivated {
+		! we do not have to convert credit cards, we just have to set CC setup tested to "N" 
+		! for all payment types in the destination company
+		payTypeFH			= _OBJ'OpenTable("AR_PAYMENTTYPE",pthOTHERCOMPANY$+APSdstCompanyCode$,ERR=*NEXT)
+		IF payTypeFH {
+			SELECT *,REC=pay$ FROM payTypeFH BEGIN $$ WHERE pos(pay.PaymentMethod$="RA") ! #236118 2018-04-24 RCS
+				pay.CreditCardSetupTested$			= isNO$
+				if nul(pay.D531APSSendEmail$) { 	pay.D531APSSendEmail$		= isNO$ }	! RCS #226560 - 2017-07-28 #231618 2018-04-24 RCS
+				if nul(Pay.D531APSRequireCVV$) { 	Pay.D531APSRequireCVV$		= isYES$ }	! RCS #237825 - 2018-05-23, changed to Y by default per Zac
+				if nul(Pay.D531APSRetailAccount$) { Pay.D531APSRetailAccount$	= isNO$ }	! RCS #237825 - 2018-05-23
+				IF not(Pay.PaymentMethod$="R") {	Pay.D531APSRequireCVV$ 		= isNO$ }	! RCS #237825 - 2018-05-23 for non cRedit card payment types.
+				WRITE (payTypeFH, REC=pay$)
+			NEXT RECORD
+		}
+		CLOSE (payTypeFH,ERR=*NEXT)
+		retVal				= retSUCCESS
+	} ELSE {
+		retVal				= _OBJ'CopyCreditCardData(FROM "SY_531APSCompanyCopy_bus_BASE",APSsrcCompanycode$,APSdstCompanyCode$)
+	}
+
+RETURN retVal
+!

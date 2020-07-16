@@ -1,0 +1,134 @@
+! AR_531APSCashReceiptsDeposit_UI.PVC
+! Copyright 2013-2019 Accounting Systems, Inc.
+! #232007 - RCS 2018-02-27
+
+DEF CLASS "AR_531APSCashReceiptsDeposit_UI" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "AR_CashReceiptsDeposit_UI"
+
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL c2p.Enabled
+	LOCAL cAPSLogoSource$	= "../ASI/APSC2P16.bmp" ! #239766 RCS 2018-07-23
+	LOCAL cAPSLogoDest$		= %SYS_WDX$+"../Launcher/images/APSC2P16.bmp" ! #239766 RCS 2018-07-23
+	LOCAL CreditCardEnable$
+	LOCAL cEmvEnabled
+	LOCAL cAPSActivated
+
+	! Local Objects
+	LOCAL coCompany
+	LOCAL coTerminalSvc
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL PERFORM PostLoad()		POST_LOAD
+	FUNCTION LOCAL BT_531C2P() 				BT_531C2P
+
+	! Elements Defined Elsewhere, but Referenced Locally
+
+	LOCAL coSession
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	! ClickToPay...
+	c2p.companyCode$		= LCS(coSession'companyCode$)
+	coCompany				= NEW ("SY_Company_SVC", coSession)
+	coCompany'FIND(coSession'companyKey$)
+
+	c2p.Enabled				= coCompany'C2PEnabled
+	coCompany'GetValue("CreditCardEnable$",CreditCardEnable$)
+	
+	LogoFound				= isFalse
+	tmpFH					= HFN
+	OPEN (tmpFH,ERR=*NEXT)cAPSLogoDest$; LogoFound = isTrue
+	IF NOT(LogoFound) {
+		tmpO				= NEW("*OBJ/pvx_utility")
+		tmpO'CopyFile(cAPSLogoSource$,cAPSLogoDest$,isFalse,ERR=*NEXT)
+		DROP OBJECT tmpO,ERR=*NEXT
+	} ELSE {
+		CLOSE(tmpFH)
+	}
+	tmpFH					= 0
+	tmpO					= 0
+	
+	! EMV
+	! check for activation
+	cEmvEnabled			= isFALSE
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation ()
+		DROP OBJECT coAPSActivation
+		coAPSActivation	= 0
+	}
+
+	if cAPSActivated {
+		coTerminalSvc	= new("SY_531APSTerminal_Svc",coSession)
+		cEmvEnabled		= coTerminalSvc'CheckProcessingPaymentTypesExist()
+		if cEmvEnabled {
+			isEnabled	= coTerminalSvc'CheckTerminalEnabled()
+			if isEnabled {
+				isRunning	= coTerminalSvc'CheckTerminalStatus()
+				if isRunning= retWARNING {
+					bye		! user selected Cancel
+				}
+				%EmvEnabled	= isRunning
+			}
+		}
+	}
+
+RETURN
+!
+
+ON_DELETE:
+	DROP OBJECT coCompany, ERR=*NEXT
+	coCompany 			= 0
+	DROP OBJECT coTerminalSvc,ERR=*NEXT
+	coTerminalSvc		= 0
+
+RETURN
+!
+
+BT_531C2P:
+	
+	! check for minimums #232007 - 2018-03-12 RCS
+	
+	if nul(coCompany'C2PCCPaymentType$) and POS(CreditCardEnable$="YB") {
+		coSession'UI'MessageBox$("","Click to Pay Credit Card payment type is missing in Company Maintenance.\" + \
+									"This will prevent loading of Credit Card payments from Click To Pay.")
+		cNoCC				= isTRUE
+	}
+
+	if nul(coCompany'C2PACHPaymentType$) and POS(CreditCardEnable$="AB") {
+		coSession'UI'MessageBox$("","Click to Pay ACH payment type is missing in Company Maintenance.\" + \
+									"This will prevent loading of ACH payments from Click To Pay.")
+		cNoACH				= isTRUE
+	}
+	if cNoACH and cNoCC {
+		coSession'UI'MessageBox$("","Click to Pay payment types are missing in Company Maintenance.\" + \
+									"This will prevent loading of ANY payments from Click To Pay.")
+		retVal				= retFAILURE
+		RETURN retVal
+	}
+
+	retVal					= coBusiness'ProcessAPSClickToPay()
+
+	IF NOT(retVal) {
+		IF NOT(NUL(coBusiness'LastErrorMsg$)) { coSession'UI'messageBox$("", coBusiness'LastErrorMsg$) }
+	}
+
+RETURN retVal
+!
+
+POST_LOAD:
+	retVal					= _OBJ'postLoad(FROM "AR_531APSCashReceiptsDeposit_UI_base")
+	IF c2p.Enabled AND POS(CreditCardEnable$="YAB") { ! only activate if company can process ACH and/or Credit Card. RCS 2018-04-18-01.
+		SHOW CONTROL BT_531C2P.CTL
+	}
+RETURN retVal
+!

@@ -1,0 +1,681 @@
+! $Id: AR_531APSConvertByPayment_UI.pvc $
+! Copyright 2018-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #236076 - 2019-04-30 - RCS
+
+DEF CLASS "AR_531APSConvertByPayment_UI" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+
+	LIKE "SY_MaintSetUI"
+	LIKE "SY_Password"
+	LIKE "AR_531APSConvertToAPS"
+
+	! Public Properties
+
+
+	! Local/Private Properties
+
+	LOCAL coCM
+	LOCAL coGridDef
+	LOCAL coGridSelect
+
+	LOCAL cTable$
+	LOCAL cTableDesc$
+	LOCAL cTableRcds
+	LOCAL cTableRcds$
+	LOCAL cModule$
+	LOCAL cKeyColumn$
+	LOCAL cKeyDesc$
+	LOCAL cKeySize
+	LOCAL cColumnCount
+	LOCAL cViewOnly
+	LOCAL cLockFH
+	LOCAL cRowsMax
+	LOCAL cRowsThreshold
+	LOCAL cListingClass$		= "CM_UDTListing_rpt"
+
+	LOCAL cConvertByPayment		= 0
+	LOCAL cConfirmationAnswer
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+
+	FUNCTION LOCAL PreLoad()										PRE_LOAD
+	FUNCTION LOCAL PostLoad()										POST_LOAD
+	FUNCTION LOCAL RowMods(currentGridCtl, currentRow)				ROW_MODS
+	FUNCTION LOCAL DefaultChange()									DEFAULT_CHANGE
+	FUNCTION LOCAL BT_RowResetAll()									BT_ROWRESETALL
+	FUNCTION LOCAL BT_GridSelect()									GRID_SELECT
+	FUNCTION LOCAL BT_GridMore()									GRID_MORE
+	FUNCTION LOCAL BT_Proceed()										BT_PROCEED
+	FUNCTION LOCAL BT_Accept()										BT_ACCEPT
+	FUNCTION LOCAL BT_No()											BT_NO
+	FUNCTION LOCAL BT_Yes()											BT_YES
+	FUNCTION LOCAL BT_OK2()											BT_OK2
+
+	FUNCTION LOCAL GridSetup()										GRID_SETUP
+	FUNCTION LOCAL LoadRow(gridCtl,rowNo)							LOAD_ROW
+	FUNCTION LOCAL ChangeKeyColumn(gridCtl,CurrentValue$,Locked)	CHANGE_KEY_COLUMN
+	FUNCTION LOCAL TranslateColumns()								TRANSLATE_COLUMNS
+	FUNCTION LOCAL ChangeML_APSMerchantID(gridCtl)					CHANGE_ML_APS_MERCHANT_ID
+	FUNCTION LOCAL ChangeML_APSPassword(gridCtl)					CHANGE_ML_APS_PASSWORD
+
+	! Elements Defined Elsewhere, but Referenced Locally
+
+	LOCAL coSession
+	LOCAL coBusiness
+
+END DEF
+!
+
+ON_CREATE:
+
+ENTER coSession, coCM, ERR=*NEXT
+
+	PRECISION 3 FOR OBJECT
+
+	IF NOT(coCM) {
+		coCM			= NEW("CM_Customizer_Svc",coSession)
+		tmp				= coCM'OpenFiles()
+	}
+
+	coSession'CreateSecurity(coSession'StartTask)
+
+	coGridDef			= NEW("SY_GridDefinition_bus",coSession)
+
+	SCREEN_LIB$			= "AR_531APSConvertByPayment.M4L"
+	SCREEN_ID$			= "dMAIN"
+
+RETURN
+!
+
+ON_DELETE:
+
+	CLOSE (cLockFH, ERR=*NEXT)
+
+	DROP OBJECT coBusiness,   ERR=*NEXT ; coBusiness   = 0
+	DROP OBJECT coGridDef,    ERR=*NEXT ; coGridDef    = 0
+	DROP OBJECT coGridSelect, ERR=*NEXT ; coGridSelect = 0
+
+RETURN
+!
+
+PRE_LOAD:
+	IF UCS(SCREEN_ID$)	= "DMAIN" {
+		%NOMADS_POST_DISPLAY	= isTRUE
+
+		!	cTable$="AR_531APSConvertPaymentTypes"
+		cTableDesc$		= "Convert by Payment Type"
+		cModule$		= "A/R"
+
+		tmpModule$		= _OBJ'fmtMODCODE$(MID(cTable$,1,2))
+		IF NOT( coSession'IsActivated(tmpModule$, coSession'CompanyCode$) ) {
+			coSession'UI'MessageBox$("SY_NotActive" , MSG("SY_NotActive", tmpModule$))
+			CMD_STR$	= "END"
+			EXIT
+		}
+
+		! Link to Business Object
+
+		coBusiness		= NEW("AR_531APSConvertByPayment_Bus", coSession)
+
+		IF NOT(coBusiness) {
+			CMD_STR$	= "END"
+			EXIT
+		}
+
+		coBusiness'GetRecord($$,tmpIOL$)
+		STATIC IOL=tmpIOL$
+
+		coBusiness'SetMode("SET")
+
+		_OBJ'InitBusinessObject("MAIN", "AR_531APSConvertByPayment_bus", "SET", 1, 1, 1, coBusiness)
+
+		cKeyColumn$          = coBusiness'GetKeyColumns$()
+		tmpRet               = coBusiness'GetPropertyValue(cKeyColumn$,"Length",      cKeySize)
+		tmpRet               = coBusiness'GetPropertyValue(cKeyColumn$,"Description$",cKeyDesc$)
+
+		cRowsThreshold       = 100
+		cRowsMax             = cRowsThreshold
+		cTableRcds           = coBusiness'GetRecordCount("MAIN")
+		cTableRcds$          = STP(STR(cTableRcds:"###,###,##0"),2)
+
+		coBusiness'RowsMax   = cRowsMax
+		coBusiness'TableRcds = cTableRcds
+		coBusiness'KeyDesc$  = cKeyDesc$
+
+		IF cTableRcds>cRowsMax {
+			coBusiness'UDTWhereEnd$	= coBusiness'GetWhereEnd$()
+		}
+
+		coBusiness'ResetRow()											! build memory file first time
+
+		%udtListingTable$			= cTable$
+		%udtListingTableDesc$		= cTable$ + "  -  " + cTableDesc$
+		%udtListingKeyColumn$		= cKeyColumn$
+		%udtListingKeyDesc$			= cKeyDesc$
+
+		! Set Up Grid
+
+		lGrid$			= "GD_MAIN"
+		lComp$			= DIM( 3,"#")
+		lUser$			= DIM(10,"#")
+		lWrks$			= DIM( 3,"#")
+		lLevl$			= "Z"
+
+	! First Remove Current SY_GridDefinition Records for this UDT
+
+		coGridDef'ClearRecords("*",cTable$,lGrid$,lComp$,lUser$,lWrks$)
+
+	! Get the Columns from the Dictionary Schema
+
+		colList$		= coSession'FileObj'GetColumnList$(cTable$)
+
+	! Get the User-Defined Grid Column Order
+
+		tmpKEY$			= "UDT-GRID/"+PAD(cTable$,32)
+		tmpGRD$			= $$
+
+		WHILE coCM'Options(tmpKEY$+STR(tmpSEQ++:"000"),tmpVAL$,"Read" )
+			tmpGRD$		+= STP(tmpVAL$)
+		WEND
+
+		IF NOT(NUL(tmpGRD$)) {
+
+			tmp$		= colList$
+			tmp			= POS(SEP=colList$)
+			colList$	= tmp$(1,tmp)				! just the key column
+			tmpCOLS$	= tmp$(tmp+1)				! rest of the schema columns
+
+			WHILE 1
+
+				IF NUL(tmpGRD$) {
+					colList$	+= tmpCOLS$
+					BREAK
+				}
+
+				tmp		= POS(","=tmpGRD$)
+				tmp$	= tmpGRD$(1,tmp-1)
+				tmpGRD$	= tmpGRD$(tmp+1)
+
+				tmp		= POS(UCS(tmp$)=UCS(tmpCOLS$))
+				IF NOT(tmp) { CONTINUE }	! column in grid order not in table schema
+
+				colList$	+= tmp$+SEP
+				tmpCOLS$	=  tmpCOLS$(1,tmp-1)+tmpCOLS$(tmp+LEN(tmp$)+1)
+
+			WEND
+
+		}
+
+	! Build SY_GridDefinition
+
+		cmPsPos			= 0
+		WHILE _OBJ'ParseString(cmPsPos,colList$,tmpCol$)
+
+			coGridDef'AddColumn( cTable$, lGrid$, lComp$, lUser$, lWrks$, lLevl$ )
+			cColumnCount		++
+
+			oColInfo = coSession'FileObj'GetColumnInfo(cTable$, tmpCol$)
+
+			tmpColClass$		= oColInfo'Class$
+			tmpColDesc$			= oColInfo'Description$
+			tmpColLength		= oColInfo'Length
+			tmpColNotes$		= oColInfo'Notes$
+			tmpColType$			= oColInfo'Type$
+			tmpColVariable$		= oColInfo'Variable$
+			tmpColValidation$	= oColInfo'Validation$
+			tmpColDefault$		= oColInfo'DefaultValue$
+
+			coGridDef'SetValue("ModuleCode$", "C/M")
+			coGridDef'SetValue("IOLVar$",     tmpColVariable$)		! UDF variable
+			coGridDef'SetValue("AliasVar$",   tmpColVariable$)		! UDF variable
+			coGridDef'SetValue("CellType$",   "Normal")
+			coGridDef'SetValue("Class$",      tmpColClass$)			! DATE or UDFYESNO
+			coGridDef'SetValue("ColDesc$",    tmpColDesc$)			! column header
+			coGridDef'SetValue("ColWidth",    MAX(tmpColLength,LEN(tmpColDesc$)))				! default to dictionary length or width of ColDesc
+			coGridDef'SetValue("FormatMask$", $$) 					! not sure if we need to set this - don't know if it's just for numerics or not
+			coGridDef'SetValue("Frozen$",     "N")					! always N
+			coGridDef'SetValue("GridLoc$",    "P")					! "S" for secondary
+			coGridDef'SetValue("Hidden$",     "N") 					! this way it can be shown at run time by unhiding it
+			coGridDef'SetValue("Hideable$",   "Y")					! always Y
+			coGridDef'SetValue("LockFld$",    "N")					! will be "Y" if field is from source other than main
+			coGridDef'SetValue("Moveable$",   "Y")					! Always yes - to allow drag and drop
+
+			IF tmpColLength>36 {
+				coGridDef'SetValue( "CellType$", "EllipsisDrop")
+				coGridDef'SetValue( "ColWidth" , 36)
+			}
+
+			! Check Special Settings in Column NOTES Field
+
+				udfCTLTYP$		= $$					! these three variables are
+				udfCAPVAL$		= $$					! stored in the dictionary
+				udfVALIDATE$	= $$					! schema NOTES$ field
+
+				IF NOT(NUL(tmpColNotes$)) {
+					EXECUTE tmpColNotes$, ERR=*NEXT
+				}
+
+				IF NOT(NUL(udfCAPVAL$)) {
+					coGridDef'SetValue("ColDesc$", udfCAPVAL$)	! column header
+					coGridDef'SetValue("ColWidth", \
+						MAX(tmpColLength,LEN(udfCAPVAL$)))		! default to dictionary length or width of ColDesc
+					IF tmpColLength > 36 {
+						coGridDef'SetValue( "CellType$", "EllipsisDrop")
+						coGridDef'SetValue( "ColWidth" , 36)
+					}
+				}
+
+				IF udfCTLTYP$ = "C" {							! checkbox
+					coGridDef'SetValue("CellType$", "CheckMark")
+				}
+
+				IF POS(udfCTLTYP$="DL") {						! dropbox/listbox
+					coGridDef'SetValue("CellType$", "DropBoxHideBtn")
+					coGridDef'SetValue("ColWidth", MAX(10,tmpColLength,LEN(tmpColDesc$)))
+					IF NOT(NUL(tmpColValidation$)) {
+						cLoadGridDropbox$ += STR(cColumnCount)+"|"+tmpColValidation$+SEP
+						IF NOT(NUL(tmpColDefault$)) {
+							cLoadGridDropboxDef$ += STR(cColumnCount)+"|"+tmpColDefault$+SEP
+						}
+					}
+				}
+
+			! Field Validation Against Another UDT
+
+				IF udfCTLTYP$="M" AND NOT(NUL(udfVALIDATE$)) {
+					coGridDef'SetValue("Tag$",      "ALELOOKUP=="""+udfVALIDATE$+""";")
+					coGridDef'SetValue("CellType$", "LookupHideBtn")
+				}
+
+			! Column CLASS Settings
+
+				IF tmpColClass$="DATE" {
+					coGridDef'SetValue("ColWidth", 15)
+					coGridDef'SetValue("Tag$", "ALELOOKUP=$ALE_Calendar$;")
+					coGridDef'SetValue("CellType$", "LookupHideBtn")
+				}
+
+				IF tmpColType$="N" {
+					coGridDef'SetValue("Tag$", "ALELOOKUP=$ALE_Calculator$;")
+					coGridDef'SetValue("CellType$", "LookupHideBtn")
+				}
+
+			IF NOT(coGridDef'WRITE()) {
+				coSession'UI'MessageBox$(coGridDef'LastErrorNum$,coGridDef'LastErrorMsg$)
+			}
+
+		WEND
+	}
+
+RETURN
+!
+
+POST_LOAD:
+	IF UCS(SCREEN_ID$) = "DCONFIRM" {
+		! Confirmation dialog messages based on selections made
+
+		IF ClearExpiredCreditCards$ = isYES$ {
+			coSession'FormatDate(ML_ExpireDate$, cFormattedExpireDate$)
+			ML_Line1$	= "Clear expired credit cards dated on or before " + cFormattedExpireDate$ + "."
+		} ELSE {
+			ML_Line1$	= "Clear expired credit cards not selected."
+		}
+
+		ML_Line2$		= "SPS Cards will be copied to the APS vault but APS will not be enabled."
+
+			ML_Line3$	= ""
+	}
+
+	IF UCS(SCREEN_ID$)	= "DMAIN"	{
+		%NOMADS_POST_DISPLAY	= isFALSE
+		_OBJ'AppendTitleBar()
+		_OBJ'PostLoad(FROM "SY_MaintUI")
+
+		cLockFh			= coSession'CreateLock(cTable$,isTRUE)
+
+		IF NOT(cLockFh) {
+			coSession'UI'MessageBox$ ( "CI_InUseView2" , MSG("CI_InUseView2", "The "+cTable$+" table") )
+		}
+
+		_OBJ'GridSetup()
+
+		GD_Main.ctl'CurrentRow	= 1 ! put focus on next available row
+	}
+
+RETURN retSUCCESS
+!
+
+LOAD_ROW:
+
+ENTER gridCtl, rowNo
+
+	IF rowNo>cRowsMax AND cRowsMax=cRowsThreshold {
+		retVal = retFAILURE
+		coSession'UI'ProgressBar ("close")
+		coSession'UI'MessageBox$ ("CM_UDT_01" , MSG("CM_UDT_01", "("+cTableRcds$+")", STR(cRowsMax), STR(cRowsThreshold)))
+	} ELSE {
+		retVal = _OBJ'LoadRow(FROM "SY_MaintSetUI", gridCtl, rowNo)
+	}
+
+RETURN retVal
+!
+
+ROW_MODS:
+
+ENTER currentGridCtl, currentRow
+
+	IF currentRow {
+		currentGridCtl'COLUMN  = -1
+		currentGridCtl'TEXT$   = HTA(EVS(cKeyColumn$))
+		currentGridCtl'COLUMN$ = cKeyColumn$
+		currentGridCtl'LOCK    = isTRUE
+		!this should be implemented in SY_MaintSetUI and overrided as necessary
+	}
+
+RETURN retSuccess
+!
+
+DEFAULT_CHANGE:
+	IF NOT(UCS(SCREEN_ID$)="DMAIN") { RETURN retSUCCESS }
+	IF UCS(ID_VarName$) = UCS(coBusiness'GetKeyColumns$()) {
+		retVal = _OBJ'ChangeKeyColumn(GD_Main.ctl, EVS(ID_VarName$), isTRUE)
+	} ELSE {
+		retVal = _OBJ'DefaultChange(FROM "SY_MaintSetUI")
+	}
+
+RETURN retVal
+
+
+CHANGE_KEY_COLUMN:
+
+ENTER GridCtl, currentValue$, Locked, ERR=*NEXT
+
+	retVal			= _OBJ'ChangeKeyColumn( FROM "SY_MaintSetUI", GridCtl, currentValue$, Locked )
+
+	IF coBusiness'PhysToMem {
+
+		tmpRetVal	= _OBJ'InitializeRow(gridCtl)
+
+		tmpRetVal	= coBusiness'GetRecord(lineRecord$,lineIOLIST$)
+		READ DATA FROM lineRecord$ TO IOL=lineIOLIST$
+
+		tmpRetVal	= EVN("_OBJ'TranslateColumns()", ERR=*NEXT)		! translate columns
+
+		row			= cCurrentRow
+		tmpRetVal	= _OBJ'InsertRow(gridCtl, row)
+		tmpRetVal	= EVN(cGridRowMods$[cCurrentGrid], ERR=*NEXT)
+
+	}
+
+RETURN retVal
+!
+
+BT_ROWRESETALL:
+
+	_OBJ'BT_RowResetAll(FROM "SY_MaintSetUI")
+	_OBJ'LoadGrid(GD_Main.ctl)
+
+RETURN
+!
+
+GRID_SETUP:
+	IF NOT(UCS(SCREEN_ID$)="DMAIN") {
+		RETURN retSUCCESS
+	}
+	_OBJ'SetControlState("ALL.GRP$", ctlDISABLE)
+
+	IF cTableRcds>cRowsMax {
+		coSession'UI'ProgressBar("init", "Scanning "+cTable$, $$, 1, "timer")
+	}
+	SWITCH cLockFh
+
+		CASE isFALSE
+
+			_OBJ'SetUpGrid(GD_Main.ctl, "AR_531APSCONVERTBYPAYMENT", "GD_Main", grdModeView)
+
+			_OBJ'SetControlState("BUTTON.GRP$",     ctlHIDE)
+			_OBJ'SetControlState("BUTTONVIEW.GRP$", ctlSHOW)
+
+			cViewOnly = isTRUE				! used for popup menu
+
+		BREAK
+
+		DEFAULT
+
+			_OBJ'SetUpGrid(GD_Main.ctl, "AR_531APSCONVERTBYPAYMENT", "GD_Main", grdModeAdd)
+
+			_OBJ'SetControlState("BUTTONVIEW.GRP$", ctlHIDE)
+			_OBJ'SetControlState("BUTTON.GRP$",     ctlSHOW)
+			_OBJ'BindVariables(cInit_Main)
+
+			cViewOnly = isFALSE				! used for popup menu
+
+		BREAK
+
+	END SWITCH
+
+	_OBJ'LoadGrid(GD_Main.ctl)
+
+	coSession'UI'ProgressBar("close")
+
+	_OBJ'SetControlState("ALL.GRP$", ctlENABLE)
+
+	tmpROWS = GD_Main.ctl'RowsHigh - 1
+	! MULTI_LINE WRITE ML_Rows.Ctl, STP(STR(tmpROWS:"###,###,##0"),2) + " of " + cTableRcds$ + " Records Displayed"
+
+	IF tmpROWS<cTableRcds AND tmpROWS>=cRowsMax {
+		BUTTON ENABLE BT_GridMore.Ctl
+	} ELSE {
+		BUTTON DISABLE BT_GridMore.Ctl
+	}
+
+	IF NOT(tmpROWS) AND cTableRcds {
+		coSession'UI'MessageBox$ ( "CM_UDT_02", MSG("CM_UDT_02") )
+	}
+
+RETURN
+!
+
+GRID_SELECT:
+
+	LOCAL tmpWHERE$, tmpBEGIN$, tmpEND$, tmpKNO$, tmpFLCHG
+
+	tmpFLCHG = coBusiness'FileChanged
+
+	IF NOT(_OBJ'ConfirmWrite()) { RETURN }
+
+	IF NOT(coGridSelect) {
+		coGridSelect = NEW( "CM_UDTMaintSelect_UI", coSession, cTable$, cKeyColumn$ )
+	}
+
+	coGridSelect'Process(retVal$, coBusiness'UDTWhereClause$)
+
+	IF retVal$="CANCEL" {
+		IF NOT(tmpFLCHG) {
+			RETURN
+		} ELSE {
+			retVal$		= $$
+		}
+	}
+
+	IF NUL(retVal$) {
+
+		IF NUL(coBusiness'UDTWhereClause$) AND NOT(tmpFLCHG) {
+
+			RETURN											! do nothing
+
+		} ELSE {
+
+			coBusiness'UDTWhereClause$	= $$				! clear previous whereClause
+			coBusiness'UDTWhereBegin$	= $$
+			coBusiness'UDTWhereEnd$		= $$
+			coBusiness'UDTWhereKNO$		= $$
+
+			cRowsMax					= cRowsThreshold
+			coBusiness'RowsMax			= cRowsMax
+
+			_OBJ'GridSetup()
+
+			RETURN
+
+		}
+
+	}
+
+	READ DATA FROM retVal$ TO tmpWHERE$, tmpBEGIN$, tmpEND$, tmpKNO$
+
+	IF tmpWHERE$<>coBusiness'UDTWhereClause$ OR tmpBEGIN$<>coBusiness'UDTWhereBegin$ OR tmpEND$<>coBusiness'UDTWhereEnd$ OR tmpKNO$<>coBusiness'UDTWhereKNO$ {
+
+		coBusiness'UDTWhereClause$		= tmpWHERE$
+		coBusiness'UDTWhereBegin$		= tmpBEGIN$
+		coBusiness'UDTWhereEnd$			= tmpEND$
+		coBusiness'UDTWhereKNO$			= tmpKNO$
+
+		cRowsMax						= cRowsThreshold
+		coBusiness'RowsMax				= cRowsMax
+
+		_OBJ'GridSetup()
+
+	}
+
+RETURN
+!
+
+GRID_MORE:
+
+	cRowsMax					+= cRowsThreshold
+	coBusiness'RowsMax			= cRowsMax
+	coBusiness'UDTWhereEnd$		= $$
+	IF NUL(coBusiness'UDTWhereClause$) {
+		coBusiness'UDTWhereEnd$	= coBusiness'GetWhereEnd$()
+	}
+	_OBJ'GridSetup()
+
+RETURN
+!
+
+TRANSLATE_COLUMNS:
+	_obj'DecryptPassword(D531APSMerchantID$	,ML_APSMerchantID$)
+	_obj'DecryptPassword(D531APSPassword$	,ML_APSPassword$)
+RETURN retSUCCESS
+!
+
+CHANGE_ML_APS_MERCHANT_ID:
+	ENTER GridCtl
+	_obj'EncryptPassword(ML_APSMerchantID$,D531APSMerchantID$)
+	retVal				= coBusiness'SetValue("D531APSMerchantID$",D531APSMerchantID$)
+RETURN retVal
+!
+
+CHANGE_ML_APS_PASSWORD:
+	ENTER GridCtl
+	_obj'EncryptPassword(ML_APSPassword$,D531APSPassword$)
+	retVal				= coBusiness'Setvalue("D531APSPassword$",D531APSPassword$)
+RETURN retVal
+!
+
+BT_ACCEPT:
+BT_PROCEED:
+	retVal				= _obj'BT_Accept(FROM "SY_MaintSetUI")
+	IF NOT(_obj'UpdatesURLs()) {
+		coSession'UI'MessageBox$(LastErrorNum$,LastErrorMsg$)
+		RETURN retFAILURE
+	}
+	InvalidCredentials$	= $$
+	oPmtType = coBusiness'GetChildHandle("ARPaymentType")
+	coSession'UI'ProgressBar("init", "Validate APS and SPS credentials", "Calling web services", 0)
+	coBusiness'MoveFirst()
+	WHILE NOT(coBusiness'EOF)
+		tmpRet = coBusiness'GetRecord(tmpRec$,tmpIOL$)
+		READ DATA FROM tmpRec$ to IOL=tmpIOl$
+		gotPmtType		= oPmtType'Find(PaymentType$)
+		IF gotPmtType {
+			oPmtType'GetValue("VirtualTerminalID$",V_id$)
+			oPmtType'GetValue("MerchantKey$",M_key$)
+			IF NOT(_obj'ValidateCredentials(D531APSMerchantID$,D531APSPassword$,V_id$,M_key$)) = retSUCCESS {
+				InvalidCredentials$	+= $0D0A$+"Pmt Type: '"+PaymentType$+"' : "+_obj'LastErrorMsg$
+			}
+		} ELSE {
+			InvalidCredentials$		+= $0D0A$+"Pmt Type: '"+PaymentType$+"' is not on file.  The conversion record is removed"
+			coBusiness'Delete()
+		}
+		coBusiness'MoveNext()
+	WEND
+	coSession'UI'ProgressBar("close")
+	IF NOT(NUL(InvalidCredentials$)) {
+		coSession'UI'MessageBox$("Invalid Credentials: "+InvalidCredentials$)
+		RETURN retFailure
+	}
+
+	cConvertByPayment	= isTRUE ! this flag is used in the conversion
+!	DROP OBJECT coBusiness
+
+	! Set the vault only credentials PLW 2016-07-18 added logic to get vault only credentials
+	coSession'GetParameter("SYS","CreditCardVaultOnlyID$",cEncryptedVaultOnlyID$)
+	coSession'GetParameter("SYS","CreditCardVaultOnlyKey$",cEncryptedVaultOnlyKey$)
+	_obj'DecryptPassword(cEncryptedVaultOnlyID$,	cCreditCardVaultOnlyID$)
+	_obj'DecryptPassword(cEncryptedVaultOnlyKey$,	cCreditCardVaultOnlyKey$)
+
+	SCREEN_ID$			= "dConfirm"
+	retVal				= _OBJ'PROCESS(answer$)
+
+	IF answer$ = isYES$ {
+		coSession'UI'ProgressBar("init", "Copying SPS Card Information to APS", "Converting credit card data", 0)
+		coSession'WriteLog$(logACTIVITY$,"A/R Convert to APS Utility was run.")
+
+
+		IF NOT(coSession'SQL) {
+			_OBJ'RemoveObsoleteWrkTables()
+		}
+
+		retVal = _obj'ConvertCardsToAPS()
+
+		IF retVal {
+			resp$ = coSession'UI'MessageBox$(".Y","Do you want to completely enable APSPays processing?", "defbtn=2")
+			IF resp$	= "YES" {
+
+				SCREEN_ID$	= "dConfirm2"
+				retVal		= _OBJ'PROCESS()
+				IF cConfirmationAnswer {
+
+					retVal	= _obj'EnableAPS()
+
+				} ELSE {
+					coSession'UI'MessageBox$("APSPays will not be enabled.  You can run 'APS Convert By Payment Type' again.")
+				}
+			}
+		}
+		coSession'UI'ProgressBar("close")
+	}
+
+	CMD_STR$			= "E"
+
+RETURN retVal
+!
+
+BT_NO:
+
+	ARG_1$				= isNO$
+	CMD_STR$			= "E"
+
+RETURN retSUCCESS
+!
+
+BT_YES:
+
+	ARG_1$				= isYES$
+	CMD_STR$			= "E"
+
+RETURN retSUCCESS
+!
+
+BT_OK2:
+
+	cConfirmationAnswer	= (stp(UCS(ML_CONFIRM2$),3)="YES")
+	CMD_STR$			= "E"
+
+RETURN retSUCCESS
+!

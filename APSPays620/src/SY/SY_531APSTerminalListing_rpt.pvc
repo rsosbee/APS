@@ -1,0 +1,192 @@
+! $Id: SY_531APSTerminalListing_rpt.pvc $
+! Terminal Code Listing Report object
+! Copyright 2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #236076 - 2019-03-08 RCS
+
+
+DEF CLASS "SY_531APSTerminal_rpt" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "SY_ReportCommon"
+
+	! Public Properties
+	PROPERTY ReportCaption$ = "Terminal Listing"
+
+	! Local/Private Properties
+	LOCAL cReportFile$ = "SY_531APSTerminalListing.RPT"
+	LOCAL cWorkFIle$   = "SY_531APSTerminalListingWrk"
+	LOCAL cWorkFileFH
+	LOCAL cSY_TerminalFH
+	LOCAL cSY_ModuleFH
+	LOCAL cSY_ActivationFH
+	LOCAL cSY_ThemeFH
+	LOCAL cUseSysDB    = isTRUE
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL PopulateWorkTable()					POPULATE_WORKTABLE
+	FUNCTION LOCAL GetSourceTables$(table$)				GET_SOURCE_TABLES
+	FUNCTION LOCAL SetFormulas()						SET_FORMULAS
+
+	! Elements Defined Elsewhere, but Referenced Locally
+
+
+END DEF
+
+
+ON_CREATE:
+
+	RETURN
+
+
+ON_DELETE:
+
+	RETURN
+
+
+POPULATE_WORKTABLE:
+
+	dstRecID$ = "wrk$"
+
+	! Open files
+!	cSY_CompanyFH    = _OBJ'OpenTable("SY_Company","SYSTEM")
+	cSY_TerminaFH    = _OBJ'OpenTable("SY_531APSEmvTerminal","SYSTEM")
+	cSY_ModuleFH     = _OBJ'OpenTable("SY_Module","SYSTEM")
+	cSY_ActivationFH = _OBJ'OpenTable("SY_Activation","SYSTEM")
+	cSY_DeveloperFH  = _OBJ'OpenTable("SY_Developer","SYSTEM")
+	cSY_ThemeFH      = _OBJ'OpenTable( "SY_Theme","SYSTEM")
+
+	cWorkfileFH      = _OBJ'CreateWorkTable(cWorkFIle$,dstRecID$)
+
+	! Define record field mapping
+	sTerminalSrc$    = "TerminalCode$,TerminalName$,Address1$,Address2$,Address3$,address4$,AlternateDirectory$," 						\
+					+ "AlternatePayrollDirectory$,Phone$,fax$,CompanyURL$,FederalID$,StateID$,PrefsDefaultCompany$," 				\
+					+ "PrintUserID$,UseWorkstationDfltPntrStdRpt$,UseWorkstationDfltPntrStdForm$,ExternalAccess$," 					\
+					+ "AllCapsCity$,PromptForDate$,AutoSetDate$,RestrictDate$,CreditCardEnable$,CreditCardLog$," 					\
+					+ "CreditCardDisplay$, CreditCardTransTimeout,CreditCardBatchAuthTrans$,"							 			\
+					+ "WebReportsServerName$,WebReportsAliasDirectory$,WebReportsDefaultSettings$,CompanyLevel," 					\
+					+ "SMTPServerAddressURL$,SMTPServerPort,SMTPEncryption$,"														\
+					+ "EmailUserID$,EmailLoginDomain$,Use128BitEncryption$,EmailAddress$,"											\
+					+ "DefaultFaxPrinte$,FaxCoverPage$,TradeName$,EnableBackgroundColor$,DisplayInactiveCustomersInALE$,"           \
+					+ "DisplayInactiveVendorsInALE$,BackgroundRGBRed,BackgroundRGBGreen,BackgroundRGBBlue,"                         \
+					+ "EnableWebServicesForCompany$,ThemeCode$"
+	sTerminalDst$    = "wrk.TerminalCode$,wrk.TerminalName$,wrk.Address1$,wrk.Address2$,wrk.Address3$,wrk.address4$," 					\
+					+ "wrk.AlternateDirectory$,wrk.AlternatePayrollDirectory$,wrk.Phone$,wrk.fax$,wrk.CompanyURL$," 				\
+					+ "wrk.FederalID$,wrk.StateID$,wrk.PrefsDefaultCompany$,wrk.PrintUserID$,wrk.UseWorkstationDfltPntrStdRpt$," 	\
+					+ "wrk.UseWorkstationDfltPntrStdForm$,wrk.ExternalAccess$,wrk.AllCapsCity$,wrk.PromptForDate$," 				\
+					+ "wrk.AutoSetDate$,wrk.RestrictDate$,wrk.CreditCardEnable$,wrk.CreditCardLog$,wrk.CreditCardDisplay$," 		\
+					+ "wrk.CreditCardTransTimeout,wrk.CreditCardBatchAuthTrans$," 													\
+					+ "wrk.WebReportsServerName$,wrk.WebReportsAliasDirectory$," 													\
+					+ "wrk.WebReportsDefaultSettings$,wrk.CompanyLevel,"															\
+					+ "wrk.SMTPServerAddress$,wrk.SMTPServerPort,wrk.SMTPEncryption$," 												\
+					+ "wrk.EmailUserID$,wrk.EmailLoginDomain$,wrk.Use128BitEncryption$,wrk.EmailAddress$,wrk.DefaultFaxPrinter$," 	\
+					+ "wrk.FaxCoverPage$,wrk.TradeName$,wrk.EnableBackgroundColor$,wrk.DisplayInactiveCustomersInALE$,"             \
+					+ "wrk.DisplayInactiveVendorsInALE$,wrk.BackgroundRGBRed,wrk.BackgroundRGBGreen,wrk.BackgroundRGBBlue,"         \
+					+ "wrk.EnableWebServicesForCompany$,wrk.ThemeCode$"
+	sModuleSrc$     = "ModuleCode$,ModuleName$"
+	sModuleDst$     = "wrk.ModuleCode$,wrk.ModuleName$"
+	sActivationSrc$ = "DataLevel"
+	sActivationDst$ = "wrk.DataLevel"
+	sDeveloperSrc$  = "developerName$"
+	sDeveloperDst$  = "wrk.developerDescription$"
+	sThemeSrc$      = "ThemeCodeDesc$"
+	sThemeDst$      = "wrk.ThemeCodeDesc$"
+
+	! Get UDF fields or other customizations(compile into IOLIST)
+	_OBJ'GetCustomizations(cWorkFile$, "SY_531APSEmvTerminal", _OBJ'_Class$, sTerminalSrc$, sTerminalDst$, $$, dstRecID$)
+	_OBJ'GetCustomizations(cWorkFile$, "SY_Module", _OBJ'_Class$, sModuleSrc$, sModuleDst$, $$, dstRecID$)
+	_OBJ'GetCustomizations(cWorkFile$, "SY_Activation", _OBJ'_Class$, sActivationSrc$, sActivationDst$, $$, dstRecID$)
+	_OBJ'GetCustomizations(cWorkFile$, "SY_Developer", _OBJ'_Class$, sDeveloperSrc$, sDeveloperDst$, $$, dstRecID$)
+	_OBJ'GetCustomizations(cWorkFile$, "SY_Theme", _OBJ'_Class$, sThemeSrc$, sThemeDst$, $$, dstRecID$)
+
+	SELECT * FROM cSY_TerminalFH BEGIN $$
+
+		READ DATA FROM REC(sTerminalSrc$) TO IOL=sTerminalDst$
+		active =0
+
+		IF NUL(AlternateDirectory$) {
+			wrk.AlternateDirectory$ = coSession'PathRoot$+"MAS_"+TerminalCode$
+		}
+		IF NUL(AlternatePayrollDirectory$) {
+			wrk.AlternatePayrollDirectory$ = coSession'PathRoot$+"MAS_"+TerminalCode$
+		}
+
+		IF coSession'CS {
+			IF NUL(AlternateDirectory$) {
+				wrk.AlternateDirectory$ = coSession'PathCSRoot$+"MAS_"+TerminalCode$
+			}
+			IF NUL(AlternatePayrollDirectory$) {
+				wrk.AlternatePayrollDirectory$ = coSession'PathCSRoot$+"MAS_"+TerminalCode$
+			}
+		}
+
+		READ DATA FROM $$ TO IOL=sThemeDst$
+		IF NOT(NUL(STP(wrk.ThemeCode$))) {
+			READ (cSY_ThemeFH, KEY=wrk.ThemeCode$, DOM=*NEXT)
+			READ DATA FROM REC(sThemeSrc$) TO IOL=sThemeDst$
+		}
+
+		SELECT *, REC=act$ FROM cSY_ActivationFH BEGIN TerminalKey$ END TerminalKey$:$FE$
+			IF coSession'UI {
+				progressMeterDelay ++
+				IF NOT(MOD(progressMeterDelay, 25)) {
+					ProgressBarOption$ = "update"
+					coSession'UI'ProgressBar(ProgressBarOption$)
+				}
+			}
+
+			active = isTRUE
+			datalevel = act.DataLevel
+			READ DATA FROM REC(sActivationSrc$) TO IOL=sActivationDst$
+			ModuleCode$ = $$
+			READ(cSY_ModuleFH, KEY=act.ModuleCode$, ERR=*NEXT)
+
+			IF NOT(NUL(ModuleCode$)) {
+				READ DATA FROM REC(sModuleSrc$) TO IOL=sModuleDst$
+				READ (cSY_DeveloperFH, KEY=act.Developer$, ERR=*NEXT)
+				READ DATA FROM REC(sDeveloperSrc$) TO IOL=sDeveloperDst$
+				WRITE (cWorkFileFH)
+			}
+		NEXT RECORD
+
+		IF NOT(active) {
+			WRITE (cWorkFileFH)
+		}
+	NEXT RECORD
+
+	CLOSE (cWorkFileFH,ERR=*NEXT)
+	CLOSE (cSY_TerminalFH,ERR=*NEXT)
+	CLOSE (cSY_ModuleFH,ERR=*NEXT)
+	CLOSE (cSY_ActivationFH,ERR=*NEXT)
+	CLOSE (cSY_DeveloperFH,ERR=*NEXT)
+	CLOSE (cSY_ThemeFH,ERR=*NEXT)
+
+	RETURN retSUCCESS
+
+
+GET_SOURCE_TABLES:
+
+	ENTER table$
+
+	! for Reports table$ will always be the cWorkFile$
+	! just return source table list
+
+	RETURN "SY_Terminal" + SEP + "SY_Module" + SEP + "SY_Activation" + SEP + "SY_Country" + SEP + "SY_Theme" + SEP
+
+
+SET_FORMULAS:
+
+	! set local formulas here; generic formulas are set in SY_ReportCommon
+
+	webReportsSetup = (coSession'CS)
+	retVal = _OBJ'SetReportFormula("WebReports", "'" + TBL(webReportsSetup, isNO$, isYES$) + "'")
+
+	relationalDatabaseSetup = (coSession'SQL <> 0)
+	retVal = _OBJ'SetReportFormula("RelationalDatabaseSetup", "'" + TBL(relationalDatabaseSetup, isNO$, isYES$) + "'")
+
+	IF coSession'IsRegistered("W/S") {
+		retVal = _OBJ'SetReportFormula("WebServicesRegistered", _OBJ'QUO$(isYES$))
+	}
+
+	RETURN retSUCCESS

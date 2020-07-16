@@ -1,0 +1,459 @@
+! AR_531Util01.m4p
+! Remove ACH data from credit card transactions
+! Author: Bob Sosbee
+! Copyright 2017-2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! RCS #236076 - 2018-12-07 - updated for new fields.
+! DI# 927 2020-01-24 #257696 - RCS
+!
+INIT:
+!
+	coSession=%sys_ss, retFAILURE=0,retSUCCESS=1,isTRUE=1,isFALSE=0,isYES$="Y",isNO$="N",isNULL$=$$
+	! #235917 - Display the user message regarding files in use message and skip.
+	retVal$=coSession'UI'MessageBox$("","Scan APS Payments Files and related files?\ \** All users must be out for the files to be updated! **","Style=C,Title=APS Payments File Utility 01")
+
+	if retVal$ = "CANCEL" {
+		run "SOA"
+	}
+	gosub UPDATE_FILES
+!
+Open_files:
+	ccFH		= %sys_ss'OpenTable("AR_CustomerCreditCard","COMPANY")
+	ptFH		= %sys_ss'OpenTable("AR_PaymentType","COMPANY")
+
+	! check if SO is installed and activated ****
+	doSO = coSession'isActivated("S/O")
+	if doSO {
+		soFH	= %sys_ss'OpenTable("SO_SalesOrderPayment","COMPANY")
+		inFH	= %sys_ss'OpenTable("SO_InvoicePayment","COMPANY")
+		shFH	= %sys_ss'OpenTable("SO_SalesOrderHistoryPayment","COMPANY")
+	}
+	! check for activation
+	coAPSActivation	= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation()
+		DROP OBJECT coAPSActivation
+	}	
+	if not(cAPSActivated) {
+		retVal$		= coSession'UI'MessageBox$("","APS is not Active for this company.","Style=O,Title=APS Payments File Utility 01")	! DI# 927 2020-01-24 #257696 - RCS
+		run "SOA"
+	}
+
+Mainline:
+
+	! AR_CustomerCreditCard
+	coSession'UI'ProgressBar("init", "Scanning... ", "Customer Credit Card", 1, "")
+
+	READ (ccFH,KEY="",DOM=*NEXT) ! must do a file operation to get the current number of records.
+	tr$			= fin(ccFH,"NUMREC"),recs=0,ttlrec=num(tr$)
+	Select *,rec=cc$ from ccFH begin $00$ end $FE$
+		read (ptFH,rec=PT$,key=cc.PaymentType$,dom=*continue)
+		SWITCH PT.PaymentMethod$
+			CASE "R" ! Credit Card
+				cc.Last4BankRoutingNos$				= isNULL$
+				cc.Last4BankAccountNos$				= isNULL$
+				cc.BankAccountType$					= isNULL$
+				cc.BankName$						= isNULL$
+				cc.D531APSAchAccountType$			= "B"
+				BREAK
+			CASE "A" ! ACH
+				cc.ExpirationDateYear$				= isNULL$
+				cc.ExpirationDateMonth$				= isNULL$
+				cc.CardType$						= isNULL$
+				cc.CorporateCustIDPurchOrder$		= isNULL$
+				cc.Last4UnencryptedCreditCardNos$	= isNULL$
+				cc.D531APSValidated$				= isNO$
+				cc.D531APSMaskedCard$				= isNULL$
+				BREAK
+			DEFAULT
+				CONTINUE
+				BREAK
+		END SWITCH
+		WRITE (ccFH,rec=cc$)
+		recs	++
+		cPct	= int((recs/ttlrec)*100)
+		coSession'UI'ProgressBar("update", "Scanning... ", "Customer Credit Card", cPct, "")
+	next record
+	coSession'UI'ProgressBar("update", "Scanning... ", "Customer Credit Card", 100, "")
+	wait 1
+	coSession'UI'ProgressBar("close"); wait .1
+	close (ccFH)
+
+	! AR_PaymentType
+	READ (ptFH,KEY="",DOM=*NEXT) ! must do a file operation to get the current number of records.
+	coSession'UI'ProgressBar("init", "Scanning... ", "AR Payment Types", 1, "")
+	tr$			= fin(ptFH,"NUMREC"),recs=0,ttlrec=num(tr$)
+	Select *,rec=pt$ from ptFH begin $00$ end $FE$
+		SWITCH PT.PaymentMethod$
+			CASE "R" ! Credit Card
+				if nul(pt.D531APSSendEmail$) { 		pt.D531APSSendEmail$		= isNO$ } ! RCS #226560 - 2017-07-28, #231618 changed to N by default per Zac 2018-03-27
+				if nul(pt.D531APSRequireCVV$) { 	pt.D531APSRequireCVV$		= isYES$ } ! RCS #237825 - 2018-05-23, changed to Y by default per Zac
+				if nul(pt.D531APSRetailAccount$) { 	pt.D531APSRetailAccount$	= isNO$ } ! RCS #237825 - 2018-05-23
+				BREAK
+			CASE "A" ! ACH
+				if nul(pt.D531APSSendEmail$) { 		pt.D531APSSendEmail$		= isNO$ } ! RCS #226560 - 2017-07-28, #231618 changed to N by default per Zac 2018-03-27
+				if nul(pt.D531APSRequireCVV$) { 	pt.D531APSRequireCVV$		= isNO$ } ! RCS #237825 - 2018-05-23
+				if nul(pt.D531APSRetailAccount$) { 	pt.D531APSRetailAccount$	= isNO$ } ! RCS #237825 - 2018-05-23
+				BREAK
+			DEFAULT
+				pt.D531APSSendEmail$	= isNO$ ! RCS #226560 - 2017-07-28
+				pt.D531APSRequireCVV$	= isNO$ ! RCS #237825 - 2018-05-23
+				pt.D531APSRetailAccount$= isNO$ ! RCS #237825 - 2018-05-23
+				BREAK
+		END SWITCH
+		WRITE (ptFH,rec=pt$)
+		recs	++
+		cPct	= int((recs/ttlrec)*100)
+		coSession'UI'ProgressBar("update", "Scanning... ", "AR Payment Types", cPct, "")
+	next record
+	coSession'UI'ProgressBar("update", "Scanning... ", "AR Payment Types", 100, "")
+	wait 1
+	coSession'UI'ProgressBar("close"); wait .1
+	close (ccFH)
+
+
+	if doSO {
+		! SO_SalesOrderPayment
+		READ (soFH,KEY="",DOM=*NEXT) ! must do a file operation to get the current number of records.
+		tr$			= fin(soFH,"NUMREC"),recs=0,ttlrec=num(tr$)
+		coSession'UI'ProgressBar("init", "Scanning... ", "Order Payments", 1, "")
+		select *,rec=SOP$ from soFH begin $00$
+			read (ptFH,rec=PT$,key=sop.PaymentType$,dom=*continue)
+			SWITCH PT.PaymentMethod$
+				CASE "R" ! Credit Card
+					sop.Last4BankRoutingNos$				= isNULL$
+					sop.Last4BankAccountNos$				= isNULL$
+					sop.BankAccountType$					= isNULL$
+					sop.BankName$							= isNULL$
+					sop.D531APSAchAccountType$				= "B"
+					BREAK
+				CASE "A" ! ACH
+					sop.ExpirationDateYear$					= isNULL$
+					sop.ExpirationDateMonth$				= isNULL$
+					sop.CardType$							= isNULL$
+					sop.CorporateCustIDPurchOrder$			= isNULL$
+					sop.Last4UnencryptedCreditCardNos$		= isNULL$
+					sop.D531APSValidated$					= isNO$
+					sop.D531APSMaskedCard$					= isNULL$
+					BREAK
+				DEFAULT
+					CONTINUE
+					BREAK
+			END SWITCH
+			WRITE (soFH,rec=sop$)
+			recs	++
+			cPct	= int((recs/ttlrec)*100)
+			coSession'UI'ProgressBar("update", "Scanning... ", "Order Payments", cPct, "")
+		next record
+		coSession'UI'ProgressBar("update", "Scanning... ", "Order Payments", 100, "")
+		wait 1
+		coSession'UI'ProgressBar("close"); wait .1
+		close (soFH)
+
+		! SO_InvoicePayment
+		READ (inFH,KEY="",DOM=*NEXT) ! must do a file operation to get the current number of records.
+		tr$			= fin(inFH,"NUMREC"),recs=0,ttlrec=num(tr$)
+		coSession'UI'ProgressBar("init", "Scanning... ", "Invoice Payments", 1, "")
+		select *,rec=INV$ from inFH begin $00$
+			read (ptFH,rec=PT$,key=inv.PaymentType$,dom=*continue)
+			SWITCH PT.PaymentMethod$
+				CASE "R" ! Credit Card
+					inv.Last4BankRoutingNos$				= isNULL$
+					inv.Last4BankAccountNos$				= isNULL$
+					inv.BankAccountType$					= isNULL$
+					inv.BankName$							= isNULL$
+					inv.D531APSAchAccountType$				= "B"
+					BREAK
+				CASE "A" ! ACH
+					inv.ExpirationDateYear$					= isNULL$
+					inv.ExpirationDateMonth$				= isNULL$
+					inv.CardType$							= isNULL$
+					inv.CorporateCustIDPurchOrder$			= isNULL$
+					inv.Last4UnencryptedCreditCardNos$		= isNULL$
+					inv.D531APSValidated$					= isNO$
+					inv.D531APSMaskedCard$					= isNULL$
+					BREAK
+				DEFAULT
+					CONTINUE
+					BREAK
+			END SWITCH
+			WRITE (inFH,rec=inv$)
+			recs	++
+			cPct	= int((recs/ttlrec)*100)
+			coSession'UI'ProgressBar("update", "Scanning... ", "Invoice Payments", cPct, "")
+		next record
+		coSession'UI'ProgressBar("update", "Scanning... ", "Invoice Payments", 100, "")
+		wait 1
+		coSession'UI'ProgressBar("close"); wait .1
+		close (inFH)
+
+		! SO_SalesOrderHistoryPayment
+		READ (shFH,KEY="",DOM=*NEXT) ! must do a file operation to get the current number of records.
+		tr$			= fin(shFH,"NUMREC"),recs=0,ttlrec=num(tr$)
+		coSession'UI'ProgressBar("init", "Scanning... ", "Order History Payments", 1, "")
+		select *,rec=SOH$ from shFH begin $00$
+			read (ptFH,rec=PT$,key=sop.PaymentType$,dom=*continue)
+			SWITCH PT.PaymentMethod$
+				CASE "R" ! Credit Card
+					soh.Last4BankRoutingNos$				= isNULL$
+					soh.Last4BankAccountNos$				= isNULL$
+					soh.BankAccountType$					= isNULL$
+					soh.BankName$							= isNULL$
+					BREAK
+				CASE "A" ! ACH
+					soh.ExpirationDateYear$					= isNULL$
+					soh.ExpirationDateMonth$				= isNULL$
+					soh.CardType$							= isNULL$
+					soh.CorporateCustIDPurchOrder$			= isNULL$
+					soh.Last4UnencryptedCreditCardNos$		= isNULL$
+					BREAK
+				DEFAULT
+					CONTINUE
+					BREAK
+			END SWITCH
+			WRITE (shFH,rec=soh$)
+			recs	++
+			cPct	= int((recs/ttlrec)*100)
+			coSession'UI'ProgressBar("update", "Scanning... ", "Order History Payments", cPct, "")
+		next record
+		coSession'UI'ProgressBar("update", "Scanning... ", "Order History Payments", 100, "")
+		wait 1
+		coSession'UI'ProgressBar("close"); wait .1
+		close (shFH)
+	}
+	
+	! Scan and fix Sy_531APSTransactionLog #241845 2018-09-17 RCS
+	coCompany			= NEW("SY_Company_SVC", coSession)
+	coCompany'FIND(coSession'companyKey$)
+
+	c2p.Enabled			= coCompany'C2PEnabled
+	c2p.Option			= coCompany'C2POption
+
+	coCompany'GetValue("D531_C2PAPIKey$", c2p.APIKey$)
+	c2p.CompanyCode$	= coSession'CompanyCode$
+	
+	coRequest	= new("SY_531APSRequest",coSession)
+	
+	tLogFH		= coSession'OpenTable("SY_531APSTransactionLog","SYSTEM")
+	READ (tLogFH,KEY="",DOM=*NEXT) ! must do a file operation to get the current number of records.
+	tr$			= fin(tLogFH,"NUMREC"),recs=0,ttlrec=num(tr$)
+	coSession'UI'ProgressBar("init", "Scanning... ", "ClickToPay Log File", 1, "")
+
+	select *,rec=LOG$ from tLogFH begin $00$	\ 
+		where nul(log.CompanyCode$)
+		tKey$	= kec(tLogFH)
+		SWITCH log.DocumentCode$
+			CASE "IC","ID","IG","IP","IU" ! Pull from the request field
+				invoiceID$				= isNULL$
+				customerID$				= isNULL$
+				LinkCode$				= isNULL$
+				coRequest'ParseData(log.Request$,"companyId",value$)
+				log.CompanyCode$		= ucs(value$)
+				coRequest'ParseData(log.Request$,"invoiceId",invoiceID$)
+				coRequest'ParseData(log.Request$,"customerId",customerID$)
+				log.ARDivisionNo$		= mid(customerID$, 1, 2)
+				log.CustomerNo$			= mid(customerID$, 3)
+				log.InvoiceNo$			= mid(invoiceID$, 1, len(invoiceID$)-2)
+				log.InvoiceType$		= mid(invoiceID$, len(InvoiceId$)-1)
+				coRequest'ParseData(log.Response$,"clickToPayLinkCode",LinkCode$)
+				log.D531_C2PLinkCode$	= LinkCode$
+				BREAK
+			CASE "PQ" ! Pull company from the request
+				coRequest'ParseData(log.Request$,"companyId",value$)
+				log.CompanyCode$		= ucs(value$)
+				BREAK
+			CASE "PM" ! Match on APIKEY for company
+				coRequest'ParseData(log.Request$,"apiKey",value$)
+				if value$=c2p.APIKey$ {
+					log.CompanyCode$	= coSession'CompanyCode$
+				}
+				BREAK
+			DEFAULT
+				CONTINUE
+				BREAK
+		END SWITCH
+		WRITE (tLogFH,rec=log$)
+
+		recs++
+		cPct=int((recs/ttlrec)*100)
+		coSession'UI'ProgressBar("update", "Scanning... ", "ClickToPay Log File", cPct, "")
+	next record
+	coSession'UI'ProgressBar("update", "Scanning... ", "ClickToPay Log File", 100, "")
+	wait 1
+	coSession'UI'ProgressBar("close"); wait .1
+	close (tLogFH)
+	wait 1
+
+	! Now test the AR_InvoiceHistoryHeader for linkage. #241845 2018-09-17 RCS
+	if c2p.Enabled {
+		tLogFH		= coSession'OpenTable("SY_531APSTransactionLog","SYSTEM")
+		arCustFH	= coSession'OpenTable("AR_Customer","COMPANY")
+		arHistFH	= coSession'OpenTable("AR_InvoiceHistoryHeader","COMPANY")
+		
+		READ (arCustFH,KEY="",DOM=*NEXT) ! must do a file operation to get the current number of records.
+		tr$			= fin(arCustFH,"NUMREC"),recs=0,ttlrec=num(tr$)
+		coSession'UI'ProgressBar("init", "Scanning... ", "ClickToPay Invoice Links", 1, "")
+
+		select *,rec=Cust$ from arCustFH begin $00$
+		
+			cust.D531_C2POption$=tbl(pos(isYES$=cust.D531_C2POption$),isNO$,isYES$)
+			SWITCH c2p.Option
+				CASE isTRUE ! Opt Out mode
+					cSkip = isFALSE
+					if cust.D531_C2POption$ = isYES$ { cSKip = isTRUE } ! will skip
+					BREAK
+				CASE isFALSE ! Opt In mode
+					cSkip = isTRUE
+					if cust.D531_C2POption$ = isYES$ { cSKip = isFALSE } ! will not skip
+					BREAK
+			END SWITCH
+			if cust.OpenItemCustomer$ <> isYES$ {
+				cSkip		= isTRUE ! skip balance forward.
+			}
+	
+			select *,rec=Hist$ from arHistFH,kno="KCUSTOMER"						\
+				begin	cust.ARDivisionNo$:cust.CustomerNo$+$00$					\
+				end		cust.ARDivisionNo$:cust.CustomerNo$+"zzzzzzz"+"999999"+$FE$	\
+				where	pos(hist.ModuleCode$="A/R|S/O")
+					SWITCH cSkip
+						CASE isTRUE ! not selected for C2P
+							inFile		= isFALSE
+							select *,rec=Log$ from tLogFH,kno="kInvoice"									\
+								begin	c2p.CompanyCode$:hist.InvoiceNo$:hist.InvoiceType$+$00$				\
+								end		c2p.CompanyCode$:hist.InvoiceNo$:hist.InvoiceType$+"zzzzzz"+$FE$	\
+								where	pos(log.documentCode$ = "IC|IU|IG") and log.statusClassCode = 1
+									if stp(hist.ARDivisionNo$+hist.CustomerNo$) = stp(log.ARDivisionNo$+log.CustomerNo$) {
+										inFile	= isTrue
+										BREAK
+									}
+							next record
+							if not(inFile) {
+								hist.D531_C2PWebInvCreated$	= isNO$
+								hist.D531_C2PWebInvUpdated$	= isNO$
+								hist.D531_C2PLinkCode$		= isNULL$
+								write (arHistFH,rec=hist$)
+							}
+							BREAK
+						DEFAULT
+							inFile		= isFALSE
+							select *,rec=Log$ from tLogFH,kno="kInvoice" 									\
+								begin	c2p.CompanyCode$:hist.InvoiceNo$:hist.InvoiceType$+$00$				\
+								where	pos(log.documentCode$ = "IC|IU|IG") and log.statusClassCode = 1
+									if hist.InvoiceNo$+hist.InvoiceType$ <> log.InvoiceNo$+log.InvoiceType$ {
+										BREAK
+									}
+									if stp(hist.ARDivisionNo$+hist.CustomerNo$) = stp(log.ARDivisionNo$+log.CustomerNo$) {
+										inFile	= isTrue
+										BREAK
+									}
+							next record
+							if not(inFile) {
+								hist.D531_C2PWebInvCreated$	= isNO$
+								hist.D531_C2PWebInvUpdated$	= isNO$
+								hist.D531_C2PLinkCode$		= isNULL$
+								write (arHistFH,rec=hist$)
+							} else {
+								hist.D531_C2PWebInvCreated$	= isYES$
+								hist.D531_C2PWebInvUpdated$	= isYES$
+								hist.D531_C2PLinkCode$		= log.D531_C2PLinkCode$
+								write (arHistFH,rec=hist$)
+							}
+							BREAK
+					END SWITCH
+			next record
+			recs++
+			cPct=int((recs/ttlrec)*100)
+			coSession'UI'ProgressBar("update", "Scanning... ", "ClickToPay Log File", cPct, "")
+
+		next record
+		coSession'UI'ProgressBar("update", "Scanning... ", "ClickToPay Log File", 100, "")
+		wait 1
+		coSession'UI'ProgressBar("close"); wait .1
+		close (tLogFH)
+		close (arCustFH)
+		close (arHistFH)
+		drop object coCompany,err=*next
+		drop object coRequest,err=*next
+		wait 1
+	}
+	coSession'UI'MessageBox$ ("","Scan completed.","Style=O,Title=APS File Utility 01")
+
+	! update URLs
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	retVal				= coAPSActivation'UpdatesURLs()
+	drop object coAPSActivation,err=*next
+	
+run "SOA"
+!
+
+! added #232362 - to resolve unconverted files.
+UPDATE_FILES: ! Used to insure that all C2P/APS files are updated.
+ENTER (cCompanyCode$),err=*next
+	if not(coSession) { coSession = %sys_ss }
+	if nul(cCompanyCode$) { cCompanyCode$=coSession'CompanyCode$ }
+	retVal	= retFAILURE
+	filecnt	= 0
+
+	IF coSession'UI {
+		action$  = "init"
+		title$   = "Checking APS files for company " + cCompanyCode$
+		message$ = isNULL$
+		coSession'UI'ProgressBar(action$, title$, message$, 0)
+		wait .1
+	}
+
+	! RCS #236076 - 2018-12-07 - updated additional files.
+	call PGN+";Create_Tables","AR_531APSConvertPaymentTypes",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 1
+	call PGN+";Create_Tables","AR_531APSCustomerCreditCard",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 2
+	call PGN+";Create_Tables","AR_531APSPaymentType",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 3
+ 	call PGN+";Create_Tables","AR_CashReceiptsHeader",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 4
+ 	call PGN+";Create_Tables","AR_CashReceiptsHistory",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 5
+	call PGN+";Create_Tables","AR_Customer",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 6
+	call PGN+";Create_Tables","AR_CustomerCreditCard",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 7
+	call PGN+";Create_Tables","AR_InvoiceHeader",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 8
+	call PGN+";Create_Tables","AR_InvoiceHistoryHeader",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 9
+	call PGN+";Create_Tables","AR_InvoiceHistoryPayment",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 10
+	call PGN+";Create_Tables","AR_InvoiceHistoryWrk",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 11
+	call PGN+";Create_Tables","AR_InvoiceWrk",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 12
+	call PGN+";Create_Tables","AR_PaymentType",cCompanyCode$,tmpVal,coSession! ; filecnt += tmpVal ! 13
+ 	call PGN+";Create_Tables","AR_TransactionPaymentHistory",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 14
+ 	call PGN+";Create_Tables","AR_TransactionPosting",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 15 #241845 2018-09-17 RCS
+
+ 	call PGN+";Create_Tables","SO_InvoiceHeader",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 16
+ 	call PGN+";Create_Tables","SO_InvoicePayment",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 17
+ 	call PGN+";Create_Tables","SO_InvoiceWrk",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 18
+ 	call PGN+";Create_Tables","SO_SalesOrderPayment",cCompanyCode$,tmpVal,coSession; filecnt += tmpVal ! 19
+
+ 	tmpVal	= coSession'CreateTable("SY_531APSDocumentHeader","SYSTEM",err=*next); filecnt += tmpVal ! 20 if this file isn't present, not a C2P system.
+ 	tmpVal	= coSession'CreateTable("SY_531APSDocumentDetail","SYSTEM",err=*next); filecnt += tmpVal ! 21
+ 	tmpVal	= coSession'CreateTable("SY_531APSTransactionLog","SYSTEM",err=*next); filecnt += tmpVal ! 22
+
+	IF coSession'UI {
+		action$  = "close"
+		coSession'UI'ProgressBar(action$)
+		wait .1
+	}
+
+RETURN
+!
+
+CREATE_TABLES: ! called/performed.
+ENTER cFileName$,cCompanyCode$,retVal,coSession
+
+	retFAILURE=0,retSUCCESS=1,isTRUE=1,isFALSE=0
+	if nul(cCompanyCode$) { cCompanyCode$=coSession'CompanyCode$ }
+
+	IF coSession'UI {
+		action$  = "Update"
+		title$   = "Checking APS Payments files for company " + cCompanyCode$
+		message$ = "Checking file: " + cFileName$
+		coSession'UI'ProgressBar(action$, title$, message$, 0)
+		wait .5
+	}
+
+	wait .1 ! force window and SQL to catch up.
+	retVal	= retFAILURE
+	retVal	= coSession'CreateTable(cFileName$,"COMPANY:" + cCompanyCode$,ERR=*NEXT)
+
+EXIT ! for the CALL
+!

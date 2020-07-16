@@ -1,0 +1,121 @@
+! $Id$: AR_531APSInvoiceHistoryInquiry_ui.pvc $
+! Copyright 2017-2019 Accounting Systems, Inc.
+! Bob Sosbee #232007 - 2019-02-19
+!
+DEF CLASS "AR_531APSInvoiceHistoryInquiry_ui" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "AR_InvoiceHistoryInquiry_ui"
+
+	! Public Properties
+
+	! Local/Private Properties
+	! working vars
+	LOCAL c2p.Enabled
+	LOCAL c2p.Option
+	LOCAL cSkip
+
+	! object handles
+	LOCAL coCompany
+	LOCAL coRequest
+
+	! file handles
+	LOCAL c2p.AR_CustFh
+	LOCAL cAR_AROpenInvFH
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL PERFORM BT_C2PWeb()						BT_C2P_WEB
+	FUNCTION LOCAL PERFORM CheckForEnable()					CHECK_FOR_ENABLE
+	FUNCTION LOCAL PERFORM PostLoadHeader()					POST_LOAD_HEADER
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+	c2p.companyCode$	= LCS(coSession'companyCode$)
+	c2p.companyKey$		= coSession'companyKey$
+
+	coCompany			= NEW ("SY_Company_SVC", coSession)
+	coCompany'FIND(c2p.companyKey$)
+	c2p.Enabled 		= coCompany'C2PEnabled			! C2P active
+	cSkip				= isTRUE
+	
+	coRequest			= NEW("SY_531APSRequest", coSession)
+	
+	IF NOT(c2p.AR_CustFh) {
+		c2p.AR_CustFh	= _OBJ'OpenTable("AR_Customer", pthCOMPANY$)
+	}
+	IF NOT(cAR_AROpenInvFH) {
+		cAR_AROpenInvFH	= _OBJ'OpenTable("AR_OpenInvoice",pthCOMPANY$)
+	}
+
+RETURN
+!
+
+ON_DELETE:
+	drop object coCompany,err=*next
+	coCompany			= 0
+	DROP OBJECT coRequest, ERR=*next
+	coRequest			= 0
+	
+	if c2p.AR_CustFh {
+		CLOSE (c2p.AR_CustFh,err=*next)
+		c2p.AR_CustFh	= 0
+	}
+	
+	if cAR_AROpenInvFH {
+		CLOSE (cAR_AROpenInvFH,err=*next)
+		cAR_AROpenInvFH	= 0
+	}
+	
+RETURN
+!
+
+BT_C2P_WEB:
+	! check invoice balance
+	bal.BALANCE		= 0
+	READ (cAR_AROpenInvFH, KEY = ARDivisionNo$:CustomerNo$:InvoiceNo$:InvoiceType$, REC = bal$,DOM=*NEXT )
+
+	coCompany'GetWebInvoice(InvoiceNo$,HeaderSeqNo$,coSession)	! #256753 - 2019-09-04 - RCS - display regardless if there is a link code.
+	
+RETURN retSUCCESS
+!
+
+CHECK_FOR_ENABLE:
+
+	IF c2p.Enabled {
+		_OBJ'SetControlState("C2P.grp$", ctlSHOW)
+	} ELSE {
+		_OBJ'SetControlState("C2P.grp$", ctlHIDE)
+	}
+	! Opt in/Opt Out
+	cSkip				= isTRUE
+	cFound				= isFALSE
+	READ (c2p.AR_CustFh,rec=c2p$,key=ARDivisionNo$:CustomerNo$,err=*next); cFound	= isTRUE
+	if cFound {
+		cSkip			= coRequest'OptInOrOut(c2p.D531_C2POption$)
+		if c2p.OpenItemCustomer$ <> isYES$ {
+			cSkip		= isTRUE 		! skip balance forward.
+		}
+	}
+
+	! Not available for open item customers or who are not enabled for C2P
+	IF cSkip {
+		_OBJ'SetControlState("C2P.grp$", ctlDISABLE)
+	} ELSE {
+		_OBJ'SetControlState("C2P.grp$", ctlENABLE)
+	}
+
+RETURN retSUCCESS
+!
+
+POST_LOAD_HEADER:
+
+	retVal				= _OBJ'PostLoadHeader(FROM "AR_531APSInvoiceHistoryInquiry_ui_BASE")
+	_OBJ'CheckForEnable()
+
+RETURN retVal
+!

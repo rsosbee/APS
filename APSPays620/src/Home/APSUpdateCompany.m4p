@@ -1,0 +1,53 @@
+! $Id: APSUpdateCompany.m4p $
+! Update SY_Company.M4T file
+! Copyright 2013-2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! Irina Kouptsova.
+! Modified 2016-06-03 PLW to use session object so we update SY_Company in SQL, also.
+! Modified 2017-11-01 RCS Added CreateTable for the activation file. #231342.
+! Modified 2017-11-18 RCS Added CreateTable for the Company file. #232007.
+! Modified 2018-06-06 RCS Added CreateTable check for old columns in the company file. #232007.
+
+BEGIN
+	coSession = NEW("SY_Session")
+	IF coSession<1 {
+		tmpMsgText$ = "Unable to create session object"
+		MSGBOX tmpMsgText$ ! *SC-OK*
+	} ELSE {
+		tmpMsgText$ = "" ! 232007 - RCS
+		tstF = coSession'OpenTable("SY_Company","SYSTEM")
+		tstPath$ = PTH(tstF) ! we do this to get the full spec of the SY_Company table
+		CLOSE(tstF); tstF = 0
+		
+		REPEAT
+			tstF = FFN(tstPath$)
+			IF tstF>0 { CLOSE(tstF) }
+		UNTIL tstF<=0
+				
+		! Now all the SY_Companies should be closed
+		tstRet = coSession'CreateTable("SY_Company","SYSTEM") ! this applies the changes
+		IF NOT(tstRet) {
+			tmpMsgText$ += "Error updating SY_Company: "+coSession'LastErrorMsg$+"\"
+		} ELSE {
+			! # 232007 - 2018-06-06 - RCS - added check if they installed, but did not do the batch for standard APS first.
+ 			tstF = coSession'OpenTable("SY_Company","SYSTEM")
+ 			IF POS("D531APSMERCHANTID"=UCS(LST(IOL(tstF)))) {
+				tmpMsgText$ += "********* APS was installed but not updated first! *********\"
+				tmpMsgText$ += "Please reinstall C2P.  No need to run this batch file again."
+  			}
+		}
+		tstRet = coSession'CreateTable("SY_531APSActivation","SYSTEM") ! this creates the activation file
+		IF NOT(tstRet) { tmpMsgText$ += "Error updating SY_531APSActivation: "+coSession'LastErrorMsg$+"\" }
+		
+		tstRet = coSession'CreateTable("SY_531APSCompany","SYSTEM") ! this creates the Company file #232007 - RCS
+		IF NOT(tstRet) { tmpMsgText$ += "Error updating SY_531APSActivation: "+coSession'LastErrorMsg$+"\" }
+
+		! create APS transaction log
+		tstRet = coSession'CreateTable("SY_531APSTransactionLog","SYSTEM") ! this creates the C2P transaction log #232007 - RCS
+		IF NOT(tstRet) { tmpMsgText$ += "Error updating SY_531APSTransactionLog: "+coSession'LastErrorMsg$+"\" }
+		
+		if tmpMsgText$>"" { MSGBOX tmpMsgText$ } ! *SC-OK*
+		if tmpMsgText$="" { MSGBOX "SY_Company has been updated" } ! *SC-OK* 
+	}
+	
+QUIT
+!

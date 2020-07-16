@@ -1,0 +1,172 @@
+! $Id: SY_531APSMultiCurrencyCommon.pvc $
+! Copyright 2019 Accounting Systems, Inc.  Columbia, SC
+! PLWhirley
+! 
+DEF CLASS "SY_531APSMultiCurrencyCommon" CREATE REQUIRED DELETE REQUIRED 
+	! Inherits from the following class(es)
+	
+	! Public Properties
+	
+	! Local/Private Properties
+	LOCAL cAllowedDownloadCurrency$		! Used in Cash Receipts Download
+	LOCAL cAPSMultiCurrency				! PLW 2019-02-07 Ticket #248049 if MC installed and enabled is checked
+	LOCAL cAPSMultiCurrencyInstalled	! PLW 2019-03-10 Ticket #248059 check for DSD multicurrency
+	LOCAL cDefaultCurrency$				!
+	LOCAL cSkippedCurrencyMemFH			! Used to accumulate skipped transaction amounts.
+	LOCAL cSkippedCurrencyIOL$			= CPL("IOLIST skipCurrencyCode$, skipCount, skipAmount")
+	
+	! objects
+	LOCAL coAPSCurrencyBus				! PLW 2019-02-08 Ticket #248049 MultiCurrency Compatibility
+	
+	
+	! MultiCurrency Compatibility PLW 2019-02-06 Ticket #248049
+	FUNCTION LOCAL AddMultiCurrency(CurrencyCode$,ReqString$)				ADD_MULTICURRENCY
+	FUNCTION LOCAL GetISOCurrency(CurrencyCode$,IsoCurrencyCode$)			GET_ISO_CURRENCY
+	FUNCTION LOCAL MultiCurrencyEnabled()									MULTICURRENCY_ENABLED
+	FUNCTION LOCAL PERFORM ProcessThisCurrency(tmpCurrency$)				PROCESS_THIS_CURRENCY ! called in cash receipts
+	FUNCTION LOCAL SetBankCurrency(C2PEntryCurrency$)						SET_BANK_CURRENCY
+	FUNCTION LOCAL SetC2PCurrency(possibleCurrency$,C2PEntryCurrency$)		SET_C2P_CURRENCY
+	FUNCTION LOCAL PERFORM SkippedCurrency(tmpCurrency$,tmpPayment)			SKIPPED_CURRENCY
+	
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	dropCompanyObj				= isFALSE
+	IF NOT(coCompany) {
+		coCompany				= NEW("SY_Company_SVC",coSession)
+		dropCompanyObj			= isTRUE
+	}
+	coCompany'FIND(coSession'companyKey$)
+	coCompany'GetValue("D531_C2PCurrency$",cDefaultCurrency$)
+	coCompany'GetValue("D531EnableMultiCurrency$",tmpMultiCurrency$) ! PLW 2019-02-07 Ticket #248049
+	cAPSMultiCurrencyInstalled	= _obj'MultiCurrencyEnabled()
+	cAPSMultiCurrency			= cAPSMultiCurrencyInstalled*(tmpMultiCurrency$="Y") ! PLW 2019-02-07 Ticket #248049
+	IF cAPSMultiCurrencyInstalled {
+		coAPSCurrencyBus		= NEW("CX_CurrencyCode_bus",coSession) ! PLW 2019-02-08 Ticket #248049
+	}
+	IF dropCompanyObj {
+		DROP OBJECT coCompany,ERR=*PROCEED
+		coCompany				= 0
+	}
+RETURN 
+!
+
+ON_DELETE:
+	DROP OBJECT coAPSCurrencyBus,ERR=*PROCEED; coAPSCurrencyBus=0 ! PLW 2019-02-11 Ticket #248049
+RETURN 
+!
+
+GET_ISO_CURRENCY: ! PLW 2019-02-06 Ticket #248049
+ENTER tmpCurrencyCode$,IsoCurrencyCode$
+	IsoCurrencyCode$			= $$
+	IF cAPSMultiCurrencyInstalled {
+		IF NUL(tmpCurrencyCode$) {
+			! tmpCurrencyCode$ = "USD" ! PLW 2019-02-10 
+			! Per conversation with Zac 2019-02-08. If we have no currency, or if we 
+			! do not have EnableMultiCurrency$ selected in company, we should send neither
+			! &Currenty nor &process-id and just let gateway figure it out.
+			IF NOT(NUL(%cEntryCurrency$)) {
+				tmpCurrencyCode$	= %cEntryCurrency$
+			} ELSE {
+				RETURN retFAILURE
+			}
+		}
+		! Get the ISO currency value here
+		retVal					= coAPSCurrencyBus'FIND(tmpCurrencyCode$)
+		IF retVal				= edtEXISTS {
+			coAPSCurrencyBus'GetValue("ISOCurrencyCode$",IsoCurrencyCode$)
+			IF NUL(IsoCurrencyCode$) {
+				retVal			= retFAILURE
+			}
+		}
+	}
+RETURN retVal
+!
+
+ADD_MULTICURRENCY: ! PLW 2019-02-06 Ticket #248049 Used in AR_531APSCreditCardCommon
+ENTER tmpCurrencyCode$,RequestString$
+	_obj'GetISOCurrency(tmpCurrencyCode$,IsoCurrencyCode$)
+	IF NOT(NUL(IsoCurrencyCode$)) {
+		IsoCurrencyCode$		= ARCreditCard'APSURLEncoding$(UCS(IsoCurrencyCode$))
+		RequestString$			+= "&currency="+IsoCurrencyCode$
+		IF cAPSMultiCurrency { ! If MC Enabled box is checked we send processor-id.
+			RequestString$		+= "&processor-id=APS"+IsoCurrencyCode$
+		}
+	}
+RETURN retSUCCESS
+!
+
+SET_C2P_CURRENCY: ! PLW 2019-02-12 Ticket #248049 Used in SO_531APSInvoice_bus.pvc
+ENTER possibleCurrency$,C2PEntryCurrency$
+	_obj'GetISOCurrency(possibleCurrency$,IsoCurrencyCode$) ! PLW 2019-02-11 Ticket #248049
+	IF NOT(NUL(IsoCurrencyCode$)) { ! PLW 2019-02-11 Ticket #248049
+		C2PEntryCurrency$		= IsoCurrencyCode$ ! PLW 2019-02-11 Ticket #248049
+	} ELSE { ! PLW 2019-02-11 Ticket #248049
+		C2PEntryCurrency$		= cDefaultCurrency$
+	}
+RETURN retSUCCESS
+!
+
+SET_BANK_CURRENCY: ! PLW 2019-02-12 Ticket #248049 Used in AR_531APSCashReceiptsDeposit_bus.pvc
+ENTER C2PEntryCurrency$
+	C2PEntryCurrency$			= $$
+	_obj'GetValue("ARMC_234_BankCurrency$",possibleCurrency$)
+	_obj'GetISOCurrency(possibleCurrency$,IsoCurrencyCode$) ! PLW 2019-02-11 Ticket #248049
+	IF NOT(NUL(IsoCurrencyCode$)) { ! PLW 2019-02-11 Ticket #248049
+		C2PEntryCurrency$		= IsoCurrencyCode$ ! PLW 2019-02-11 Ticket #248049
+	} ELSE { ! PLW 2019-02-11 Ticket #248049
+		C2PEntryCurrency$		= cDefaultCurrency$
+	}
+	IF cAPSMultiCurrency {
+		IF coSession'UI {
+			currencyMsg$		= "Which currencies do you wish to download"
+			currencyOpt$		= "ICON=QUESTION, CUSTOM="+C2PEntryCurrency$+" Only/All Currencies, DEFBTN=1"
+			choice$=coSession'UI'MessageBox$($$,currencyMsg$,currencyOpt$)
+			IF POS("ALL"=UCS(choice$)) {
+				C2PEntryCurrency$	= $$
+			}
+		}
+	} ELSE {
+		C2PEntryCurrency$		= $$ ! PLW if they didn't enable multicurrency we download everything.
+	}
+RETURN retSUCCESS
+!
+
+MULTICURRENCY_ENABLED: ! PLW 2019-02-08 Ticket #248049
+	retVal=coSession'GetParameter("C/X","MCEnabled$",MCEnabled$)
+	IF retVal {
+		retVal					= (MCEnabled$	= "Y")
+	}
+RETURN retVal
+!
+PROCESS_THIS_CURRENCY:
+	c2p.currency$				= $$
+	retVal=isTRUE
+	_obj'GetResponse(payment,"currency")
+	IF NOT(NUL(cAllowedDownloadCurrency$)) AND NOT(POS(PAD(c2p.currency$,3) = cAllowedDownloadCurrency$,3)) {
+		duplicatePayments		++
+		duplicatePayments$		+= STR(payment) + SEP
+		_obj'SkippedCurrency(c2p.currency$,payment)
+		retVal					= isFALSE
+	}
+RETURN retVal
+!
+
+SKIPPED_CURRENCY:
+ENTER (tmpCurrency$),(tmpPayment)
+	_obj'GetResponse(tmpPayment,"amount") ! returns c2p.paymentAmount
+	IF NOT(cSkippedCurrencyMemFH) {
+		cSkippedCurrencyMemFH	= HFN
+		OPEN (cSkippedCurrencyMemFH,IOL=cSkippedCurrencyIOL$)"*MEMORY*"
+	}
+	READ DATA FROM $$ TO IOL	= cSkippedCurrencyIOL$
+	READ (cSkippedCurrencyMemFH,KEY=tmpCurrency$,DOM=*NEXT)
+	skipCurrencyCode$			= tmpCurrency$
+	skipCount					++
+	skipAmount					+= c2p.PaymentAmount
+	WRITE (cSkippedCurrencyMemFH,KEY=skipCurrencyCode$)
+RETURN 
+!

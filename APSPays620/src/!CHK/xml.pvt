@@ -1,0 +1,419 @@
+! *obj/xml -- PxPlus simple XML node splitter
+! 
+! This object can be used to load/generate an XML string.  It parses the XML
+! into nodes where each node can have sub-nodes, attributes, a value and a tag
+! 
+! Methods:
+! 
+! set_xml(xml$)    Load and create nodes given XML string
+! .                  (top node can contain multile inner nodes from XML)
+! set_xml_1(xml$)  Load and create nodes given XML string
+! .                  (top node is outer most node of which there can only one)
+! get_xml$()       Return the XML string
+! 
+! node(n)          Return the sub node object 'n'
+! attr(n)          Return the attribute object 'n'
+! 
+! add_node(n)      Add a new sub-node and return its object id
+! .                  n = Insertion point (0=append)
+! add_node(n,obj)  Add a new sub-tree (removes node 1 from passed object)
+! add_node(tag$)   Append sub-node with given tag
+! add_node(tag$,val$) Append sub-node with given tag and value
+! add_node(tag$,n) Add sub-node with given tag at specified insert point
+! add_node(tag$,val$,n)
+! .                Append sub-node with given tag and value
+! del_node(n)      Drop the node specified
+! 
+! add_attr(n)      Add a new attribute and return its object id
+! .                  n = Insertion point (0=append)
+! add_attr(tag$)   Append new attribute
+! add_attr(tag$,n) Add new attribute at inert point
+! del_attr(n)      Drop the attribute specified
+! 
+! find_node(tag$)  Find First sub-node with given tag (0=Not found)
+! find_node(tag$,after)
+! .                Find next sub-node with given tag after specified node
+! find_index(node) Find the index of the specified node
+! find_attr(tag$)  Find Attribute with given tag (0=Not found)
+! 
+! next_Sibling()   Return the next sibling for this object
+! prior_Sibling()  Return the prior sibling for this object
+! 
+! Properties:
+! 
+! nodes            Number of sub-nodes
+! attrs            Number of attributes
+! parent           Handle to parent if any
+! tag$             Node tag (the <..> keyword)
+! value$           Text value of the node
+! 
+DEF CLASS "*obj/xml"
+	!
+	! Public Functions (Methods)
+	FUNCTION node(n)Do_get_node
+	FUNCTION attr(n)Do_get_attr
+	! 
+	FUNCTION add_node(n)Do_add_node
+	FUNCTION add_node(_tag$)Do_add_tagged_node
+	FUNCTION add_node(_tag$,n)Do_add_tagged_node
+	FUNCTION add_node(_tag$,_val$)Do_add_tagged_node_val
+	FUNCTION add_node(_tag$,_val$,n)Do_add_tagged_node_val
+	FUNCTION add_node(n,oTree)Do_add_tree
+	FUNCTION del_node(n)Do_del_node
+	! 
+	FUNCTION add_attr(n)Do_add_attr
+	FUNCTION add_attr(_tag$)Do_add_tagged_attr
+	FUNCTION add_attr(_tag$,n)Do_add_tagged_attr
+	FUNCTION del_attr(n)Do_del_attr
+	! 
+	FUNCTION find_node(tag$)Do_find_node
+	FUNCTION find_node(tag$,after)Do_find_node
+	FUNCTION find_index(node)Do_find_index
+	FUNCTION find_attr(tag$)Do_find_attr
+	! 
+	FUNCTION next_Sibling()Do_Next_Sibling
+	FUNCTION prior_Sibling()Do_Prior_Sibling
+	! 
+	FUNCTION set_xml(x$)Do_set_xml
+	FUNCTION set_xml_1(x$)Do_set_xml_1
+	FUNCTION get_xml$()Do_get_xml
+	FUNCTION get_xml$(x$)Do_get_xml
+	!
+	! Public Properties
+	PROPERTY parent ! Parent handle
+	PROPERTY nodes SET ERR ! Number of nodes
+	PROPERTY attrs SET ERR ! Number of attriobutes nodes
+	! 
+	PROPERTY tag$ ! Tag for this node
+	PROPERTY value$ ! Value for this node
+	!
+	! Local/Private Properties
+	LOCAL node_array OBJECT ! Array of subnodes
+	LOCAL node_cnt ! Size of array
+	LOCAL attr_array OBJECT ! Array of attributes
+	LOCAL attr_cnt ! Size of array
+	! 
+END DEF
+! 
+Do_get_node:
+ENTER n
+	IF n<1 OR n>nodes { EXIT 42 }
+RETURN node_array[n]
+! 
+Do_get_attr:
+ENTER n
+	IF n<1 OR n>attrs { EXIT 42 }
+RETURN attr_array[n]
+! 
+Do_add_node:
+ENTER (n)
+	IF n<0 OR n>nodes+1 { EXIT 42 }
+	IF n=0 { n=nodes+1 }
+	IF nodes=node_cnt {
+		IF node_cnt=0 { 
+			node_cnt+=10
+			DIM node_array[1:node_cnt] 
+		} ELSE {
+			node_cnt+=10
+			REDIM node_array[1:node_cnt]
+		}
+	}
+	! 
+	IF n<=nodes { 
+		node_array{nodes+1:n+1}=node_array{nodes:n}
+	}
+	o=NEW("*obj/xml")
+	! 
+	node_array[n]=o
+	nodes++
+	! 
+	o'parent=OBJ
+RETURN o
+!
+
+Do_add_tagged_node_val:
+ENTER _tag$,_val$,n=0
+	o=_obj'add_node(n)
+	! 
+	o'tag$=_tag$
+	o'value$=_val$
+	! 
+RETURN o
+!
+
+Do_add_tagged_node:
+ENTER _tag$,n=0
+	o=_obj'add_node(n)
+	o'tag$=_tag$
+RETURN o
+!
+
+Do_add_tree:
+ENTER (n),oTree
+	IF n<0 OR n>nodes+1 { EXIT 42 }
+	IF n=0 { n=nodes+1 }
+	IF nodes=node_cnt {
+		IF node_cnt=0 {
+			node_cnt+=10
+			DIM node_array[1:node_cnt] 
+		} ELSE {
+			node_cnt+=10
+			REDIM node_array[1:node_cnt]
+		}
+	}
+	! 
+	IF n<=nodes { 
+		node_array{nodes+1:n+1}=node_array{nodes:n}
+	}
+	! 
+	x=REF(ADD oTree) ! Bump usage count
+	! 
+	node_array[n]=oTree
+	oTree'parent=OBJ
+	nodes++
+RETURN oTree
+!
+
+Do_del_node:
+ENTER n
+	IF n<1 OR n>nodes { EXIT 42 }
+	! 
+	o=node_array[n]
+	IF o'parent=OBJ { o'parent=0 }
+	! 
+	DROP OBJECT o
+	node_array[n]=0
+	! 
+	IF n<nodes { node_array{n:nodes-1}=node_array{n+1:nodes} }
+	nodes--
+RETURN nodes
+!
+
+Do_add_attr:
+ENTER (n)
+	IF n<0 OR n>attrs+1 { EXIT 42 }
+	IF n=0 { n=attrs+1 }
+	IF attrs=attr_cnt { 
+		IF attr_cnt=0 { 
+			attr_cnt+=10
+			DIM attr_array[1:attr_cnt] 
+		} ELSE {
+			attr_cnt+=10
+			REDIM attr_array[1:attr_cnt]
+		}
+	}
+	! 
+	IF n<=attrs { 
+		attr_array{attrs+1:n+1}=attr_array{attrs:n}
+	}
+	o=NEW("*obj/xml_attr")
+	! 
+	attr_array[n]=o
+	attrs++
+RETURN o
+!
+
+Do_add_tagged_attr:
+ENTER _tag$,n=0
+	o=_obj'add_attr(n)
+	o'tag$=_tag$
+RETURN o
+!
+
+Do_del_attr:
+ENTER n
+	IF n<1 OR n>attrs { EXIT 42 }
+	! 
+	o=attr_array[n]
+	DROP OBJECT o
+	attr_array[n]=0
+	! 
+	IF n<attrs { 
+		attr_array{n:attrs-1}=attr_array{n+1:attrs}
+	}
+	attrs--
+RETURN attrs
+!
+
+Do_find_node:
+ENTER _tag$,_after=0
+	! 
+	IF nodes=0 { RETURN 0 }
+	! 
+	_tags$=""
+	! 
+	o=POS("/"=_tag$)
+	IF o { 
+		_tags$=_tag$(o+1)
+		_tag$=_tag$(1,o-1)
+	}
+	! 
+	_val_ofs=POS("="=_tag$)
+	IF _val_ofs { 
+		_val$=_tag$(_val_ofs+1)
+		_tag$=_tag$(1,_val_ofs-1) 
+	}
+	! 
+	f=0 ! Reset found
+	! 
+	FOR n=1 TO nodes
+		o=node_array[n]
+		! 
+		IF o=_after { 
+			_after=0
+			CONTINUE
+		}
+		! 
+		IF _after { CONTINUE }
+		! 
+		IF o'tag$=_tag$ {
+			IF _val_ofs=0 OR _val$=o'value$ { 
+				f=o
+				BREAK
+			}
+		}
+	NEXT 
+	! 
+	IF f AND NOT(NUL(_tags$)) { 
+		f=f'find_node(_tags$)
+	}
+	! 
+RETURN f
+!
+
+Do_find_index:
+ENTER _node
+	! 
+	IF nodes=0 { EXIT 11 }
+	! 
+	FOR n=1 TO nodes
+		IF _node=node_array[n] { BREAK }
+	NEXT 
+	! 
+	IF n>nodes { EXIT 11 }
+	! 
+RETURN n
+!
+
+Do_find_attr:
+ENTER _tag$
+	! 
+	IF attrs=0 { RETURN 0 }
+	! 
+	f=0 ! Reset found
+	! 
+	FOR n=1 TO attrs
+		o=attr_array[n]
+		! 
+		IF o'tag$=_tag$ { 
+			f=o
+			BREAK
+		}
+	NEXT 
+	! 
+RETURN f
+!
+
+Do_Next_Sibling:
+	IF parent=0 { RETURN 0 }
+	_idx=parent'find_index(OBJ)
+	IF _idx=0 { EXIT 11 }
+	! 
+	IF _idx>=parent'nodes { 
+		RETURN 0 
+	} ELSE {
+		RETURN parent'node(_idx+1)
+	}
+	!
+
+Do_Prior_Sibling:
+	IF parent=0 { RETURN 0 }
+	_idx=parent'find_index(OBJ)
+	IF _idx=0 { EXIT 11 }
+	! 
+	IF _idx=1 { 
+		RETURN 0 
+	} ELSE {
+		RETURN parent'node(_idx-1)
+	}
+	! 
+	! -- Load XML into object
+	!
+	
+Do_set_xml_1:
+	set_xml_1=1
+	!
+
+Do_set_xml:
+ENTER xml$
+	! 
+	WHILE nodes
+		o=node_array[nodes]
+		DROP OBJECT o
+		node_array[nodes--]=0
+	WEND 
+	! 
+	WHILE attrs
+		o=attr_array[attrs]
+		DROP OBJECT o
+		attr_array[attrs--]=0
+	WEND 
+	! 
+	value$=""
+	! 
+	IF xml$="" { RETURN 0 }
+	! 
+	ofst=0
+	node=OBJ
+	valu$=xml$
+	! 
+	GOSUB Parser	! *SC-OK*
+	! 
+RETURN 1
+! 
+Parser:
+	LOCAL ofst
+	LOCAL xml$
+	LOCAL parent=node
+	xml$=valu$
+	! 
+	WHILE 1
+		LET valu$=XML(NEXT FROM xml$,IND=ofst,KEY=t$,OPT=a$,ERR=*BREAK)
+		! 
+		IF set_xml_1=1 THEN node=parent; set_xml_1=2 ELSE IF set_xml_1=2 THEN EXIT 42 ELSE node=parent'add_node(0)
+		! 
+		node'tag$=t$
+		! 
+		a_ofst=0
+		WHILE 1
+			LET a_valu$=XML(PROPERTY NEXT FROM a$,IND=a_ofst,KEY=a_t$,ERR=*BREAK)
+			attr=node'add_attr(0)
+			attr'tag$=a_t$
+			attr'value$=a_valu$
+		WEND 
+		! 
+		IF POS("<"=valu$)=0 THEN LET node'value$=valu$ ELSE GOSUB Parser WITH set_xml_1=0
+	WEND 
+	! 
+RETURN 
+! 
+! --- Return XML from node
+! 
+Do_get_xml:
+ENTER v$=""
+	! 
+	x$=value$
+	n=0
+	WHILE n<nodes
+	node=node_array[++n]
+	x$=node'get_xml$(x$)
+	WEND 
+	! 
+	a=0
+	a$=""
+	WHILE a<attrs
+	attr=attr_array[++a]
+	LET a$=XML(PROPERTY ADD attr'value$ TO a$,KEY=attr'tag$,ERR=*NEXT)
+	WEND 
+	! 
+RETURN XML(ADD x$ TO v$,KEY=tag$,OPT=a$)

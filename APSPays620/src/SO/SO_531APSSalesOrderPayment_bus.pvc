@@ -1,0 +1,47 @@
+! $Id: SO_531APSSalesOrderPayment_bus.pvc $
+! Copyright 2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #236076 - 2019-02-06 RCS
+!
+
+DEF CLASS "SO_531APSSalesOrderPayment_bus" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "SO_SalesOrderPayment_bus"
+
+	! Public Properties
+	
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	
+	! ** Determine if a SPS credit card has been authorized
+	! ** @Param authOnThisDocOnly {optional} [input, boolean] if true, only want to know if authorization occurred on the invoice
+	! ** @returns [boolean] True = credit card authorized, False = credit card not authorized
+	FUNCTION LOCAL IsCreditCardAuthorized()						IS_CREDIT_CARD_AUTHORIZED
+	FUNCTION LOCAL IsCreditCardAuthorized(authOnThisDocOnly)	IS_CREDIT_CARD_AUTHORIZED
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	
+END DEF
+
+
+ON_CREATE:
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!	
+
+IS_CREDIT_CARD_AUTHORIZED:	! #236076 - 2019-02-06 RCS - APS voids preauths also.
+	
+	ENTER (authOnThisDocOnly), ERR=*NEXT
+	
+	retVal = retFAILURE
+
+	IF pos(_OBJ'PaymentTypeMethod$ = "RA") {
+ 		retVal = _OBJ'IsCreditCardAuthorized(FROM "SO_CommonPayment_bus")
+	}
+	
+RETURN retVal
+!

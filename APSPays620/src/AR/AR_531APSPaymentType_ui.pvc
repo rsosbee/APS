@@ -1,0 +1,270 @@
+! $Id$: AR_531APSPaymentType_ui.pvc $
+! Copyright 2013-2019 Accounting Systems, Inc.
+! PLWhirley, Bob Sosbee
+!
+DEF CLASS "AR_531APSPaymentType_ui" CREATE REQUIRED DELETE REQUIRED
+	! Inherits from the following class(es)
+	LIKE "AR_PaymentType_ui"
+	
+	! Public Properties
+	
+	! Local/Private Properties
+	LOCAL cUnencryptedAPSMerchantID$
+	LOCAL cUnencryptedAPSMerchantPassword$
+	LOCAL cAPSAllowChangeCredentials
+	
+	! Public Functions (Methods)
+	
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL BT_FIX()								BT_FIX
+	FUNCTION LOCAL ChangeML_APSPassword()				CHANGE_ML_APS_PASSWORD
+	FUNCTION LOCAL ChangeD531APSMerchantID()			CHANGE_APS_MERCHANT_ID
+	FUNCTION LOCAL ChangePaymentMethod()				CHANGE_PAYMENT_METHOD
+	FUNCTION LOCAL ChangePreAuthorizationTerm()			CHANGE_PREAUTHORIZIATIONTERM
+	FUNCTION LOCAL ChangeD531APSRequireCVV()			CHANGE_D531_APS_REQUIRE_CVV		! RCS #237825 - 2018-05-23
+	FUNCTION LOCAL ChangeD531APSUseEmvDevice()			CHANGE_D531_APS_USE_EMV_DEVICE	! RCS #236076 - 2018-12-23
+	FUNCTION LOCAL CheckForEnable()						CHECK_FOR_ENABLE
+	FUNCTION LOCAL PostLoad()							POST_LOAD
+	FUNCTION LOCAL PostReadRec()						POST_READ_REC
+	FUNCTION LOCAL PreAccept()							PRE_ACCEPT
+	
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+	cAPSAllowChangeCredentials	= coSession'CheckSecurityEvent("AR_531APSCHANGECREDENTIALS")
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+BT_FIX:
+	coSession'UI'MessageBox$("AR_531APSChangeCredentialsWarning", MSG("AR_531APSChangeCredentialsWarning"))
+	ENABLE CONTROL D531APSMerchantID.ctl
+	coBusiness'FixCredentials	= isTrue
+RETURN retSUCCESS
+!
+
+CHANGE_APS_MERCHANT_ID:
+
+	retVal				= coBusiness'SetValue("D531APSMerchantID$",D531APSMerchantID$)
+
+	SWITCH retVal
+ 		CASE retSUCCESS
+			cUnencryptedAPSMerchantID$	= D531APSMerchantID$
+ 		BREAK
+ 		CASE retWARNING
+ 			coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+			NEXT_ID		= ID
+ 		BREAK
+ 		CASE retFAILURE
+ 			coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+ 			! re-set screen value.  The SetValue() above will re-set VirtualTerminalID$ to the encrypted value
+			D531APSMerchantID$			= cUnencryptedAPSMerchantID$
+ 		BREAK
+ 	END SWITCH
+
+RETURN retVal
+!
+
+CHANGE_D531_APS_REQUIRE_CVV:	! RCS #237825 - 2018-05-23
+	
+	coBusiness'GetValue("PaymentMethod$", cPaymentMethod$)
+
+	IF coBusiness'cAPSActivated and cPaymentMethod$ = "R" and D531APSRequireCVV$ <> isYES$ { 
+		cMsg$ = "WARNING! Storing credit card information within APSPays requires the Card Verification Value or CVV/CVV2\ "+ \
+				"to be entered for all new cards accepted on or after October 14,2017.\ \"+ \
+
+				"APSPays has made this change in accordance with VISA policy changes affecting foreign card issuers.\"+ \
+				"The changes include a requirement that a CVV/CVV2 is present in the first authorization record.\"+ \
+				"Disabling this CVV requirement will affect your card acceptance ratio.\ \"+ \
+
+				"If you choose to disable this requirement American Payment Solutions, APSPays,\"+ \ 
+				"or its partners are not responsible for any loss in revenue, increased chargebacks, or declined transactions.\ \"+ \
+
+				"Are you sure you want to continue?"
+		cAnswer$ 		= coSession'UI'MessageBox$(isNULL$,cMsg$,"title=APSPays CVV Requirements,style=Y,icon=!")
+		if cAnswer$ 	= "YES" {
+			D531APSRequireCVV$	= isNO$
+		} else {
+			D531APSRequireCVV$	= isYES$
+		}
+	}
+	retval 				= coBusiness'SetValue("D531APSRequireCVV$", D531APSRequireCVV$)
+RETURN retSUCCESS
+!
+
+CHANGE_D531_APS_USE_EMV_DEVICE:	! RCS #236076 - 2018-12-23
+	
+	coBusiness'GetValue("PaymentMethod$", cPaymentMethod$)
+
+	IF coBusiness'cAPSActivated and 			\
+		cPaymentMethod$			= "R" and 		\
+		D531APSUseEmvDevice$	= isYES$ and	\
+		D531APSRequireCVV$		= isYES$ and 	\
+		D531APSRetailAccount$	<> isYES$ { 
+			D531APSRequireCVV$		= isNO$
+			D531APSRetailAccount$	= isYES$
+	}
+	retval		= coBusiness'SetValue("D531APSUseEmvDevice$",	D531APSUseEmvDevice$)
+	retval		= coBusiness'SetValue("D531APSRequireCVV$",		D531APSRequireCVV$)
+	retval		= coBusiness'SetValue("D531APSRetailAccount$",	D531APSRetailAccount$)
+RETURN retSUCCESS
+!
+
+CHANGE_ML_APS_PASSWORD:
+	password$	= ML_APSPassword$
+	retVal		= coBusiness'SetValue("D531APSPassword$", password$)
+	SWITCH retVal
+ 		CASE retSUCCESS
+			cUnencryptedAPSMerchantPassword$	= ML_APSPassword$
+ 		BREAK
+ 		CASE retWARNING
+ 			coSession'UI'MessageBox$(coBusiness'LastErrorNum$, coBusiness'LastErrorMsg$)
+			NEXT_ID		= ID
+ 		BREAK
+ 		CASE retFAILURE
+ 			coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+ 			! re-set screen value.  The SetValue() above will re-set VirtualTerminalID$ to the encrypted value
+			ML_APSPassword$						= cUnencryptedAPSMerchantPassword$
+ 		BREAK
+ 	END SWITCH
+RETURN retVal
+!
+
+CHANGE_PAYMENT_METHOD:
+
+	retVal		= _OBJ'ChangePaymentMethod(FROM "AR_531APSPaymentType_ui_BASE")
+
+	IF retVal AND coBusiness'cAPSActivated {
+		coBusiness'GetValue("D531APSMerchantID$",	D531APSMerchantID$)
+		coBusiness'GetValue("D531APSPassword$",		D531APSPassword$)
+		coBusiness'GetValue("D531APSApiKey$",		D531APSApiKey$)
+		_OBJ'CheckForEnable()
+	}
+
+RETURN retVal
+!
+
+CHANGE_PREAUTHORIZIATIONTERM:		! #231968 - 2018-02-12 RCS
+
+	retVal		= retSUCCESS
+
+	IF coBusiness'cAPSActivated {
+		IF PreAuthorizationTerm < 3 OR PreAuthorizationTerm > 30 {
+			coSession'UI'MessageBox$("AR_531APSInvalidCreditCardTerm")
+			PreAuthorizationTerm	= 5
+		}
+		coBusiness'SetValue("PreAuthorizationTerm", PreAuthorizationTerm)
+	}
+
+RETURN retVal
+!
+
+CHECK_FOR_ENABLE:
+
+	_OBJ'CheckForEnable(FROM "AR_531APSPaymentType_ui_BASE")
+
+	IF coBusiness'cAPSActivated {
+		_OBJ'SetControlState("CC_SPS.grp$", ctlHIDE)
+		SHOW	CONTROL DisplayAvsCvvResponse.ctl
+		DISABLE	CONTROL PreAuthorizationTerm.ctl			! DBR #1234 2020-01-24 RCS #262548
+
+		! we are not going to use MAS AddCorporateCardLevel3 check box
+		HIDE	CONTROL AddCorporateCardLevel3.ctl
+
+		IF (PaymentMethod$ = "R" OR PaymentMethod$ = "A")	\
+			AND NOT(cSecurityAccess	= secVIEWONLY) 			\
+			AND NOT(cSecurityAccess	= secDELETEONLY) {
+
+			_OBJ'SetControlState("CC_APS.GRP$",ctlENABLE)
+			IF PaymentMethod$ = "R" {							! DBR #1234 2020-01-24 RCS #262548
+				ENABLE CONTROL PreAuthorizationTerm.ctl			! #231968 - 2018-02-12 RCS
+			}
+
+			IF NOT(coBusiness'CCPaymentMethodNotUsed) {
+				DISABLE CONTROL PaymentMethod.ctl
+			}
+			IF NOT(coBusiness'CCPaymentMethodNotUsed) {
+				! if payment type has credit cards or payment records
+				! we cannot change the Merchant ID
+ 				DISABLE CONTROL D531APSMerchantID.ctl
+				ENABLE CONTROL BT_FIX.CTL
+  			} ELSE {
+				DISABLE CONTROL BT_FIX.CTL
+			}
+		} ELSE {
+			IF cSecurityAccess = secVIEWONLY {
+				CALL "*WINGRP;LOCKORDISABLE", CC_APS.GRP$
+				DISABLE CONTROL PreAuthorizationTerm.ctl	! #231968 - 2018-02-12 RCS
+			} ELSE {
+				_OBJ'SetControlState("CC_APS.GRP$", ctlDISABLE)
+				DISABLE CONTROL PreAuthorizationTerm.ctl	! #231968 - 2018-02-12 RCS
+			}
+			DISABLE CONTROL BT_FIX.CTL
+		}
+		cUnencryptedAPSMerchantID$			= isNULL$
+ 		IF NOT(NUL(D531APSMerchantID$)) {
+ 			_OBJ'DecryptPassword((D531APSMerchantID$), D531APSMerchantID$)
+			cUnencryptedAPSMerchantID$		= D531APSMerchantID$
+  		}
+		cUnencryptedAPSMerchantPassword$	= isNULL$
+		_OBJ'DecryptPassword((D531APSMerchantID$), ML_APSPassword$)
+		cUnencryptedAPSMerchantPassword$	= ML_APSPassword$
+	}
+
+RETURN retSUCCESS
+!
+
+PRE_ACCEPT:
+
+	IF coBusiness'cAPSActivated {
+		retVal	= retSUCCESS
+	} ELSE {
+		retVal	= _OBJ'PreAccept(FROM "AR_531APSPaymentType_ui_BASE")
+	}
+
+RETURN retVal
+!
+
+POST_LOAD:
+
+	retVal = _OBJ'PostLoad(FROM "AR_531APSPaymentType_ui_BASE")
+
+	IF coBusiness'cAPSActivated {
+
+		IF coBusiness'CreditCardEnabled$ <> isNO$ {  		! PLW 2017-03-21
+			_OBJ'SetControlState("CC_SPS.grp$", ctlHIDE)
+			_OBJ'SetControlState("CC_APS.grp$", ctlSHOW)
+			SHOW	CONTROL DISPLAYAVSCVVRESPONSE.ctl
+			ENABLE	CONTROL PREAUTHORIZIATIONTERM.ctl 		! #231968 - 2018-02-12 RCS
+			IF cAPSAllowChangeCredentials {
+				SHOW CONTROL BT_FIX.CTL
+			}
+		}
+		_OBJ'CheckForEnable()
+	}
+
+RETURN retVal
+!
+
+POST_READ_REC:
+
+	retVal=_OBJ'PostReadRec(FROM "AR_531APSPaymentType_ui_BASE")
+	IF coBusiness'cAPSActivated {
+		coBusiness'GetValue("D531APSPassword$",password$)
+		ML_APSPassword$			= isNULL$
+		IF NOT(NUL(password$)) {
+			ML_APSPassword$		= dim(32,"$")
+  		}
+		coBusiness'GetValue("D531APSSendEmail$",D531APSSendEmail$)
+		if NUL(D531APSSendEmail$) and NOT(NUL(password$)) {
+			D531APSSendEmail$	= isYES$
+			coBusiness'SetValue("D531APSSendEmail$", D531APSSendEmail$)
+		}
+	}
+RETURN retVal
+!

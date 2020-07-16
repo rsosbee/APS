@@ -1,0 +1,392 @@
+! SY_568PvxXmlParser.pvc
+! %(copyright)%
+! ** @Author Bob Sosbee
+! ** @Date 2020.06.04 23 at 04:02:41 PM PDT 
+! 
+
+DEF CLASS "SY_568PvxXmlParser"  CREATE REQUIRED DELETE REQUIRED  
+
+	! Inherits from the following class(es)
+
+
+	! Public Properties
+	PROPERTY		cLogFile$
+	PROPERTY		LastErrorMsg$
+	PROPERTY		LastErrorNo
+	PROPERTY		LastOSError$
+	
+	
+	
+	! Local/Private Properties
+	LOCAL			cErrorLogFile$			= isNULL$
+	LOCAL			toolsErrorCount
+	LOCAL			cXMLFile$				= isNULL$
+	LOCAL			cXMLLogLimit			= 10
+	LOCAL			cXMLLogCount
+	LOCAL 			cDefaultBase36Length	= 3
+	LOCAL 			Task$ 					! passed in ON_CREATE to tag log files
+
+	! Public Functions (Methods)
+	FUNCTION	Base36$(Count,Length)										BASE_36_CONVERSION
+	FUNCTION	LogMessage(Message$)										LOG_MESSAGE
+	FUNCTION	LogError(Message$)											LOG_ERROR
+	FUNCTION	LogXML(XMLString$)											LOG_XML
+	FUNCTION	DisplayLog()												DISPLAY_LOG
+	FUNCTION	DisplayErrorLog()											DISPLAY_ERROR_LOG
+	FUNCTION	ParseSOAP(SOAPXML$,tmpIOL$,tmpREC$,Status$)					PARSE_SOAP
+	FUNCTION	GetNextTag(XML$,cTag$,DATA$)								GET_NEXT_TAG
+	FUNCTION	ReplaceVariables(tmpRec$,tmpIOL$,textForm$,Response$)		REPLACE_VARIABLES
+	FUNCTION	ScrubData$(tmpText$)										SCRUB_DATA
+	
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL	ClearErrors()											CLEAR_ERRORS
+	FUNCTION LOCAL	OpenLog(logFile$)										OPEN_LOG
+	FUNCTION LOCAL	AddTagToIOLIST(IOLIST$,cTag$)							ADD_TAG_TO_IOLIST
+	FUNCTION LOCAL	ParseIt(XMLBody$,fldPrefix$,fldIOLIST$,fldRecord$)		PARSE_IT
+	
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+END DEF
+!
+
+On_Create:
+ENTER task$,ERR=*NEXT
+	cLogFile$			= %logPath$+Task$+"Activity"+DTE(0:"%Yl%Mz%Dz%Hz%mz%s")+".log"
+	cErrorLogFile$		= %logPath$+Task$+"Error"+DTE(0:"%Yl%Mz%Dz%Hz%mz%s")+".log"
+	cXMLFile$			= %logPath$+"XML"+DTE(0:"%Yl%Mz%Dz%Hz%mz%s")+".log"
+RETURN
+!
+
+ON_DELETE:
+	
+RETURN
+!
+	
+ADD_TAG_TO_IOLIST:
+	ENTER IOLIST$,cTag$
+	counter				= 0
+	TagRoot$			= cTag$(1,LEN(cTag$)-1)
+	WHILE POS(UCS(cTag$)	= IOLIST$) 
+		counter			++
+		cTag$			= TagRoot$+STR(counter)+"$"
+	WEND
+	IOLIST$				+= ","+cTag$
+RETURN retSUCCESS
+!
+
+BASE_36_CONVERSION:
+ENTER Count,Length,ERR=*NEXT
+	COUNT				= INT(COUNT)
+	IF NOT(Length) {
+		Length			= MAX(cDefaultBase36Length,1)
+	}
+	WHILE INT(COUNT/(36^(Length-1)))>35
+		Length			++
+	WEND
+	cDefaultBase36Length	= Length
+	DIM W[Length],R[Length+1]
+	Base36$				= isNULL$
+	R[1]=Count
+	FOR I=1 to Length
+		Factor			= 36^(Length-I)
+		W[I]			= INT(R[I]/Factor)
+		R[I+1]			= Mod(R[I],Factor)
+		Base36$			+= TBL(W[I]<10,CHR(W[I]+55),STR(W[I]))
+	NEXT I
+RETURN BASE36$
+!
+
+CLEAR_ERRORS:
+	LastErrorMsg$		= isNULL$
+	LastErrorNo			= 0
+	LastOSError$		= isNULL$
+RETURN
+!
+
+DISPLAY_ERROR_LOG:
+	IF LEN(cErrorLogFile$) {
+		errFound		= 0
+		tmpCHN			= HFN 
+		OPEN(tmpCHN,ERR=*NEXT)cErrorLogFile$; errFound	= isTRUE
+		CLOSE(tmpCHN,ERR=*NEXT)
+		IF errFound {
+			MsgBox("WHOA!!  Errors encountered!  Error box will pop up now.")
+			SYSTEM_HELP cErrorLogFile$
+		}
+	}
+RETURN retSUCCESS
+!
+
+DISPLAY_LOG:
+	IF LEN(cLogFile$) {
+		logFound		= 0 
+		tmpCHN			= HFN
+		OPEN(tmpCHN,ERR=*NEXT)cLogFile$; logFound	= isTRUE
+		CLOSE(tmpCHN,ERR=*NEXT)
+		IF logFound {
+			SYSTEM_HELP cLogFile$
+		}
+	}
+RETURN 1
+!
+	
+GET_NEXT_TAG:
+ENTER XML$,cTag$,DATA$
+	cTag$				= isNULL$
+	%cTag$				= isNULL$
+	DATA$				= isNULL$
+	StartTag			= POS("<"=XML$)
+	EndTag				= POS(">"=XML$)
+	IF NOT(StartTag) OR NOT(EndTag) OR EndTag<StartTag {
+		XML$			= isNULL$
+		RETURN retFAILURE
+	}
+	cTag$				= UCS(XML$(StartTag,EndTag-StartTag))+" "
+	XML$				= XML$(EndTag+1)
+	cTag$				= cTag$(2)
+	cTag$				= cTag$(1,POS(" "	= cTag$)-1)
+	endTag$				= "</"+cTag$	
+	XML$				= STP(XML$,2)
+	endTagPos			= POS(endTag$+">"	= UCS(XML$)) ! check for end tag with > first
+	IF NOT(endTagPos) {
+		endTagPos		= POS(endTag$+" "	= UCS(XML$)) ! check for end tag with space
+	}
+	IF endTagPos {
+		DATA$			= XML$(1,endTagPos-1)
+		XML$			= STP(XML$(endTagPos),2)
+	} ELSE {
+		cTag$			= isNULL$							! Invalid tag if we don't have an end tag
+	}
+!	WHILE LEN(XML$) AND MID(XML$,1,1)<>"<"
+!		IF XML$(1,1)>CHR(32) OR XML$(1,1)<CHR(127) {
+!			DATA$+=XML$(1,1)
+!			XML$=XML$(2)
+!		}
+!	WEND
+	IF POS("/"=cTag$)	= 1 {
+		cTag$			= isNULL$						! we have an ending tag so no data 
+	}
+	cTag$				= SUB(cTag$,"/","")
+	tmpColon			= POS(":"=cTag$)
+	IF tmpColon {
+		cTag$			= cTag$(tmpColon+1)
+	}		
+	cTag$				= STP(cTag$,3)
+	IF NOT(NUL(cTag$)) {
+		cTag$			= STP(cTag$,2)+"$"				! Create string variable
+	}
+	%cTag$				= cTag$
+
+RETURN retSUCCESS
+!
+	
+LOG_ERROR:
+ENTER Message$
+	logCHN				= _OBJ'OpenLog(cErrorLogFile$)
+	IF logCHN>0 {
+		LongMessage$	= DTE(0:"%Yl/%Mz/%Dz %Hz:%mz")+"  "+Message$
+		WRITE RECORD(logCHN)LongMessage$
+		CLOSE(logCHN)
+		toolsErrorCount	++
+		retVal			= retSUCCESS
+	}
+RETURN retVal
+!
+
+LOG_MESSAGE:
+ENTER Message$
+	logCHN				= _OBJ'OpenLog(cLogFile$)
+	IF logCHN>0 {
+		LongMessage$	= DTE(0:"%Yl/%Mz/%Dz %Hz:%mz")+"  "+Message$
+		WRITE RECORD(logCHN)LongMessage$
+		CLOSE(logCHN)
+		retVal			= retSUCCESS
+	}
+RETURN retVal
+!
+
+LOG_XML:
+ENTER XMLString$
+	logCHN				= _OBJ'OpenLog(cXMLFile$)
+	IF logCHN > 0 {
+		WRITE RECORD(logCHN)XMLString$
+		CLOSE(logCHN)
+		retVal			= retSUCCESS
+	}
+RETURN retVal
+!
+	
+OPEN_LOG:
+ENTER logName$
+	logCHN				= -1
+	retVal				= retFAILURE
+	newCHN				= HFN
+	OPEN LOCK(newCHN,err=*NEXT)logName$; logCHN	= newCHN
+	IF LogCHN < 0 AND ERR=12 {
+		SERIAL logName$,ERR=*NEXT
+		newCHN			= HFN
+		OPEN LOCK(newCHN,ERR=*NEXT)logName$; logCHN = newCHN
+	}
+RETURN logCHN
+!
+
+Parse_It:
+ENTER XMLBody$,fldPrefix$,fldIOLIST$,fldRecord$
+	if LEN(fldIOLIST$) AND LEN(fldRecord$) {
+		READ DATA FROM fldRecord$ to IOL=fldIOLIST$
+		tmpIOLtxt$		= LST(fldIOLIST$)
+		tmpIOLtxt$		= tmpIOLtxt$(8)
+	}
+	WHILE LEN(XMLBody$)
+		IF _obj'GetNextTag(XMLBody$,cTag$,Data$) {
+			IF nul(cTag$) and not(nul(%cTag$)) { cTag$	= %cTag$ }
+			IF NOT(NUL(cTag$)) {
+				IF POS("<"=Data$) AND POS(">"=Data$) AND POS("/"=Data$) {
+					fldPrefix$		= fldPrefix$+cTag$(1,LEN(cTag$)-1)+"."
+					prefixCtr		= 0
+					fldPrefixRoot$	= fldPrefix$(1,LEN(fldPrefix$)-1)
+					WHILE POS(UCS(fldPrefix$)=UCS(tmpIOLtxt$))
+						prefixCtr	++
+						fldPrefix$	= fldPrefixRoot$+STR(prefixCtr)+"."
+					WEND
+					if MID(tmpIOLTxt$,1,1)="," {
+						tmpIOLTxt$	= tmpIOLTxt$(2)
+					}
+					IF LEN(tmpIOLTxt$) {
+						fldIOLIST$	= CPL("IOLIST "+tmpIOLTxt$)
+						fldRecord$	= REC(fldIOLIST$)
+					}
+					_OBJ'ParseIt(Data$,fldPrefix$,fldIOLIST$,fldRecord$)
+					fldPrefix$		= fldPrefix$(1,POS("."=fldPrefix$,-1,2))
+					IF LEN(fldIOLIST$) {
+						READ DATA FROM fldRecord$ to IOL=fldIOLIST$
+						tmpIOLtxt$	= LST(fldIOLIST$)
+						tmpIOLtxt$	= tmpIOLtxt$(8)
+					}
+				} ELSE {
+					cTag$			= fldPrefix$+cTag$
+					_OBJ'AddTagToIOLIST(tmpIOLtxt$,cTag$)
+					DATA$			= SUB(DATA$,"&#xD;&#xD;",$0A$)
+					DATA$			= SUB(DATA$,"&#xD;",$0A$)
+					VIA cTag$		= DATA$
+				}
+			}
+		}
+	WEND
+	
+	IF LEN(tmpIOLTxt$) {
+		IF tmpIOLTxt$(1,1)="," {
+			tmpIOLtxt$	= tmpIOLtxt$(2)
+		}
+		fldIOLIST$		= CPL("IOLIST "+tmpIOLTxt$)
+		fldRecord$		= REC(fldIOLIST$)
+	}
+RETURN 1
+!
+
+PARSE_SOAP:
+ENTER response$,tmpIOL$,tmpREC$,status$
+	retVal				= 1
+	statusCode$			= isNULL$
+	tmpIOL$				= CPL("IOLIST errorMsg$,response$")
+	tmpRec$				= isNULL$
+	tmpIOLtxt$			= isNULL$
+	BodyStart			= POS("<SOAP-ENV:BODY"	= UCS(response$))
+	offset				= 14
+	IF NOT(BodyStart) {
+		BodyStart		= POS("<SOAPENV:BODY"	= UCS(response$))
+		offset			= 13
+	}
+	IF NOT(BodyStart) {
+		BodyStart		= POS("<ENV:BODY"		= UCS(response$))
+		offset			= 10
+	}
+	IF NOT(BodyStart) {
+		LastErrorMsg$	= "No response body found"
+		errorMSG$		= LastErrorMsg$
+		tmpREC$			= REC(tmpIOL$)
+		return retFAILURE
+	}
+	response$			= response$(BodyStart+offset)
+	IF POS(">"=response$)<POS("<"=response$) AND POS(">"=response$)>0 {
+		response$		= response$(POS(">"=response$)+1)	! remove the remainder of the SOAP Body begin tag
+	}
+	BodyEnd				= POS("</SOAP-ENV:BODY>"	= UCS(response$))
+	IF NOT(BodyEnd) {
+		BodyEnd			= POS("</SOAPENV:BODY>"		= UCS(response$))
+	}
+	IF NOT(BodyEnd) {
+		BodyEnd			= POS("</ENV:BODY>"			= UCS(response$))
+	}
+	IF NOT(BodyEnd) {
+		LastErrorMsg$	= "Invalid XML response - no body end"
+		errorMsg$		= LastErrorMsg$
+		tmpREC$			= REC(tmpIOL$)
+		return retFAILURE
+	}
+	response$			= response$(1,BodyEnd-1)
+	XMLBody$			= response$
+	fldPrefix$			= isNULL$
+	fldIOLIST$			= isNULL$
+	fldRecord$			= isNULL$
+
+	_obj'ParseIt(XMLBody$,fldPrefix$,fldIOLIST$,fldRecord$)
+	IF LEN(fldIOLIST$) {
+		read data from fldRecord$ to IOL=fldIOLIST$
+		tmpIOLtxt$		= LST(fldIOLIST$) 
+		tmpIOLTxt$		= tmpIOLTxt$(8)
+		tmpIOL$			= fldIOLIST$
+		tmpREC$			= REC(tmpIOL$)
+		IF POS("FAULTCODE$"	= UCS(tmpIOLTxt$)) {
+			LastErrorMsg$	= errorDescription$
+			TrackReply.TrackDetails.StatusCode$ = "FAILED"
+		}
+		if NOT(NUL(TrackReply.TrackDetails.StatusCode$)) {
+			status$		= TrackReply.TrackDetails.StatusCode$	! Status will return "FAILED" unless we get one back in SOAP response
+		}
+		retVal			= retSUCCESS
+	} ELSE {
+		LastErrorMsg$	= "No fields found"
+		errorMsg$		= LastErrorMsg$
+		tmpREC$			= REC(tmpIOL$)
+		retVal			= retFAILURE
+	}
+RETURN retVal
+!
+
+REPLACE_VARIABLES:  	! Take text and replace tags (~xxx$~) with variables
+ENTER tmpRec$,tmpIOL$,textForm$,Response$
+		READ DATA FROM tmpRec$ to IOL=tmpIOL$
+		tmpTmp$			= textForm$
+		P				= 0
+		Response$		= isNULL$
+		REPEAT
+			P=POS("~"	= tmpTmp$)
+			IF P {
+				Response$	+= tmpTmp$(1,P-1)
+				tmpTmp$		= tmpTmp$(P+1)
+				P1			= POS("~"=tmpTmp$)
+				Variable$	= tmpTmp$(1,P1-1)
+				tmpTmp$		= tmpTmp$(P1+1)
+				IF POS("$"	= variable$) {
+					value$	= EVS(variable$)
+				} ELSE {
+					value$	= STR(EVN(variable$))
+				}
+				Response$	+= value$
+			}
+		UNTIL P			= 0
+		Response$		+= tmpTmp$
+		tmpTmp$			= isNULL$
+RETURN retSUCCESS
+!
+
+SCRUB_DATA: 			! translate html encoding
+ENTER tmpText$
+	tmpText$			= SUB(tmpText$,"&amp;","&")
+	tmpText$			= SUB(tmpText$,"&quot;",QUO)
+	tmpText$			= SUB(tmpText$,"&lt;","<")
+	tmpText$			= SUB(tmpText$,"&gt;",">")
+RETURN tmpText$
+!

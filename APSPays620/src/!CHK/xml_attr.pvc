@@ -1,0 +1,13 @@
+! *obj/xml -- PxPlus simple XML node splitter -- atrribute object 
+! 
+! This object holds the attribute information
+! 
+! Properties:
+! tag$             Attribute name
+! value$           Text value of the attribute
+! 
+DEF CLASS "*obj/xml_attr"
+PROPERTY tag$ ! Tag for this attr
+PROPERTY value$ ! Value for this attr
+! 
+END DEF

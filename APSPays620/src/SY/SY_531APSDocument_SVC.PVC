@@ -1,0 +1,36 @@
+! SY_531APSDocument_SVC.PVC
+! Copyright 2017 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+!
+
+DEF CLASS "SY_531APSDocument_SVC" CREATE REQUIRED DELETE REQUIRED
+	LIKE "SY_Service"
+
+	! Public Properties
+	PROPERTY Members
+
+	! Public Methods
+
+	! Private Properties
+	LOCAL cMainTable$			= "SY_531APSDocumentHeader"
+	LOCAL cIsSysDB				= isTRUE
+
+	! Private Methods
+	FUNCTION LOCAL postFind() 						POST_FIND
+
+END DEF
+
+! ----------------------------------------------------------------------------------------------
+ON_CREATE:
+ENTER coSession
+	Members						= NEW("SY_531APSDocumentDetail_SVC", coSession, _OBJ )
+RETURN
+
+! ----------------------------------------------------------------------------------------------
+ON_DELETE:
+RETURN
+
+! ----------------------------------------------------------------------------------------------
+POST_FIND:
+	Members'SetBrowseFilter(documentCode$+moduleCode$+documentType$)
+RETURN retSUCCESS
+!

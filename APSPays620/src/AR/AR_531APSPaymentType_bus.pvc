@@ -1,0 +1,397 @@
+! $Id$: AR_531APSPaymentType_bus.pvc
+! AR Payment Type Business Object
+! Copyright 2013-2019 Accounting Systems, Inc.
+! PLWhirley, RCSosbee
+!
+DEF CLASS "AR_531APSPaymentType_bus" CREATE REQUIRED DELETE REQUIRED
+	! Inherits from the following class(es)
+	LIKE "AR_PaymentType_bus"
+	
+	! Public Properties
+	PROPERTY cAPSActivated
+	PROPERTY CCPaymentMethodDoesNotHaveTransactions
+	PROPERTY FixCredentials
+	! ** Original value of MerchantID$ (need this unencrypted in order to make comparisons).
+ 	PROPERTY OrigUnencryptedMerchantID$ SET ERR
+ 	! ** Original value of APSPaaword$ (need this unencrypted in order to make comparisons).
+ 	PROPERTY OrigUnencryptedAPSPassword$ SET ERR
+ 	
+	! Local/Private Properties
+	LOCAL cD531APSApiKey$					! RCS #236076 - 2018-10-10
+	LOCAL cD531APSRequireCVV$				! RCS #237825 - 2018-05-23
+	LOCAL cD531APSRetailAccount$			! RCS #237825 - 2018-05-23
+	LOCAL cD531APSSendEmail$				! RCS #226560 - 2017-07-28
+	LOCAL cD531APSUseEmvDevice$				! RCS #236076 - 2018-12-23
+	LOCAL cOrigEncryptedAPSPassword$
+	LOCAL cOrigEncryptedMerchantID$
+	LOCAL cUnencryptedAPSMerchantID$
+	LOCAL cUnencryptedD531APSPassword$
+
+	! Public Functions (Methods)
+	FUNCTION CopyFrom(APSkey$)											COPY_FROM
+	FUNCTION Write()													WRITE_REC
+	
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL ColumnOverrideD531APSMerchantID(columnInfo)			COLUMN_OVERRIDE_APS_MERCHANT_ID
+	FUNCTION LOCAL ColumnOverrideD531APSPassword(columnInfo)			COLUMN_OVERRIDE_APS_PASSWORD
+	FUNCTION LOCAL PostWriteRec()										POST_WRITE_REC
+	FUNCTION LOCAL ReadRec(APS531key$)									READ_REC
+	FUNCTION LOCAL ValidateD531APSPassword(value$)						VALIDATE_APS_PASSWORD
+	FUNCTION LOCAL ValidateD531APSMerchantID(value$)					VALIDATE_APS_MERCHANT_ID
+	FUNCTION LOCAL ValidatePaymentMethod(SMCvalue$)						VALIDATE_PAYMENT_METHOD
+	FUNCTION LOCAL ValidateSPS()										VALIDATE_SPS
+
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+	! check for activation
+	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated	= coAPSActivation'CheckAPSActivation()
+		DROP OBJECT coAPSActivation
+		coAPSActivation	= 0
+	}
+RETURN
+!
+
+ON_DELETE:
+RETURN
+!
+
+COLUMN_OVERRIDE_APS_MERCHANT_ID:
+ENTER (columninfo)
+	! This method is required because the VirtualTerminalID value is stored encrypted
+	columnInfo'length	= columnInfo'length-1
+RETURN retSUCCESS
+!
+
+COLUMN_OVERRIDE_APS_PASSWORD:
+ENTER (columninfo)
+	! This method is required because the VirtualTerminalID value is stored encrypted
+	columnInfo'length	= columnInfo'length-1
+RETURN retSUCCESS
+!
+
+COPY_FROM:
+
+ENTER (APSkey$)
+
+	retVal=_OBJ'CopyFrom(FROM "AR_531APSPaymentType_bus_BASE",APSkey$)
+
+	IF retVal = retSUCCESS AND cAPSActivated AND POS(PaymentMethod$="RA") {  ! PLW 2017-03-21
+		cOrigEncryptedAPSPassword$	= D531APSPassword$
+		cOrigEncryptedMerchantID$	= D531APSMerchantID$
+		cD531APSApiKey$				= D531APSApiKey$		! RCS #236076 - 2018-10-10
+		cD531APSUseEmvDevice$		= D531APSUseEmvDevice$	! RCS #236076 - 2018-12-23
+		_OBJ'DecryptPassword(cOrigEncryptedAPSPassword$,	OrigUnencryptedAPSPassword$)
+		_OBJ'DecryptPassword(cOrigEncryptedMerchantID$,		OrigUnencryptedMerchantID$)
+	}
+
+RETURN retVal
+!
+
+PAYMENT_TYPE_HAS_TRANSACTIONS:
+
+	CCPaymentMethodHaTransactions	= isFALSE
+	CompanyCode$					= coSession'CompanyCode$
+	AR_CustomerCCFH					= _OBJ'OpenTable("AR_CustomerCreditCard", "COMPANY")
+
+	IF NOT(coARCreditCard) {
+		coARCreditCard 				= NEW("AR_CreditCard", coSession, ERR=*NEXT)
+	}
+
+	IF coARCreditCard {
+		SELECT *, REC=cc$ FROM AR_CustomerCCFH BEGIN PaymentType$ END tmpPaymentType$:$FE$
+			notUsed					= coARCreditCard'CheckGUIDDataEntry(cc.CreditCardGUID$, isTRUE, CompanyCode$, isNULL$)
+			IF NOT(notUsed) {
+				CCPaymentMethodHaTransactions	= isTRUE
+				BREAK
+			}
+		NEXT RECORD
+	} ELSE {
+		! Unable to check if payment type is used.
+		! CCPaymentMethodHaTransactions property is lset to TRUE
+		! Payment Method cannot be changed
+		CCPaymentMethodHaTransactions			= isTRUE
+	}
+
+	CLOSE (AR_CustomerCCFH,ERR=*NEXT)
+
+RETURN retVal
+!
+
+POST_WRITE_REC:
+
+	IF cAPSActivated {
+
+		retVal						= retSUCCESS
+
+		IF POS(PaymentMethod$ 		= "RA") {		! PLW 2017-03-21
+			IF NOT(coARCreditCard) {
+				coARCreditCard 		= NEW("AR_CreditCard", coSession, ERR=*NEXT)
+			}
+
+			IF coARCreditCard {
+				IF NOT(EditState	= edtNEW) {
+					! No need to lock/unlock files when adding a new payment type since there will be no credit card records
+					coARCreditCard'UnlockConvFiles()
+				}
+			} ELSE {
+				retVal        		= retFAILURE
+				LastErrorNum$ 		= coSession'LastErrorNum$
+				LastErrorMsg$ 		= coSession'LastErrorMsg$
+			}
+		}
+	} ELSE {
+		retVal						= _OBJ'PostWriteRec(FROM "AR_531APSPaymentType_bus_BASE")
+	}
+RETURN retVal
+!
+
+READ_REC:
+ENTER (APS531key$)
+
+	IF cAPSActivated {
+		retVal						=_OBJ'ReadRec(FROM "SY_Maint",APS531key$)
+		IF retVal {
+			OrigCreditCardSetupTested$			= CreditCardSetupTested$
+			cOrigEncryptedVirtualTerminalID$	= VirtualTerminalID$
+			OrigUnencryptedVirtualTerminalID$	= isNULL$
+			cOrigEncryptedMerchantKey$			= MerchantKey$
+			OrigUnencryptedMerchantKey$			= isNULL$
+			OrigUnencryptedMerchantID$			= isNULL$
+			cOrigEncryptedMerchantID$			= D531APSMerchantID$
+			OrigUnencryptedAPSPassword$			= isNULL$
+			cOrigEncryptedAPSPassword$			= D531APSPassword$
+			cD531APSSendEmail$					= D531APSSendEmail$		! RCS #226560 - 2017-07-28
+			cD531APSRequireCVV$					= D531APSRequireCVV$	! RCS #237825 - 2018-05-23
+			cD531APSRetailAccount$				= D531APSRetailAccount$	! RCS #237825 - 2018-05-23
+			cD531APSApiKey$						= D531APSApiKey$		! RCS #236076 - 2018-10-10
+			cD531APSUseEmvDevice$				= D531APSUseEmvDevice$	! RCS #236076 - 2018-12-23
+
+ 			_OBJ'DecryptPassword(cOrigEncryptedVirtualTerminalID$,	OrigUnencryptedVirtualTerminalID$)
+ 			_OBJ'DecryptPassword(cOrigEncryptedMerchantKey$,		OrigUnencryptedMerchantKey$)
+ 			_OBJ'DecryptPassword(cOrigEncryptedMerchantID$,			OrigUnencryptedMerchantID$)
+ 			_OBJ'DecryptPassword(cOrigEncryptedAPSPassword$,		OrigUnencryptedAPSPassword$)
+ 			FixCredentials						= isFALSE
+  		}
+
+		SWITCH CreditCardEnabled$
+			CASE isYES$, "A", "B"  ! PLW 2017-03-21
+				IF NUL(D531APSMerchantID$) OR NUL(D531APSPassword$) {
+					_OBJ'SetValueNoValidate("CreditCardSetupTested$",	isNO$)
+				}
+ 				BREAK
+			DEFAULT
+				_OBJ'SetValueNoValidate("CreditCardSetupTested$",		isNO$)
+				BREAK
+		END SWITCH
+
+		IF NOT(NUL(APS531key$)) AND EditState {
+			tmpRec$=REC(IOL(cFH))
+ 			IF NOT(tmpRec$	= cOrigRcd$) {
+ 				WRITE (cFH)
+ 				READ (cFH, KEY=PaymentType$)
+				cOrigRcd$	= tmpRec$
+  			}
+  		}
+
+ 		IF POS(PaymentMethod$ = "RA") AND EditState { ! PLW 2017-03-21
+			CCPaymentMethodNotUsed					= isFALSE
+			CCPaymentMethodDoesNotHaveTransactions	= isFALSE
+			IF NOT(coARCreditCard) {
+				coARCreditCard						= NEW("AR_CreditCard", coSession, ERR=*NEXT)
+			}
+			IF coARCreditCard {
+				CCPaymentMethodNotUsed					= coARCreditCard'CheckARPaymentTypeNotUsed(PaymentType$)
+				CCPaymentMethodDoesNotHaveTransactions	= coARCreditCard'CheckPaymentTypeDoesNotHaveTransactions(PaymentType$)
+			} ELSE {
+				! Unable to check if payment type is used.
+				! CCPaymentMethodNotUsed property is left at isFALSE
+				! CCPaymentMethodDoesNotHaveTransactions property is left at isFALSE
+				! Payment Method cannot be changed
+				! AR_CreditCard is instantiated again prior to allowing the record to be deleted.
+			}
+		} ELSE {
+			CCPaymentMethodNotUsed	= isTRUE
+		}
+	} ELSE {
+		retVal						= _OBJ'ReadRec(FROM "AR_531APSPaymentType_bus_BASE",APS531key$)
+	}
+RETURN retVal
+!
+
+VALIDATE_APS_MERCHANT_ID:	! used only if payment method is cRedit card
+ENTER (APS531value$)
+	IF cAPSActivated {
+		IF NOT(NUL(APS531value$)) AND NOT(NUL(D531APSPassword$)) {
+			CreditCardSetupTested$	= isYES$
+		} else {
+			CreditCardSetupTested$	= isNO$
+		}
+		tmpIOL$						= CPL("IOLIST CreditCardSetupTested$")
+		_OBJ'SetPartialRecord(REC(tmpIOL$), tmpIOL$)
+	}
+RETURN retSUCCESS
+!
+
+VALIDATE_APS_PASSWORD:		! used only if payment method is cRedit card
+ENTER (value$)
+	IF cAPSActivated {
+		IF NOT(NUL(value$)) AND NOT(NUL(D531APSMerchantID$)) {
+			CreditCardSetupTested$	= isYES$
+		} else {
+			CreditCardSetupTested$	= isNO$
+  		}
+		tmpIOL$						= CPL("IOLIST CreditCardSetupTested$")
+		_OBJ'SetPartialRecord(REC(tmpIOL$), tmpIOL$)
+	}
+RETURN retSUCCESS
+!
+
+VALIDATE_PAYMENT_METHOD:	! Panel label: Type - Check, cRedit card, cash on Delivery, Other
+ENTER (SMCvalue$)
+	retVal							= _OBJ'ValidatePaymentMethod(FROM "AR_531APSPaymentType_bus_BASE",SMCvalue$)
+
+	IF retVal AND cAPSActivated {
+		! clear APS values
+		tmpIOL$=CPL("IOLIST "+"PreAuthorizationTerm,D531APSMerchantID$,D531APSPassword$,AddCorporateCardLevel3$,D531APSSendEmail$,D531APSRequireCVV$,D531APSRetailAccount$,D531APSUseEmvDevice$")
+		AddCorporateCardLevel3$		= isNO$
+		D531APSSendEmail$			= isNO$ 	! RCS #226560 - 2017-07-28, #231618 changed to N by default per Zac 2018-03-27
+		D531APSRequireCVV$			= isNO$ 	! RCS #237825 - 2018-05-23
+		D531APSRetailAccount$		= isNO$ 	! RCS #237825 - 2018-05-23
+		D531APSMerchantID$			= isNULL$
+		D531APSPassword$			= isNULL$
+		D531APSApiKey$				= isNULL$		! RCS #236076 - 2018-10-10
+		D531APSUseEmvDevice$		= isNO$		! RCS #236076 - 2018-12-23
+		IF SMCvalue$ = "R" { 					! PLW 2015-09-21 Ticket #149415
+			PreAuthorizationTerm	= 5			! removed ticket #149415 for #231968 RCS 2018-09-05
+			D531APSRequireCVV$		= isYES$	! RCS #237825 - 2018-05-23
+		}
+		_OBJ'SetPartialRecord(REC(tmpIOL$), tmpIOL$)
+	}
+
+RETURN retVal
+!
+
+VALIDATE_SPS:
+
+	IF cAPSActivated {
+		retVal	= retSUCCESS
+  	} ELSE {
+   		retVal	= _OBJ'ValidateSPS(FROM "AR_531APSPaymentType_bus_BASE")
+	}
+RETURN retVal
+!
+
+
+WRITE_REC:
+
+	IF cAPSActivated {
+
+		retVal	= retSUCCESS
+
+		IF PaymentMethod$ = "R" OR PaymentMethod$ = "A" {	! PLW 2017-03-21
+
+			IF NUL(D531APSMerchantID$) OR NUL(D531APSPassword$) or nul(D531APSApiKey$) {	! RCS #236076 - 2018-10-10
+				retVal			= retFAILURE
+				LastErrorNum$	= "AR_531APSInvalidMerchant"
+				LastErrorMsg$	= MSG("AR_531APSInvalidMerchant")
+			}
+
+			IF retVal {
+
+				IF NOT(coARCreditCard) {
+					coARCreditCard	= NEW("AR_CreditCard", coSession, ERR=*NEXT)
+				}
+
+				IF coARCreditCard {
+
+		 			 IF D531APSMerchantID$ <> cOrigEncryptedMerchantID$ AND NOT(NUL(D531APSMerchantID$)) {
+		 				! D531APSMerchantID$ has been re-entered and is now unencrypted
+						cUnencryptedAPSMerchantID$	= D531APSMerchantID$
+		 				_OBJ'EncryptPassword((D531APSMerchantID$), D531APSMerchantID$)
+		  			} ELSE {
+						cUnencryptedAPSMerchantID$	= OrigUnencryptedMerchantID$
+		  			}
+		  			IF D531APSPassword$ <> cOrigEncryptedAPSPassword$ AND NOT(NUL(D531APSPassword$)) {
+		 				! D531APSPassword$ has been re-entered and is now unencrypted
+						cUnencryptedD531APSPassword$	= D531APSPassword$
+		 				_OBJ'EncryptPassword((D531APSPassword$),EncryptedAPSPassword$)
+		 				_OBJ'SetValue("D531APSPassword$", EncryptedAPSPassword$)
+		  			} ELSE {
+						cUnencryptedD531APSPassword$	= OrigUnencryptedAPSPassword$
+		  			}
+
+		  		} ELSE {
+					retVal			= retFAILURE
+					LastErrorNum$	= coSession'LastErrorNum$
+					LastErrorMsg$	= coSession'LastErrorMsg$
+  				}
+
+		  		IF retVal {
+ 					IF NOT(EditState 	= edtNEW) {
+						IF UCS(OrigUnencryptedMerchantID$) <> UCS(cUnencryptedAPSMerchantID$) {
+							! if APS activated, we do not have SPS credit cards any more
+							! do not allow to change merchant ID if there are credit cards
+							! we should allow this change only if the fix button was pressed
+							IF FixCredentials {
+								retVal	= retSUCCESS
+							} ELSE {
+ 								retVal	= coARCreditCard'CheckARPaymentTypeNotUsed(PaymentType$)
+							}
+							IF NOT(retVal) {
+								LastErrorNum$		= "SY_531APSMerchantIDChange"
+								LastErrorMsg$		= MSG("SY_531APSMerchantIDChange")
+							} ELSE {
+								retVal = coARCreditCard'LockConvFiles()
+								IF NOT(retVal) {
+									LastErrorNum$	= coARCreditCard'LastErrorNum$
+									LastERrorMsg$	= coARCreditCard'LastErrorMsg$
+								}
+							}
+						}
+					}
+		  		}
+		  		IF NOT(retVal) {
+					D531APSMerchantID$	= cUnencryptedAPSMerchantID$
+					D531APSPassword$	= cUnencryptedD531APSPassword$
+				}
+			}
+
+			IF retVal {
+				retVal	= coARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$), (D531APSApiKey$))	! RCS #236076 - 2018-10-10
+				IF retVal {
+					CreditCardSetupTested$	= isYES$
+				} ELSE {
+					retVal			= retFAILURE
+					LastErrorNum$	= "AR_531APSInvalidMerchant"
+					LastErrorMsg$	= MSG("AR_531APSInvalidMerchant")
+				}
+			}
+		}
+
+		if nul(D531APSSendEmail$) { 	D531APSSendEmail$		= isNO$ }	! RCS #226560 - 2017-07-28, #231618 changed to N by default per Zac 2018-03-27
+		if nul(D531APSRequireCVV$) { 	D531APSRequireCVV$		= isYES$ }	! RCS #237825 - 2018-05-23, changed to Y by default per Zac
+		if nul(D531APSRetailAccount$) { D531APSRetailAccount$	= isNO$ }	! RCS #237825 - 2018-05-23
+		if nul(D531APSUseEmvDevice$) {	D531APSUseEmvDevice$	= isNO$ }	! RCS #236076 - 2018-12-23
+		IF not(PaymentMethod$="R") {	
+			D531APSRequireCVV$		= isNO$	! RCS #237825 - 2018-05-23 for non cRedit card payment types.
+			D531APSUseEmvDevice$	= isNO$	! RCS #236076 - 2018-12-23
+			D531APSRetailAccount$	= isNO$	! RCS #237825 - 2018-12-23
+		}
+		IF retVal {
+			retVal=_OBJ'Write(FROM "SY_Maint")
+			IF NOT(retVal) AND POS(PaymentMethod$="RA") {				! PLW 2016-03-21
+				D531APSMerchantID$	= cUnencryptedAPSMerchantID$
+				D531APSPassword$	= cUnencryptedD531APSPassword$
+			}
+		}
+
+	} ELSE {
+		retVal=_OBJ'Write(FROM "AR_531APSPaymentType_bus_BASE")
+	}
+RETURN retVal
+!

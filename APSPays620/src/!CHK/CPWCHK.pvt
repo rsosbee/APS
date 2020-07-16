@@ -1,0 +1,368 @@
+!  C/P Credit Card Basic Check <CPWCHK>
+SETESC Esc_Proc
+! See NABANCO spec sheet 1.2 and 1.3 (03-23-1997)
+! Bob Sosbee 02/10/2011
+!
+ENTER CARD$,CARD_NO$,BAD_NUMBER,MAX_DIGIT$,APPROVAL$,TERM$,COMP$
+!
+INIT: ! 100 - Initialize
+!IF TERM$(16,1)="Y" THEN SETERR Err_Proc; SETESC Esc_Proc ELSE SETERR 0000; SETESC 0000
+!
+! 150,5 - Define functions
+	DEF FNDEVLEN$(ARG1$,ARG1)=ARG1$+DIM(ARG1-MIN(ARG1,LEN(ARG1$)))
+	DEF FNPACK$(ARG1$)=CHR(INT(NUM(ARG1$(1,4))/64)+32)+CHR(MOD(NUM(ARG1$(1,4)),64)+32)
+	DEF FNUNPACK$(ARG1$)=STR(((ASC(ARG1$(1,1))-32)*64+ASC(ARG1$(2,1))-32):"0000")
+	DEF FN_CLN$(LOCAL X$)=STP(TBL(X$,TBL(X$,"1234567890",DIM(10)),DIM(LEN(X$))),3)
+!
+! 200 Set vars
+	GOSUB BLD_CC_TYPES
+!
+IOLX:
+!
+OPEN_FILES:
+!
+MAINLINE: ! Card verify processing
+	!
+	WORK$		= STP(CARD_NO$,3)
+	IF nul(WORK$) {
+		GOSUB BAD_CC_NUM
+		GOTO END_PGM
+	}
+	WORK$		= FN_CLN$(WORK$+" ")
+	TRAN$		= PAD(CARD$,5)
+	APPROVAL$	= ""
+	BAD_NUMBER	= 0
+	SKIP_LRC	= 0
+	IF MAX_DIGIT$="FIND" {
+		GOSUB FIND_PAY_TYPE
+	}
+	GOSUB CARD_CHK_HC
+	if (BAD_NUMBER) {
+		GOTO END_PGM
+	}
+	IF NOT(SKIP_LRC) {
+		GOSUB CHK_DIGIT_VERIFY
+	}
+GOTO END_PGM
+!
+
+FIND_PAY_TYPE: ! 1200,5 - Find payment type
+!
+	FOR N=1 TO 8 ! Set to number of card types
+		BAD_NUMBER		= 0
+		ON N-1 GOSUB VISA,MC,AMEX,DC,CB,DISC,JAL,JCB
+		IF NOT(BAD_NUMBER) {
+			TRAN$		= CARD_GRP$(N*5-4,5)
+			CARD$		= TRAN$
+			BREAK
+		}
+	NEXT N
+	APPROVAL$			= ""
+RETURN
+!
+
+CHK_DIGIT_VERIFY: ! Check digit verification
+!
+	W			= 1
+	S			= 0
+	FOR I=LEN(WORK$) TO 1 STEP -1
+		bad		= 1
+		TEMP	= NUM(WORK$(I,1),ERR=*BREAK)*W
+		W		= 3-W
+		S		= S+INT(TEMP/10)+MOD(TEMP,10)
+		bad		= 0
+	NEXT I
+	IF bad OR MOD(S,10) {
+		GOSUB BAD_CC_NUM
+	}
+RETURN
+!
+CARD_CHK_HC: ! Valid card check
+	!
+	IF TRAN$(1,5)="VISA " {
+		GOTO VISA
+	}
+	IF TRAN$(1,5)="MC   " {
+		GOTO MC
+	}
+	IF TRAN$(1,5)="AMEX " {
+		GOTO AMEX
+	}
+	IF TRAN$(1,5)="DC   " {
+		GOTO DC
+	}
+	IF TRAN$(1,5)="CB   " {
+		GOTO CB
+	}
+	IF TRAN$(1,5)="DISC " {
+		GOTO DISC
+	}
+	IF TRAN$(1,5)="JAL  " {
+		GOTO JAL
+	}
+	IF TRAN$(1,5)="JCB  " {
+		GOTO JCB
+	}
+	IF TRAN$(1,5)="GCA  " {
+		SKIP_LRC	= 1
+	}
+	IF TRAN$(1,5)="GCR  " {
+		SKIP_LRC	= 1
+	}
+	IF TRAN$(1,5)="GCN  " {
+		SKIP_LRC	= 1
+	}
+	IF TRAN$(1,5)="GCI  " {
+		SKIP_LRC	= 1
+	}
+	IF TRAN$(1,5)="CHECK" {
+		SKIP_LRC	= 1
+	}
+	IF TRAN$(1,5)="CASH " {
+		SKIP_LRC	= 1
+	}
+	IF SKIP_LRC		= 1 {
+		GOTO GOOD_CC_NUM
+	}
+	IF NOT(POS(TRAN$(1,5)=CARD_GRP$,5)) {
+		SKIP_LRC	= 1
+		GOTO GOOD_CC_NUM
+	}
+	APPROVAL$		= "*INVALID CARD TYPE"
+	BAD_NUMBER		= 1
+RETURN
+!
+VISA: ! VISA CARD
+	MAX_DIGIT$		= "(MAX 16 DIGITS)"
+	IF POS("4"=WORK$)<>1 {
+		GOTO BAD_CC_NUM
+	}
+	IF LEN(WORK$)=13 OR LEN(WORK$)=16 {
+		GOTO GOOD_CC_NUM
+	}
+GOTO BAD_CC_NUM
+!
+
+MC: ! MASTER CARD
+	MAX_DIGIT$		= "(MAX 16 DIGITS)"
+	IF LEN(WORK$)<>16 {
+		GOTO BAD_CC_NUM
+	}
+	IF NOT(POS(WORK$(1,1)="5|2")) {
+		GOTO BAD_CC_NUM
+	}
+GOTO GOOD_CC_NUM
+!
+
+AMEX: ! AMERICAN EXPRESS
+	MAX_DIGIT$		= "(MAX 15 DIGITS)"
+	IF LEN(WORK$)<>15 {
+		GOTO BAD_CC_NUM
+	}
+	IF NOT(POS(WORK$(1,2)="3437",2)) {
+		GOTO BAD_CC_NUM
+	}
+GOTO GOOD_CC_NUM
+!
+
+DISC: ! DISCOVER/NOVUS
+	MAX_DIGIT$		= "(MAX 16 DIGITS)"
+	IF LEN(WORK$)<>16 {
+		GOTO BAD_CC_NUM
+	}
+	IF WORK$(1,4)<>"6011" {
+		GOTO BAD_CC_NUM
+	}
+GOTO GOOD_CC_NUM
+!
+
+JCB: ! JAPANESE CARTE BLANC
+	MAX_DIGIT$		= "(MAX 16 DIGITS)"
+	IF LEN(WORK$)<>16 {
+		GOTO BAD_CC_NUM
+	}
+	IF WORK$(1,6)>="308800" AND WORK$(1,6)<="309499" THEN GOTO GOOD_CC_NUM
+	IF WORK$(1,6)>="309600" AND WORK$(1,6)<="310299" THEN GOTO GOOD_CC_NUM
+	IF WORK$(1,6)>="311200" AND WORK$(1,6)<="312099" THEN GOTO GOOD_CC_NUM
+	IF WORK$(1,6)>="315800" AND WORK$(1,6)<="315999" THEN GOTO GOOD_CC_NUM
+	IF WORK$(1,6)>="333700" AND WORK$(1,6)<="334499" THEN GOTO GOOD_CC_NUM
+	IF WORK$(1,6)>="352800" AND WORK$(1,6)<="358999" THEN GOTO GOOD_CC_NUM
+GOTO BAD_CC_NUM
+!
+
+CB: ! CARTE BLANCHE
+	MAX_DIGIT$		= "(MAX 14 DIGITS)"
+	IF LEN(WORK$)<>14 {
+		GOTO BAD_CC_NUM
+	}
+	IF WORK$(1,3)<>"389" {
+		GOTO BAD_CC_NUM
+	}
+GOTO GOOD_CC_NUM
+!
+
+DC: ! DINERS CLUB
+	MAX_DIGIT$		= "(MAX 14 DIGITS)"
+	IF LEN(WORK$)<>14 {
+		GOTO BAD_CC_NUM
+	}
+	IF NOT(POS(WORK$(1,2)="303638",2)) {
+		GOTO BAD_CC_NUM
+	}
+	IF WORK$(1,3)="389" {
+		GOTO BAD_CC_NUM
+	}
+GOTO GOOD_CC_NUM
+!
+
+JAL: ! JAL (JAPANESE AIR LINES CREDIT CARD)
+	MAX_DIGIT$		= "(MAX 15 DIGITS)"
+	IF LEN(WORK$)<>15 {
+		GOTO BAD_CC_NUM
+	}
+	IF (POS(WORK$(1,4)="18002131",4)) {
+		GOTO BAD_CC_NUM
+	}
+GOTO GOOD_CC_NUM
+!
+
+GCA: ! Datamark Gift Card - add value
+	MAX_DIGIT$		= "(MAX 16 DIGITS)"
+	IF LEN(WORK$)<>16 {
+		GOTO BAD_CC_NUM
+	}
+	IF WORK$(1,4)<>"1000" {
+		GOTO BAD_CC_NUM
+	}
+GOTO GOOD_CC_NUM
+!
+
+GCR: ! Datamark Gift Card - redeem
+	MAX_DIGIT$		= "(MAX 16 DIGITS)"
+	IF LEN(WORK$)<>16 {
+		GOTO BAD_CC_NUM
+	}
+	IF WORK$(1,4)<>"1000" {
+		GOTO BAD_CC_NUM
+	}
+GOTO GOOD_CC_NUM
+!
+
+BAD_CC_NUM: ! BAD NUMBER
+	APPROVAL$		= "*INVALID CARD NUMBER"
+	BAD_NUMBER		= 1
+RETURN
+!
+
+GOOD_CC_NUM: ! - GOOD NUMBER
+	BAD_NUMBER		= 0
+RETURN
+!
+
+CHECK_ROUTING: ! Check bank Routing checksum.  Note this is CALLed, not PERFORMed.
+!
+ENTER Routing$,Valid
+	Weight$			= "37137137"
+	Chk_Digit		= 0
+	Valid			= 0
+	IF LEN(STP(Routing$,3))<>9 { EXIT }
+	chkNum			= 0
+	dummy			= NUM(STP(Routing$,3),ERR=*next); chkNum	= 1
+	if not(chkNum) { EXIT }
+	FOR Loop		= 1 TO 8
+		Chk_Digit	+= NUM(Weight$(Loop,1))*NUM(Routing$(Loop,1))
+	NEXT Loop
+	tmp$			= STR(Chk_Digit)
+	Chk_Digit		= NUM(tmp$(LEN(tmp$),1))
+	IF Chk_Digit {
+		Chk_Digit	= 10-Chk_Digit
+	}
+	IF Chk_Digit	= NUM(Routing$(9,1),ERR=*NEXT) {
+		Valid		= 1
+	}
+EXIT
+!
+
+CHECK_ACCOUNT: ! Check bank account number for numeric only values.  Note this is CALLed, not PERFORMed.
+!
+ENTER Account$,Valid
+	WORK$			= STP(Account$,2)
+	Valid			= 1
+	IF NUL(WORK$) { 
+		Valid		= 0
+		EXIT 
+	}
+	FOR N=1 TO LEN(WORK$)
+		IF NOT(POS(WORK$(N,1)="0123456789")) { 
+			Valid=0 
+		}
+	NEXT N
+EXIT
+!
+
+BLD_CC_TYPES: ! 6000
+	CARD_GRP$		= ""
+	NON_CASH_TYPES$	= ""
+	GIFT_CARD_TYPES$= ""
+	ACH_GRP$		= ""
+	CARD_GRP$		+= "VISA "
+	CARD_GRP$		+= "MC   "
+	CARD_GRP$		+= "AMEX "
+	CARD_GRP$		+= "DC   "
+	CARD_GRP$		+= "CB   "
+	CARD_GRP$		+= "DISC "
+	CARD_GRP$		+= "JAL  "
+	CARD_GRP$		+= "JCB  "
+	NON_CASH_TYPES$	+= "CCDPU"
+	NON_CASH_TYPES$	+= "INVCD"
+	NON_CASH_TYPES$	+= "DPST "
+	NON_CASH_TYPES$	+= "DPXFR"
+	NON_CASH_TYPES$	+= "TRANS"
+	NON_CASH_TYPES$	+= "CHNGE" ! IIG69 added CHNGE
+	GIFT_CARD_TYPES$+= "GCA  " ! gift card ADD value
+	GIFT_CARD_TYPES$+= "GCR  " ! gift card REDEEM
+	GIFT_CARD_TYPES$+= "GCI  " ! gift card balance INQUIRY
+	GIFT_CARD_TYPES$+= "GCN  " ! gift card balance New activation
+	ACH_GRP$		+= "ACH  " ! ACH Processing IIG69
+	ACH_GRP$		+= "ACHCR" ! ACH Processing IIG6
+	ACH_GRP$		+= "VC   " ! ACH Processing IIG69
+RETURN
+!
+
+Err_Proc: ! 9000 - ERROR PROCESSING
+	E0				= ERR
+	E3$				= "CPWCHK"
+	E3				= TCB(5)
+	CALL "SYERRM",E0$,E1$,E2$,E3$,E0,E1,E3,E5,E6,E7,E8$
+	IF E3$="E" {
+		SETERR 0000
+		SETESC 0000
+		RETRY
+	}
+	IF E3$="R" {
+		SETERR Err_Proc
+		RETRY
+	}
+	IF E3$="X" {
+		GOTO END_PGM
+	}
+!
+
+Esc_proc: ! SETESC
+RETURN
+!
+
+Rpt_escape: ! REPORT SETESC
+	CALL "SYREPT","ESC",X1$,E3$,TERM$,X1,L,C0
+	IF E3$="END" {
+		GOTO END_PGM
+	}
+RETURN
+!
+
+END_PGM:
+	E1				= 0
+	E1$				= ""
+EXIT
+!
+

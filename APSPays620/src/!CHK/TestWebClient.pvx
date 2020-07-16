@@ -1,0 +1,68 @@
+! TestWebClient.pvx
+! 
+! ** @Author pWhirley
+! ** @Date 2018.08.17 33 at 09:58:02 AM EDT 
+! 
+BEGIN
+GOSUB RESET_DOT_NET
+URI$ = "https://secure.apspaymentgateway.com/api/v2/three-step"
+METHOD$ = "POST"
+CONTENT_TYPE$="text/xml"
+BODY$ = "<add-customer>"
+BODY$+="<api-key>7uR49kex3732zkVu2SpSJ2zh9GbRMAfz</api-key>"
+BODY$+="<redirect-url>http://</redirect-url>"
+BODY$+="<merchant-defined-field-1>MerchantDefined_1</merchant-defined-field-1>"
+BODY$+="<merchant-defined-field-2>MerchantDefined_2</merchant-defined-field-2>"
+BODY$+="<merchant-defined-field-3>MerchantDefined_3</merchant-defined-field-3>"
+BODY$+="<merchant-defined-field-4>MerchantDefined_4</merchant-defined-field-4>"
+BODY$+="</add-customer>"
+! escape
+rtnVal = coHTTP'Headers'Add("Content-Type","text/xml")
+result$ = coHTTP'UploadString$(URI$,METHOD$,BODY$)
+! escape
+stop
+RESET_DOT_NET: ! flush .NET
+
+	IF coSPM {
+		DELETE OBJECT coSPM, ERR=*NEXT
+		coSPM = 0
+	}
+	if coHTTP {
+		z=coHTTP'PvxFree()
+		DELETE OBJECT coHTTP, ERR=*NEXT
+	}
+	if coNET {
+		z=coNET'PvxFree()
+ 		DELETE OBJECT coNET, ERR=*NEXT
+	}
+
+	coSPM		= 0
+	coHTTP		= 0
+	coNET		= 0
+	tlsChk		= 0
+	retVal		= retFAILURE
+
+	DEF OBJECT coNET,"[.NET]"
+	ok=isFALSE; coNET'Add("System",ERR=*NEXT); ok=isTRUE
+	ok=isFALSE; coNet'Add("System.Net",ERR=*NEXT); ok=isTRUE
+	tmpNameSpace$ = "System,System.Net"
+	coNET'NameSpace$ = tmpNameSpace$
+	! Set TLS level #230282
+	coSPM = EVN("coNet'Create("+quo+"ServicePointManager"+quo+")",0,err=*next) ! part of System.Net
+
+	if coSPM {
+		tlsChk = 0; coSPM'set_SecurityProtocol("Tls12",err=*next); tlsChk = 1
+
+		IF NOT(tlsChk) {
+			PRINT "tlsChk failure"
+!			ESCAPE
+		}
+	}
+
+	if NOT(tlsChk) {
+		retVal = retWarning
+	} ELSE {
+		retVal = retSUCCESS
+	}
+	ok=isFALSE; coHTTP = coNET'Create("WebClient",ERR=*NEXT); ok = isTRUE
+RETURN

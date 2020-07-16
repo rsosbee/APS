@@ -1,0 +1,245 @@
+! 0 - COM Port Scale Processing for IIG Shipping Automation <SY_Scale.M4P>
+! Weightronix and Mettler/Toledo PS60 supported on COMx ports
+! Fairbanks Ultegra scale supported on USB
+! Note:  This program must be copied to the workstation for Advanced and Premium (MAS200 and MAS200 SQL)
+! 
+
+OPEN_PORT: 
+ENTER PORT_OPEN_OK,PORT$,PORT_CHAN
+	IF UCS(STP(PORT$))="USB" { 
+		GOSUB FIND_SCALE
+	} ELSE {
+		PORT_CHAN		= 2000
+		PORT_OPEN_OK	= 0
+		CLOSE (PORT_CHAN,ERR=*NEXT)
+		OPEN (PORT_CHAN,ERR=*NEXT)PORT$; PORT_OPEN_OK = 1
+	}
+EXIT 
+!
+
+READ_PORT: 
+ENTER READ_WEIGHT,PORT_CHAN,ERROR_READ,WT_KG
+	READ_WEIGHT			= 0
+	ERROR_READ			= 0
+	WT_KG				= 0
+	IN$					= ""
+	IF PORT_CHAN <> 2000 { 
+		GOSUB READ_FROM_SCALE
+	} ELSE {
+		GOSUB FLUSH_INPUT
+		PRINT (PORT_CHAN)"W"+$0D$,
+		GOSUB READ_INPUT
+	}
+EXIT 
+!
+
+FLUSH_INPUT: 
+	READ (PORT_CHAN,SIZ=1,TIM=0,ERR=*NEXT)A$; GOTO *SAME
+	A$					= ""
+	IN$					= ""
+RETURN 
+!
+
+READ_INPUT: 
+	READ (PORT_CHAN,SIZ=1,TIM=1,ERR=*NEXT)A$; IN$	= IN$+A$; GOTO *SAME
+
+	IF POS($0A$=IN$)=1 { IN$	= IN$(2); GOTO *SAME }
+	IF POS($02$=IN$)=1 { IN$	= IN$(2); GOTO *SAME }
+	IF IN$="" { RETURN } 
+	IN$					= CVS(IN$,16) ! Remove ctl char
+	! 
+	! strip descriptives. Do NOT use UCS/LCS commands - does strange things to periods
+	WORK$				= IN$
+	X					= POS($0A$=IN$)
+	IF X { 
+		WORK$			= IN$(1,POS($0A$=IN$)-1)
+	}
+	
+	! Check for pounds (LB)
+	X					= POS("lb"=WORK$); IF X { WORK$	= WORK$(1,X-1) }
+	X					= POS("Lb"=WORK$); IF X { WORK$	= WORK$(1,X-1) } 
+	X					= POS("LB"=WORK$); IF X { WORK$	= WORK$(1,X-1) }
+	
+	! Check for kilograms (KG)
+	X					= POS("kg"=WORK$); IF X { WORK$	= WORK$(1,X-1),WT_KG=1 }
+	X					= POS("Kg"=WORK$); IF X { WORK$	= WORK$(1,X-1),WT_KG=1 }
+	X					= POS("KG"=WORK$); IF X { WORK$	= WORK$(1,X-1),WT_KG=1 }
+	
+	WORK$				= STP(WORK$,2)
+	ERROR_READ			= 1
+	READ_WEIGHT			= NUM(WORK$,ERR=*NEXT),ERROR_READ = 0
+RETURN 
+! 
+
+READ_FROM_SCALE:
+! 
+	READ_WEIGHT			= 0
+	ERROR_READ			= 0
+	WT_KG				= 0
+	DEVICE_HANDLE		= 0
+	
+	LOCAL SUCCESS,BUFFER$,BYTES_READ$,NULL$=DIM(4,$00$),COUNT
+
+	IF NOT(DEVICE_HANDLE) {
+		GOSUB FIND_SCALE
+	}
+	IF NOT(DEVICE_HANDLE) { 
+		ERROR_READ		= 1
+		RETURN
+	} 
+	
+	BUFFER$				= DIM(6,$00$)
+	BYTES_READ$			= DIM(4,$00$)
+	SUCCESS				= 0
+	COUNT				= 0
+	
+	WHILE COUNT<3
+		SUCCESS			= DLL("Kernel32.dll","ReadFile",DEVICE_HANDLE,BUFFER$,LEN(BUFFER$),BYTES_READ$,0)
+		IF SUCCESS 		= 1 {
+			COUNT		= 3
+		} ELSE {
+			COUNT		++
+			WAIT .25
+			IF testing { 
+				PRINT "Count:",COUNT
+			}
+	 	}
+	WEND 
+	
+	SCALE_WEIGHT		= DEC(MID(BUFFER$,6,1)+MID(BUFFER$,5,1))*10^DEC(MID(BUFFER$,4,1))
+	WEIGHT_DESC$		= TBL(MID(BUFFER$,3,1)=$0C$,"kg","lbs")
+	WT_KG				= POS("kg"=WEIGHT_DESC$)
+	IF testing {
+		PRINT "Scale ReadFile Status:",SUCCESS,'LF',"Device Handle:",DEVICE_HANDLE,'LF',"Total Bytes:"+STR(DEC(SWP(BYTES_READ$))),'LF',"Raw Data:"+HTA(MID(BUFFER$,1,DEC(SWP(BYTES_READ$))))
+		PRINT "Interpreted Data:",'LF',"Scale Status:",TBL(DEC(MID(BUFFER$,2,1)),"Unknown","Unknown","Unknown","Scale in Motion","Normal","Negative Weight","Platform Overloaded","Unknown","Not Initialized")
+		PRINT "Weight:",DEC(MID(BUFFER$,6,1)+MID(BUFFER$,5,1))*10^DEC(MID(BUFFER$,4,1))," ",TBL(MID(BUFFER$,3,1)=$0C$,"kg","lbs")
+		PRINT "Scale Weight:",SCALE_WEIGHT,'LF',DIM(50,"-")
+	}
+	READ_WEIGHT			= SCALE_WEIGHT
+	SUCCESS				= DLL("Kernel32.dll","CloseHandle",DEVICE_HANDLE)
+	DEVICE_HANDLE		= 0
+RETURN 
+!
+
+FIND_SCALE: ! Find and open the scale.  Currently Fairbanks Ultegra scale supported
+! 
+	LOCAL NULL$,HID_GUID$,JUNK$,SCALE_VENDOR_ID$,SCALE_PRODUCT_ID$,DEVICES_HANDLE,SUCCESS,DEVINTERFACE$
+	LOCAL INDEX,REQUIREDLENGTH$,INTERFACE_DETAIL$,REQUIREDLENGTH,DEVINFO$,DEVICE_PATH$,ATTRIBUTES$
+	
+	SCALE_FOUND			= 0
+	! Get GUID for HID class devices
+	NULL$				= DIM(4,$00$)
+	HID_GUID$			= DIM(16,$00$)
+	JUNK				= DLL("hid.dll","HidD_GetHidGuid",HID_GUID$)
+	SCALE_VENDOR_ID$	= $0B67$ ! Fairbanks
+	SCALE_PRODUCT_ID$	= $555E$ ! Ultegra
+	
+	! gather device list for HID devices
+	DEVICES_HANDLE		= 0
+	DEVICES_HANDLE		= DLL("setupapi.dll","SetupDiGetClassDevsA",HID_GUID$,0,0,16+2)
+	
+	! Loop through devices searching for the intended device
+	INDEX				= 0
+	WHILE 1
+		DEVINTERFACE$			= DIM(4+16+4+4,$00$)
+		DEVINTERFACE$(1,4)		= SWP(BIN(LEN(DEVINTERFACE$),4))
+		SUCCESS					= DLL("setupapi.dll","SetupDiEnumDeviceInterfaces",DEVICES_HANDLE,0,HID_GUID$,INDEX,DEVINTERFACE$)
+		IF NOT(SUCCESS)  { BREAK }
+		REQUIREDLENGTH$			= DIM(4,$00$)
+		SUCCESS					= DLL("setupapi.dll","SetupDiGetDeviceInterfaceDetailA",DEVICES_HANDLE,DEVINTERFACE$,0,0,REQUIREDLENGTH$,0)
+		REQUIREDLENGTH			= DEC($00$+SWP(REQUIREDLENGTH$))
+		INTERFACE_DETAIL$		= DIM(REQUIREDLENGTH,$00$)
+		INTERFACE_DETAIL$(1,4)	= SWP(BIN(5,4))
+		DEVINFO$				= DIM(4+16+4+4,$00$)
+		DEVINFO$(1,4)			= SWP(BIN(LEN(DEVINFO$),4))
+		SUCCESS					= DLL("setupapi.dll","SetupDiGetDeviceInterfaceDetailA",DEVICES_HANDLE,DEVINTERFACE$,INTERFACE_DETAIL$,REQUIREDLENGTH,REQUIREDLENGTH$,DEVINFO$)
+		IF NOT(SUCCESS) { RETURN }
+		DEVICE_PATH$			= STP(INTERFACE_DETAIL$(5),1,$00$)
+		ATTRIBUTES$				= DIM(4+2+2+2,$00$)
+		
+		! Parameters 1. Device Path 2. GENERIC READ AND GENERIC  WRITE 3. SHARED READ AND SHARED WRITE 4. NULL 5. OPEN EXISTING 6. NULL 7. NULL
+		DEVICE_HANDLE			= DLL("Kernel32.dll","CreateFileA",DEVICE_PATH$+$00$,DEC(IOR($80000000$,$40000000$)),3,0,3,0,0)
+		SUCCESS					= DLL("hid.dll","HidD_GetAttributes",DEVICE_HANDLE,ATTRIBUTES$)
+		VENDOR_ID$				= SWP(MID(ATTRIBUTES$,5,2))
+		PRODUCT_ID$				= SWP(MID(ATTRIBUTES$,7,2))
+		IF SCALE_VENDOR_ID$	= VENDOR_ID$ AND SCALE_PRODUCT_ID$ = PRODUCT_ID$ { 
+			SCALE_FOUND			= 1
+			BREAK
+		}
+		SUCCESS					= DLL("Kernel32.dll","CloseHandle",DEVICE_HANDLE)
+		INDEX					++
+	WEND 
+	SUCCESS				= DLL("Kernel32.dll","CloseHandle",DEVICES_HANDLE)
+	IF SCALE_FOUND {
+		SCALE_PATH$		= DEVICE_PATH$
+	}
+	IF testing {
+		PRINT "Scale Path: ",SCALE_PATH$," Device Handle: ",DEVICE_HANDLE
+	}
+	PORT_CHAN			= DEVICE_HANDLE
+	PORT_OPEN_OK		= SCALE_FOUND
+	%SCALE_FOUND		= SCALE_FOUND
+RETURN 
+!
+
+CLOSE_PORT:
+ENTER PORT_CHAN
+	IF PORT_CHAN AND PORT_CHAN <> 2000 { 
+		GOTO CLOSE_SCALE
+	} ELSE {
+		IF PORT_CHAN {
+			CLOSE (PORT_CHAN,ERR=*NEXT)
+		}
+	PORT_CHAN			= 0
+	}
+EXIT 
+!
+
+CLOSE_SCALE:
+	DEVICE_HANDLE		= PORT_CHAN
+	IF DEVICE_HANDLE { 
+		SUCCESS			= DLL("Kernel32.dll","CloseHandle",DEVICE_HANDLE)
+	}
+	PORT_CHAN			= 0
+	DEVICE_HANDLE		= 0
+EXIT 
+!
+
+Test_code:
+	testing				= 1
+	GOSUB FIND_SCALE
+	IF NOT(SCALE_FOUND) { 
+		PRINT "Unable to find scale"
+		END
+	}
+	
+	WHILE 1
+		GOSUB READ_FROM_SCALE
+	
+		PROG_COUNTR		++
+		IF PROG_COUNTR	= 1 { 
+				JUNK	= TMR(0)
+		}
+		IF _TMS<>TMS {
+			PRINT @(0),PROG_COUNTR," -",INT(TMR(1)),@(0),
+			WAIT 0
+			_TMS		= TMS
+			OBTAIN (0,TIM=0,ERR=*NEXT)*
+			IF CTL		= 1 {
+				ESCAPE	! *SC-OK*
+			}
+		}
+		COUNT			++
+		IF COUNT		= 10 {
+			BREAK
+		}
+		WAIT 2
+	WEND
+!
+
+END_PROCESS:
+	IF DEVICE_HANDLE {
+		SUCCESS			= DLL("Kernel32.dll","CloseHandle",DEVICE_HANDLE)
+	}
+END 
+!

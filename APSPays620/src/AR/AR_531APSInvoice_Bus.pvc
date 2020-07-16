@@ -1,0 +1,389 @@
+! $Id: AR_531APSInvoice_Bus.pvc $
+! Copyright 2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #232007 - 2018-02-07 - RCS
+!
+DEF CLASS "AR_531APSInvoice_bus" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+
+	LIKE "AR_Invoice_Bus"
+
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL c2p.ARDivisionNo$
+	LOCAL c2p.BlocksProcessed		= 0
+	LOCAL c2p.CustomerNo$
+	LOCAL c2p.D531_C2PLinkCode$
+	LOCAL c2p.Display				! #239836 2018-08-08 RCS
+	LOCAL c2p.Enabled
+	LOCAL c2p.InvoiceNo$
+	LOCAL c2p.InvoiceType$
+	LOCAL ihh.D531_C2PLinkCode$
+	LOCAL logFile$
+
+	! object handles
+	LOCAL coCompany
+	LOCAL coRequest
+
+	! file channels
+	LOCAL c2p.ArCustFH
+	LOCAL c2p.ArInvDtlFH
+	LOCAL c2p.ArInvFH
+
+	! Public Functions (Methods)
+	FUNCTION DELETE(Key$)													DELETE_HEADER
+	FUNCTION WRITE()														WRITE_REC
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL PERFORM APSLogErrors()									APS_LOG_ERRORS
+	FUNCTION LOCAL DeleteC2PInvoice(c2p.InvoiceNo$,c2p.InvoiceType$)		DELETE_C2P_INVOICE
+	FUNCTION LOCAL PostInvoiceLinkCode(InvoiceNo$,InvoiceType$,cLinkCode$)	POST_INVOICE_LINK_CODE	! NCU
+	FUNCTION LOCAL ValidateCustomerNo(value$)								VALIDATE_CUSTOMER_NO
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+
+END DEF
+!
+
+ON_CREATE:
+
+ENTER coSession
+
+	c2p.companyCode$	= LCS(coSession'companyCode$)
+	coCompany			= NEW("SY_Company_SVC", coSession)
+	
+	coCompany'FIND(coSession'companyKey$)
+
+	c2p.Enabled			= coCompany'C2PEnabled
+	c2p.Option			= coCompany'C2POption
+
+	coCompany'GetValue("D531_C2PCurrency$", c2p.Currency$)
+
+	coRequest			= NEW("SY_531APSRequest", coSession)
+	
+	c2p.Display			= coRequest'c2pDisplay ! #239836 2018-08-08 RCS
+
+	c2p.ArCustFH		= coSession'OpenTable("AR_Customer","COMPANY")
+	c2p.ArInvFH			= coSession'OpenTable("AR_InvoiceHeader","COMPANY")
+	c2p.ArInvDtlFH		= coSession'OpenTable("AR_InvoiceDetail","COMPANY")
+
+
+RETURN
+!
+
+ON_DELETE:
+	! objects
+	DROP OBJECT coCompany, ERR=*PROCEED;	coCompany	= 0
+	DROP OBJECT coRequest, ERR=*PROCEED;	coRequest	= 0
+
+	! files
+	CLOSE (c2p.ArCustFH,ERR=*PROCEED);		c2p.ArCustFH	= 0
+	CLOSE (c2p.ArInvDtlFH,ERR=*PROCEED);	c2p.ArInvDtlFH	= 0
+	CLOSE (c2p.ArInvFH,ERR=*PROCEED);		c2p.ArInvFH		= 0
+
+RETURN
+!
+
+APS_LOG_ERRORS:
+
+	cErrString$		= "Invoice"
+	errorDesc$		= str(c2p.statusClassCode) + " - " + c2p.errorMessage$ + " Exception ID: " + c2p.exceptionID$
+	IF retVal		= retFAILURE {
+		errorDesc$	= "Connection to Click To Pay failed! " + c2p.errorMessage$
+	}
+	IF BatchEnabled {
+		coRequest'WriteLog(cErrString$, "Inv: " + c2p.header.InvoiceNo$ + " ("+BatchNo$+") " + errorDesc$, logFile$)
+	} ELSE {
+		coRequest'WriteLog(cErrString$, "Inv: " + c2p.header.InvoiceNo$ + " " + errorDesc$, logFile$)
+	}
+	ErrorText$		= isNULL$
+	cErrString$		= isNULL$
+	%logFile$		= logFile$
+
+RETURN retSUCCESS
+!
+
+DELETE_C2P_INVOICE:
+ENTER (InvoiceNo$),(InvoiceType$)
+
+	invoiceFound	= isFALSE
+	
+	READ (c2p.ArInvFH, KEY=InvoiceNo$:InvoiceType$, REC=c2p$, DOM=*NEXT); invoiceFound = isTRUE
+	IF NOT(invoiceFound) or NUL(c2p.CustomerNo$) { ! PLW 2018-03-16 do not attempt remove if there's not invoice or customer
+		RETURN retSUCCESS
+	}
+
+	retVal			= coRequest'DeleteC2PInvoice("AR",InvoiceNo$,InvoiceType$,c2p.ArInvFH,c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$)
+			
+	SWITCH retVal
+		CASE retSUCCESS ! was able to send the request and get an answer
+			IF c2p.statusClassCode			= retSUCCESS {
+				_obj'SetValueNoValidate("D531_C2PWebInvCreated$",isNO$)
+				_obj'SetValueNoValidate("D531_C2PWebInvUpdated$",isNO$)
+				_obj'SetValueNoValidate("D531_C2PLinkCode$",isNULL$)
+				c2p.D531_C2PWebInvCreated$	= isNO$
+				c2p.D531_C2PWebInvUpdated$	= isNO$
+				c2p.D531_C2PLinkCode$		= isNULL$
+				WRITE (c2p.ArInvFH, REC=c2p$,err=*next)	! may be extracted for deletion.
+			}
+			BREAK
+		CASE retWARNING
+			coRequest'tlsWarning()
+			IF c2p.statusClassCode			= retSUCCESS {
+				_obj'SetValueNoValidate("D531_C2PWebInvCreated$",isNO$)
+				_obj'SetValueNoValidate("D531_C2PWebInvUpdated$",isNO$)
+				_obj'SetValueNoValidate("D531_C2PLinkCode$",isNULL$)
+				c2p.D531_C2PWebInvCreated$	= isNO$
+				c2p.D531_C2PWebInvUpdated$	= isNO$
+				c2p.D531_C2PLinkCode$		= isNULL$
+				WRITE (c2p.ArInvFH, REC=c2p$,err=*next)	! may be extracted for deletion.)
+			}
+			BREAK
+		DEFAULT
+ 			! failed to send transaction!
+ 			if c2p.Display {
+					coRequest'DisplayError(c2p.errorMessage$)
+ 			}
+ 			! retVal						= retFAILURE
+			BREAK
+	END SWITCH
+
+	IF c2p.statusClassCode > 1 and c2p.statusCode <> 30003 { ! skip if not on file.
+		if c2p.statusCode <> 50005 { ! other issue than payments on file.
+ 			if c2p.Display {
+					coRequest'DisplayError(c2p.errorMessage$)
+ 			}
+			LastErrorNum$	= "CI_Invalid"
+			LastErrorMsg$	= MSG("CI_Invalid", "Unable to delete invoice")
+		} else { ! Payments already on file
+			LastErrorNum$	= "SY_531C2PPaymentsOnFile"
+			LastErrorMsg$	= MSG("SY_531C2PPaymentsOnFile")
+		}
+		retVal				= retFAILURE
+	}
+
+	! log errors.
+	IF (c2p.statusClassCode > 1 AND not(coSession'Updating)) OR (retVal = retFAILURE and not(coSession'Updating)) {
+		_obj'APSLogErrors()
+	}
+
+RETURN retVal
+!
+
+DELETE_HEADER:
+
+ENTER (deleteKey$)
+
+	! get key data
+	c2p.ARDivisionNo$	= ARDivisionNo$
+	c2p.CustomerNo$		= CustomerNo$
+	c2p.InvoiceNo$		= InvoiceNo$
+	c2p.InvoiceType$	= InvoiceType$
+	retVal				= retSUCCESS ! Assume Success
+
+	if not(coSession'Updating) AND c2p.Enabled and NOT(_obj'EditState = edtNEW) {			! Only remove in C2P if not a new invoice.
+		retVal			= _obj'DeleteC2PInvoice(c2p.InvoiceNo$,c2p.InvoiceType$)			! removes the invoice from the gateway
+	}
+
+	if retVal {
+		retVal 			= _OBJ'Delete(FROM "AR_531APSInvoice_bus_base", deleteKey$)
+	}
+
+
+RETURN retVal
+!
+
+POST_INVOICE_LINK_CODE:
+
+ENTER (InvoiceNo$),(InvoiceType$),cLinkCode$
+
+	READ (c2p.ArInvFH, KEY=InvoiceNo$:InvoiceType$, REC=c2p$)
+	
+	! Skip ADjustments, CAsh invoices, Credit Memos, Debit Memos, deleted, and Finance Charges #251756 - 2019-05-22 RCS
+	IF pos(c2p.InvoiceType$	= "AD|CA|CM|DM|FC|XD") {
+		prefixKey$					= "c2p."
+		coRequest'SetC2pFlags()
+		D531_C2PLinkCode$ 			= isNULL$
+		WRITE (c2p.ArInvFH, REC=c2p$)
+		retVal						= retSUCCESS
+		RETURN retVal
+	}
+	
+	! Check for negative invoice/debit memo RCS #241229 - 2018-08-28 
+	cBalance		= c2p.TaxableSalesAmt + c2p.NonTaxableSalesAmt + c2p.FreightAmt + c2p.SalesTaxAmt
+	if pos(c2p.invoiceType$="IN|DM|CA") AND cBalance <= 0	{
+		prefixKey$					= "c2p."
+		coRequest'SetC2pFlags()
+		retVal						= retSUCCESS
+		RETURN retVal
+	}
+
+	! there is a balance...and no link code
+	IF NUL(c2p.D531_C2PLinkCode$) {
+			
+		retVal		= coRequest'PostInvoiceLinkCode("AR",InvoiceNo$,InvoiceType$,c2p.ArInvFH,c2p.D531_C2PLinkCode$,c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$)
+
+		SWITCH retVal
+			CASE retSUCCESS ! was able to send the request and get an answer
+				IF c2p.statusClassCode		= retSUCCESS {
+					if nul(c2p.D531_C2PWebInvCreated$) { c2p.D531_C2PWebInvCreated$	= isNO$ }
+					if nul(c2p.D531_C2PWebInvUpdated$) { c2p.D531_C2PWebInvUpdated$	= isNO$ }
+					WRITE (c2p.ArInvFH, REC	=c2p$)
+					D531_C2PLinkCode$		= c2p.D531_C2PLinkCode$
+				}
+				BREAK
+			CASE retWARNING
+				IF c2p.statusClassCode		= retSUCCESS {
+					if nul(c2p.D531_C2PWebInvCreated$) { c2p.D531_C2PWebInvCreated$	= isNO$ }
+					if nul(c2p.D531_C2PWebInvUpdated$) { c2p.D531_C2PWebInvUpdated$	= isNO$ }
+					WRITE (c2p.ArInvFH, REC=c2p$)
+					D531_C2PLinkCode$ 		= c2p.D531_C2PLinkCode$
+				}
+				BREAK
+			DEFAULT
+				! failed to send transaction!
+				if c2p.Display {
+					coRequest'DisplayError(c2p.errorMessage$)
+				}
+				retVal	= retFAILURE
+				BREAK
+		END SWITCH
+		
+		! log errors.
+		IF not(coSession'Updating) and (c2p.statusClassCode > 1 or retVal = retFAILURE) {
+			_obj'APSLogErrors()
+		}
+
+	}
+	cLinkCode$			= D531_C2PLinkCode$
+
+RETURN retVal
+!
+
+VALIDATE_CUSTOMER_NO: ! #242016 2018-09-19 RCS
+
+ENTER (value$)
+
+	retVal				= _OBJ'ValidateCustomerNo(FROM "AR_531APSInvoice_bus_base",value$)
+
+	if retVal and not(nul(%hld.cOldCustomer$)) {
+		_obj'DeleteC2PInvoice(InvoiceNo$,InvoiceType$)
+	}
+
+RETURN retVal
+!
+
+WRITE_REC:
+
+	hld.InvoiceNo$		= InvoiceNo$
+	hld.InvoiceType$	= InvoiceType$
+	
+	if nul(D531_APSDoExpiredCapture$) {
+		D531_APSDoExpiredCapture$	= isNO$ ! #231968 - 2018-09-17 RCS
+	}
+	if nul(D531_APSDoForcedSale$) {
+		D531_APSDoForcedSale$		= isNO$ ! #231968 - 2018-09-17 RCS
+	}
+
+	retVal = _OBJ'Write(FROM "AR_531APSInvoice_bus_base")
+
+	IF retVal AND c2p.Enabled {
+
+		READ (c2p.ArInvFH, KEY=hld.InvoiceNo$:hld.InvoiceType$, REC=c2p.header$)
+		
+		! Skip ADjustments, CAsh invoices, Credit Memos, Debit Memos, deleted, and Finance Charges #251756 - 2019-05-22 RCS
+		IF pos(c2p.header.InvoiceType$	= "AD|CA|CM|DM|FC|XD") {
+			prefixKey$					= "c2p.header."
+			coRequest'SetC2pFlags()
+			WRITE (c2p.ArInvFH, REC=c2p.header$)
+			RETURN retVal
+		}
+		
+		! check for negative invoice/debit memo RCS #241229 - 2018-08-28 
+		cBalance		= c2p.header.TaxableSalesAmt + c2p.header.NonTaxableSalesAmt + c2p.header.FreightAmt + c2p.header.SalesTaxAmt
+		if pos(c2p.header.invoiceType$="IN|DM|CA") AND cBalance <= 0	{
+			prefixKey$					= "c2p.header."
+			coRequest'SetC2pFlags()
+			WRITE (c2p.ArInvFH, REC=c2p.header$)
+			RETURN retVal
+		}
+
+		READ (c2p.ArCustFH,rec=c2p$,key=c2p.header.ARDivisionNo$:c2p.header.CustomerNo$)
+		
+		! Skip balance forward.
+		if c2p.OpenItemCustomer$ <> isYES$ {
+			prefixKey$					= "c2p.header."
+			coRequest'SetC2pFlags()
+			WRITE (c2p.ArInvFH, REC=c2p.header$)
+			RETURN retVal
+		}
+		
+		! Opt in/Opt Out
+		cSkip			= coRequest'OptInOrOut(c2p.D531_C2POption$)
+		if cSkip {
+			prefixKey$					= "c2p.header."
+			coRequest'SetC2pFlags()
+			WRITE (c2p.ArInvFH, REC=c2p.header$)
+			RETURN retVal
+		}
+
+		! Is credit card authorized?  This will post to A/R as paid in full.
+		if not(nul(c2p.header.CreditCardTransactionID$))		\
+			and not(nul(c2p.header.CreditCardAuthorizationNo$))	\
+			and c2p.header.D531_C2PWebInvCreated$	= isYES$ {
+				prefixKey$					= "c2p.header."
+				coRequest'SetC2pFlags()
+				WRITE (c2p.ArInvFH, REC=c2p.header$)
+				_obj'DeleteC2PInvoice(c2p.header.InvoiceNo$,c2p.header.InvoiceType$) ! removes the invoice from the gateway
+			RETURN retVal
+		}
+
+		! there is a balance...and no link code
+		rtnVal			= coRequest'ProcessARInvoice(		\
+									InvoiceNo$,				\
+									InvoiceType$,			\
+									c2p.statusCode,			\
+									c2p.statusClassCode,	\
+									c2p.errorMessage$,		\
+									c2p.D531_C2PLinkCode$)
+
+		SWITCH rtnVal
+			CASE retSUCCESS ! was able to send the request and get an answer
+				if not(coSession'Updating) and c2p.statusClassCode	= retSUCCESS {
+					c2p.header.D531_C2PWebInvCreated$	= isYES$
+					c2p.header.D531_C2PWebInvUpdated$	= isYES$
+					c2p.header.D531_C2PLinkCode$		= c2p.D531_C2PLinkCode$
+					WRITE (c2p.ArInvFH, REC=c2p.header$)
+				}
+				BREAK
+			CASE retWARNING ! request connected at an insecure level
+				if not(coSession'Updating) {
+					coRequest'TlsWarning()
+				}
+				if not(coSession'Updating) and c2p.statusClassCode	= retSUCCESS {
+					c2p.header.D531_C2PWebInvCreated$	= isYES$
+					c2p.header.D531_C2PWebInvUpdated$	= isYES$
+					c2p.header.D531_C2PLinkCode$		= c2p.D531_C2PLinkCode$
+					WRITE (c2p.ArInvFH, REC=c2p.header$)
+				}
+				BREAK
+			DEFAULT
+				! failed to send transaction
+				if c2p.Display {
+					coRequest'DisplayError(c2p.errorMessage$)
+				}
+				BREAK
+		END SWITCH
+
+		! log errors.
+		IF (c2p.statusClassCode > 1 AND not(coSession'Updating)) OR (rtnVal=retFAILURE and not(coSession'Updating)) {
+			if c2p.Display {
+				coRequest'DisplayError(c2p.errorMessage$)
+			}
+			_obj'APSLogErrors()
+		}
+	}
+RETURN retVal
+!

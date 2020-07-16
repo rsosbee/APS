@@ -1,0 +1,623 @@
+! DukeTools - used to open, read and write SQL tables
+! Copyright 2017 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! 
+! ** @Author asiadmin
+! ** @Date 2012.03.27 13 at 06:24:46 PM EDT 
+! 
+ 
+DEF CLASS "DukeTools"  CREATE On_Create REQUIRED  DELETE On_Delete REQUIRED  
+
+	LOCAL			cSQLDSN$=%SQLDSN$ ! "Duke_EE" was "DukeCFL"
+	LOCAL			cSQLUser$=%SQLUser$ ! ""
+	LOCAL			cSQLPassword$=%SQLPassword$ ! ""
+	LOCAL			cSQLDatabase$=%SQLDatabase$ ! "DUKE_EE"
+	LOCAL			cLogFile$=""
+	LOCAL			cErrorLogFile$=""
+	LOCAL			toolsErrorCount
+	LOCAL			cXMLFile$=""
+	LOCAL			cXMLLogLimit = 10
+	LOCAL			cXMLLogCount
+	LOCAL			oWs ! Web service object
+	LOCAL 			cDefaultBase36Length = 3
+	
+	LOCAL 			FedExServer$="fedex.amconservationgroup.com"
+!	LOCAL			FedExServer$="50.59.200.33"
+!	LOCAL			FedExServer$="98.124.78.27"
+!	LOCAL			FedExServer$="127.0.0.1"
+	LOCAL			FedExPort$="2000"
+	LOCAL			FedExTemplate$
+	LOCAL			FedExCHN
+	LOCAL			reprint ! PLW 2012/05/30 added to FedExShip method FEDEX_SHIP
+	
+	LOCAL 			Task$ ! passed in ON_CREATE to tag log files
+	
+	PROPERTY		LastErrorMsg$
+	PROPERTY		LastErrorNo
+	PROPERTY		LastOSError$
+
+	
+	FUNCTION	OpenTable(Tablename$,KeyField$)								OPEN_TABLE
+	FUNCTION	LogMessage(Message$)										LOG_MESSAGE
+	FUNCTION	LogError(Message$)											LOG_ERROR
+	FUNCTION	LogXML(XMLString$)											LOG_XML
+	FUNCTION	Base36$(Count,Length)										BASE_36_CONVERSION
+	FUNCTION	WebService(uploadURL$,uploadData$,uploadIOL$,WSResponse$,WSResponseIOL$, \
+				SOAPtemplate$,Certificate$,SOAPAction$)						WEB_SERVICE
+	FUNCTION	GetPrinterList(printList$)									GET_PRINTER_LIST
+	FUNCTION	DateDiff(FromDate$,ToDate$)									DATE_DIFF
+	FUNCTION	BusinessDateDiff(FromDate$,ToDate$)							BUSINESS_DATE_DIFF
+	FUNCTION	TestDate(TestDate$,retYear,retMonth,retDay,retJul)			TEST_DATE
+	FUNCTION	DisplayLog()												DISPLAY_LOG
+	FUNCTION	DisplayErrorLog()											DISPLAY_ERROR_LOG
+	
+	FUNCTION	FedExShip(ShipRec$,ShipIOL$,Error$,weight,selectedPrinter$,ReprintFlag$)	FEDEX_SHIP ! PLW 2012/05/30 added reprint flag
+	FUNCTION	FedExEndOfDay()												FEDEX_END_OF_DAY
+	
+	FUNCTION	SendEmail(Group$,Subject$,Text$,Attachment$) 				SEND_EMAIL
+	FUNCTION	GetEmailAddresses(Group$,ToList$)							GET_EMAIL_ADDRESSES
+	FUNCTION	SendErrorEmail()											SEND_ERROR_EMAIL
+	
+	FUNCTION LOCAL	ClearErrors()											CLEAR_ERRORS
+	FUNCTION LOCAL	OpenLog(logFile$)										OPEN_LOG
+	FUNCTION LOCAL  DisplayLog(LogCHN)										DISPLAY_LOG_SCREEN
+
+	FUNCTION ParseSOAP(SOAPXML$,tmpIOL$,tmpREC$,Status$)					PARSE_SOAP
+	FUNCTION LOCAL GetNextTag(XML$,TAG$,DATA$)								GET_NEXT_TAG
+
+END DEF
+!
+On_Create:
+	ENTER task$,ERR=*NEXT
+	! RCS fix pathing issues for import 
+	if nul(%DukeFolder$) { PERFORM "DukeStartup.pvx" } ! RCS ! PLW 2017-06-14 changed to perform DukeStartup.pvx
+	PERFORM "DukeStartup.pvx" ! RCS ! PLW 2017-06-14 changed to perform DukeStartup.pvx
+	DukePath$=mid(%DukeFolder$,1,len(%DukeFolder$)-1) ! RCS
+	cLogFile$ = DukePath$+%Test$+"\logs\"+Task$+"Activity"+DTE(0:"%Yl%Mz%Dz%Hz%mz%s")+".log" ! RCS
+	cErrorLogFile$=DukePath$+%Test$+"\logs\"+Task$+"Error"+DTE(0:"%Yl%Mz%Dz%Hz%mz%s")+".log" ! RCS
+	cXMLFile$=DukePath$+%Test$+"\logs\XML"+DTE(0:"%Yl%Mz%Dz%Hz%mz%s")+".log" ! RCS
+RETURN
+!
+On_Delete:
+	IF oWs { DROP OBJECT oWs,ERR=*NEXT }
+	IF FedExCHN { CLOSE(FedExCHN,ERR=*NEXT) }
+RETURN
+!
+CLEAR_ERRORS:
+		LastErrorMsg$=""
+		LastErrorNo=0
+		LastOSError$=""
+	RETURN
+!	
+OPEN_TABLE:
+	ENTER TableName$,KeyField$
+		_obj'ClearErrors()
+		ConString$="[odb]"+cSQLDSN$+";"
+		IF NOT(NUL(TableName$)) {
+			TableString$=TableName$
+		}
+		IF NOT(NUL(cSQLDatabase$)) {
+			DBString$="DB="+cSQLDatabase$
+		}
+		IF NOT(NUL(cSQLUser$)) {
+ 			UserString$="User="+cSQLUser$
+			PasswordString$="Pswd="+cSQLPassword$ ! per Pvx Plus 20170616 RCS
+		}
+		IF NOT(NUL(KeyField$)) {
+			KeyString$="Key="+Keyfield$
+		}
+		ConString$+=TableString$+";"+DBString$+";"+UserString$+";"+PasswordString$+";"+KeyString$+";"
+		ReturnChannel=-1
+		IF NOT(NUL(TableName$)) {
+			NewChannel=HFN; OPEN(NewChannel,IOL=*,ERR=*NEXT)ConString$; ReturnChannel=NewChannel
+		} ELSE {
+			NewChannel=HFN; OPEN(NewChannel,ERR=*NEXT)conString$; ReturnChannel=NewChannel
+		}
+		IF ReturnChannel<0 {
+			LastErrorNo = ERR
+			LastErrorMsg$ = MSG(ERR)
+			LastOSError$ = MSG(-1)
+		}
+	RETURN ReturnChannel
+!
+WEB_SERVICE:
+	ENTER uploadURL$,uploadData$,uploadIOL$,WSResponse$,WSResponseIOL$,SOAPtemplate$,Certificate$,SOAPAction$,ERR=*NEXT
+		READ DATA FROM uploadData$ to IOL=uploadIOL$
+		tmpTmp$=SOAPTemplate$
+		P=0; newTemplate$=""
+		REPEAT
+			P=POS("~"=tmpTmp$)
+			IF P {
+				SOAPPacket$+=tmpTmp$(1,P-1); tmpTmp$=tmpTmp$(P+1)
+				P1=POS("~"=tmpTmp$)
+				Variable$=tmpTmp$(1,P1-1); tmpTmp$=tmpTmp$(P1+1)
+				IF POS("$"=variable$) {
+					value$=EVS(variable$)
+				} ELSE {
+					value$=STR(EVN(variable$))
+				}
+				SOAPPacket$+=value$
+			}
+		UNTIL P=0
+		SOAPPacket$+=tmpTmp$; tmpTmp$=""
+		IF cXMLLogLimit and cXMLLogCount<=cXMLLogLimit {
+			_obj'LogXML(SOAPPacket$)
+			cXMLLogCount++
+		}
+		CALL "*PLUS/WEB/REQUEST",uploadURL$,SOAPPacket$,respBody$,respHeader$,type$,certificate$,SOAPAction$
+		IF NOT(oWs) {
+			oWs=NEW("WebService")
+		}
+		FaultCode$=""; FaultString$=""
+		tmpRet=oWs'ParseSOAP(respBody$,WSResponseIOL$,WSResponse$,status$)
+!		tmpRet=_OBJ'ParseSOAP(respBody$,WSResponseIOL$,WSResponse$,status$)
+		READ DATA FROM WSResponse$ to IOL=WSResponseIOL$
+		
+		IF LEN(FaultCode$) {
+			Emsg$="SOAP FaultCode="+FaultCode$+" FaultString="+FaultString$
+			_OBJ'LogMessage(Emsg$)
+			_OBJ'LogError(Emsg$)
+			retVal = 0
+		} ELSE {
+			retVal = 1
+		}
+	RETURN retVal
+!	
+LOG_MESSAGE:
+	ENTER Message$
+		logCHN=_OBJ'OpenLog(cLogFile$)
+		IF logCHN>0 {
+			LongMessage$=DTE(0:"%Yl/%Mz/%Dz %Hz:%mz")+"  "+Message$
+			WRITE RECORD(logCHN)LongMessage$
+			CLOSE(logCHN)
+			retVal = 1
+		}
+	RETURN retVal
+!	
+LOG_ERROR:
+	ENTER Message$
+		logCHN=_OBJ'OpenLog(cErrorLogFile$)
+		IF logCHN>0 {
+			LongMessage$=DTE(0:"%Yl/%Mz/%Dz %Hz:%mz")+"  "+Message$
+			WRITE RECORD(logCHN)LongMessage$
+			CLOSE(logCHN)
+			toolsErrorCount++
+			retVal = 1
+		}
+	RETURN retVal
+!	
+OPEN_LOG:
+	ENTER logName$
+		LogCHN=-1
+		retVal = 0
+		newCHN=HFN; OPEN LOCK(newCHN,err=*NEXT)logName$; LogCHN=newCHN
+		IF LogCHN<0 AND ERR=12 {
+			SERIAL logName$,ERR=*NEXT
+			newCHN=HFN; OPEN LOCK(newCHN,ERR=*NEXT)logName$; logCHN=newCHN
+		}
+	RETURN logCHN
+!
+BASE_36_CONVERSION:
+	ENTER Count,Length,ERR=*NEXT
+		COUNT=INT(COUNT)
+		IF NOT(Length) {
+			Length=MAX(cDefaultBase36Length,1)
+		}
+		WHILE INT(COUNT/(36^(Length-1)))>35
+			Length++
+		WEND
+		cDefaultBase36Length=Length
+		DIM W[Length],R[Length+1]
+		Base36$=""
+		R[1]=Count
+		FOR I=1 to Length
+			Factor=36^(Length-I)
+			W[I]=INT(R[I]/Factor)
+			R[I+1]=Mod(R[I],Factor)
+			Base36$+=TBL(W[I]<10,CHR(W[I]+55),STR(W[I]))
+		NEXT I
+	RETURN BASE36$
+!
+LOG_XML:
+	ENTER XMLString$
+		logCHN=_OBJ'OpenLog(cXMLFile$)
+		IF logCHN>0 {
+			WRITE RECORD(logCHN)XMLString$
+			CLOSE(logCHN)
+			retVal = 1
+		}
+	RETURN retVal
+!	
+GET_PRINTER_LIST:
+	ENTER printerList$
+		! WINPRT_SETUP DIRECTORY printerList$
+		! RCS changed to list of printers in the dbo.Printers table to limit options for the shippers.
+		printerList$=$$
+		ptrCHN=_obj'OpenTable("printers","defaultPrinter")
+		if ptrCHN > 0 {
+			select * from ptrCHN begin $$ end $FE$
+				printerList$+=stp(defaultPrinter$)+","
+			next record
+			close (ptrCHN)
+		}
+	RETURN 1
+!
+FEDEX_END_OF_DAY:
+	_obj'LogMessage("End of Day Starting")
+	tmpCHN = HFN; OPEN(tmpCHN,ISZ=-1)"FedExEndOfDay.txt"
+	READ RECORD(tmpCHN,SIZ=10000)FedExEndOfDayTemplate$
+	CLOSE(tmpCHN)
+	IF NOT(FedExCHN) {
+		FedExCHN=HFN
+		OPEN(FedExCHN)"[tcp]"+FedExServer$+";"+FedExPort$
+	}
+	WRITE(FedExCHN)FedExEndOfDayTemplate$
+	resp$=""
+	read(FedExCHN,tim=3,ERR=*NEXT)resp$
+	Code2$="NO RESPONSE",Code3$="FedEx Server "+FedExServer$+";"+FedExPort$+" did not respond"
+!	close(FedExCHN)
+	if len(resp$) {
+		tmp$=resp$
+		Code1$="",Code2$="",Code3$=""
+		REPEAT
+			P=POS(QUO=tmp$,1,2)
+			IF P {
+				code$=tmp$(1,P),tmp$=tmp$(P+1)
+				CodeValue$=EVS(code$(pos(","=code$)+1))
+				Code$=code$(1,pos(","=code$)-1)
+				CodeVar$="Code"+Code$
+				VIA CodeVar$ = CodeValue$
+			}
+		UNTIL P=0
+	}
+	retVal = 1
+	IF LEN(Code2$) {
+		_obj'LogError("End of Day Error: "+Code2$+" - "+Code3$)
+		_obj'LogMessage("End of Day Error: "+Code2$+" - "+Code3$)
+		retVal=0
+	}
+	_OBJ'LogMessage("End of Date Complete")
+	RETURN retVal
+!	
+FEDEX_SHIP:
+	ReprintFlag$="N"
+	reprint=0
+	ENTER ShipRec$,ShipIOL$,Error$,(weight),selectedPrinter$,ReprintFlag$,ERR=*NEXT
+		reprint=(ReprintFlag$="Y")
+		IF NOT(POS("\\"=selectedPrinter$)) {
+			selectedPrinter$="\\127.0.0.1\"+selectedPrinter$
+		}
+		READ DATA FROM ShipRec$ to IOL=ShipIOL$
+		weight=weight*100 ! FedEx assumes 2 decimal places
+		! --- Ticket #166768 - YDUKE12 Kits change endorsement to not return if not delivered
+		endorsement$ = $$
+		IF MID(kitCode$,1,7)="YDUKE12" {  ! PLW 2016-05-06 ALL YDUKE12* kits need endorsement
+			endorsement$ = "2416,"+QUO+"5"+QUO
+		}
+		! ---- ^^^^ ----
+		if NUL(FedExTemplate$) {
+			tmpCHN = HFN; OPEN(tmpCHN,ISZ=-1)"SmartPost020Template.txt"
+			READ RECORD(tmpCHN,SIZ=100000)FedExTemplate$
+			close(tmpCHN)
+		}
+		tmpTmp$=FedExTemplate$
+		P=0; shipRecord$=""
+		REPEAT
+			P=POS("~"=tmpTmp$)
+			IF P {
+				shipRecord$+=tmpTmp$(1,P-1); tmpTmp$=tmpTmp$(P+1)
+				P1=POS("~"=tmpTmp$)
+				Variable$=tmpTmp$(1,P1-1); tmpTmp$=tmpTmp$(P1+1)
+				IF POS("$"=variable$) {
+					value$=EVS(variable$)
+				} ELSE {
+					value$=STR(EVN(variable$))
+				}
+				shipRecord$+=value$
+			}
+		UNTIL P=0
+		shipRecord$+=tmpTmp$; tmpTmp$=""
+		IF NOT(FedExCHN) {
+			FedExCHN=HFN
+			OPEN(FedExCHN)"[tcp]"+FedExServer$+";"+FedExPort$
+		}
+		WRITE(FedExCHN)shipRecord$
+		resp$=""
+		readCount=0
+		REPEAT ! PLW 2012/09/20  added loop to get all the response.  When we changed to the FedEx box the transactions did not come in one group.
+			tmpResp$=""
+			read(FedExCHN,tim=30,ERR=*NEXT)tmpResp$
+			readCount++
+			Resp$+=tmpResp$
+		UNTIL POS("99,"+QUO+QUO=resp$) OR readCount>10
+		Code2$="NO RESPONSE",Code3$="FedEx Server "+FedExServer$+";"+FedExPort$+" did not respond"
+		Code29$="", Code2418$="" ! Make sure we don't accidentally fill in tracking and DCN.
+!		close(FedExCHN)
+		Code1$="",Code2$="",Code3$="",Code2418$="",Code29$="" ! PLW 2012/07/02 moved to clear codes regardless of content of RESP$
+		if len(resp$) {
+			tmp$=resp$
+			REPEAT
+				P=POS(QUO=tmp$,1,2)
+				IF P {
+					code$=tmp$(1,P),tmp$=tmp$(P+1)
+					CodeValue$=EVS(code$(pos(","=code$)+1))
+					Code$=code$(1,pos(","=code$+",")-1) ! PLW 2012/05/29 added +"," to avoid error 47.   Must be getting a bad response from Fedex.
+					CodeVar$="Code"+Code$
+					VIA CodeVar$ = CodeValue$
+				}
+			UNTIL P=0
+		}
+		IF (NUL(Code29$) OR NUL(Code2418$)) AND NUL(Code2$) { ! PLW 2012/07/02 
+			Code2$="Bad tracking numbers returned",Code3$=""
+		}
+		IF LEN(STP(Code2$)) {
+			error$=Code2$+" "+Code3$
+			attemptedShipDate$=DTE(0:"%Yl-%Mz-%Dz")
+			shipErrorMessage$=error$
+			retVal = 0
+		} ELSE {
+			orderTrackingNumber$=code29$
+			IF NOT(REPRINT) {
+				vendorCustPgmOrderShipDate$=DTE(0:"%Yl-%Mz-%Dz")
+				custPrtcptnStartDate$=vendorCustPgmOrderShipDate$ ! PLW 2012/04/11
+				daysToShip = _obj'DateDiff((orderReceivedDate$),(vendorCustPgmOrderShipDate$)) ! PLW 2012/08/05 Changed to use orderReceivedDate instead of downloaddate.
+				businessDaysToShip = _obj'BusinessDateDiff((orderReceivedDate$),(vendorCustPgmOrderShipDate$)) ! PLW 2012/08/05 Changed to use orderReceivedDate instead of downloaddate.
+			} ELSE {
+				reshipDate$=DTE(0:"%Yl-%Mz-%Dz") ! PLW 2012/05/30
+			}
+			deliveryConfirmationNo$ = code2418$
+			attemptedShipDate$=""
+			shipErrorMessage$=""
+			retVal = 1
+			Error$=""
+		}
+		ShipRec$=REC(ShipIOL$)
+	RETURN retVal
+!
+DATE_DIFF:
+	ENTER FromDate$,ToDate$
+		retFrom = _obj'TestDate(FromDate$,fromY,fromM,fromD,fromJul)
+		retTo	= _obj'TestDate(ToDate$,toY,toM,toD,toJul)
+		IF retFrom = 0 or retTo = 0 { RETURN 0 }
+		RETURN toJul-fromJul
+
+BUSINESS_DATE_DIFF: ! Calc business days between two dates - exclude weekends PLW 2012/08/05
+	ENTER FromDate$,ToDate$
+		retFrom = _obj'TestDate(FromDate$,fromY,fromM,fromD,fromJul)
+		retTo	= _obj'TestDate(ToDate$,toY,toM,toD,toJul)
+		IF retFrom = 0 or retTo = 0 { RETURN -1 }
+		WHILE 1
+			WeekDay=NUM(DTE(ToJul:"%W"))
+			IF WeekDay<=5 { BREAK }
+			ToJul++ ! if the end day is a Saturday or Sunday move it to the following Monday.
+		WEND
+		rawDays = toJul-fromJul
+		businessDays=rawDays-(INT(rawDays/7)*2)
+	RETURN businessDays
+!		
+
+TEST_DATE:
+	ENTER TestDate$,retYear,retMonth,retDay,retJul  ! Date must be YYYY-MM-DD or it's invalid
+		TestDate$=SUB(TestDate$,"-","")
+		TestDate$=SUB(TestDate$,"/","")
+		retYear=0,retMonth=0,retDay=0
+		IF LEN(TestDate$) <> 8 { RETURN 0 }
+		retYear = NUM(TestDate$(1,4),ERR=*NEXT)
+		retMonth = NUM(TestDate$(5,2),ERR=*NEXT)
+		retDay = NUM(TestDate$(7,2),ERR=*NEXT)
+		TestJul = 0; TestJul = JUL(retYear,retMonth,retDay,ERR=*NEXT)
+		IF NOT(TestJul) {
+			retYear=0,retMonth=0,retDay=0
+			RETURN 0
+		} ELSE {
+			retJul=testJul
+		}
+	RETURN 1
+	
+DISPLAY_LOG:
+	IF LEN(cLogFile$) {
+		logFound=0,tmpCHN=HFN; OPEN(tmpCHN,ERR=*NEXT)cLogFile$; logFound=1
+		! CLOSE(tmpCHN,ERR=*NEXT)
+		IF logFound {
+			%LogType$="Display"
+			_obj'DisplayLog(tmpCHN)
+			! SYSTEM_HELP cLogFile$
+			CLOSE(tmpCHN,ERR=*NEXT)
+		}
+	}
+RETURN 1
+
+DISPLAY_ERROR_LOG:
+	IF LEN(cErrorLogFile$) {
+		errFound=0,tmpCHN=HFN; OPEN(tmpCHN,ERR=*NEXT)cErrorLogFile$; errFound=1
+		! CLOSE(tmpCHN,ERR=*NEXT)
+		IF errFound {
+			MsgBox("WHOA!!  Errors encountered!  Error box will pop up now.")
+			%LogType$="Error"
+			ErrorLogMsg$=""
+			_obj'DisplayLog(tmpCHN)
+			CLOSE(tmpCHN,ERR=*NEXT)
+		}
+	}
+RETURN 1
+
+DISPLAY_LOG_SCREEN:
+	ENTER LogCHN
+	ErrorLogMsg$=""
+	WHILE 1
+		read (LogCHN,end=*break)tmp$
+		ErrorLogMsg$+=tmp$+sep
+	WEND
+	PROCESS "DispLog","ShipSelection.en",ErrorLogMsg$
+	ErrorLogMsg$=""
+RETURN 1
+
+SEND_EMAIL:
+	ENTER Group$,Subject$,Message$,Attachments$,ERR=*NEXT ! Group is used to determine recipients.  Text$ is the body of the email.
+		ToAddress$=""
+		_obj'GetEmailAddresses(Group$,ToAddress$)
+		FromAddress$="support@asifocus.com"
+		ReplyAddress$="support@asifocus.com"
+		CCAddress$="" ! "support@asifocus.com"
+		BCCAddress$=""
+		Option$="N"
+		SMTPServer$=%SMTPServer$+";"+%SMTPPort$+";"+%SMTPUser$+";"+%SMTPPassword$
+		LineWrapsAt=-1
+		BodyEncoding$=""
+		ErrorMesg$=""
+		EraseIT=2
+		SendDirectory$=""
+		SavedFileName$=""
+		CALL "*WEB/EMAIL",FROMADDRESS$,REPLYADDRESS$,TOADDRESS$,CCADDRESS$,BCCADDRESS$,SUBJECT$, \
+			MESSAGE$,ATTACHMENTS$,OPTION$,SMTPSERVER$,SERVERTIMEOUT,LINEWRAPSAT,BODYENCODING$, \
+			ERASEIT,ERRORMESG$,SENDDIRECTORY$,SAVEDFILENAME$
+		retVal=1
+		IF ErrorMesg$>"" {
+			retVal=0
+			_obj'LogError("!!! Error sending email: "+ErrorMesg$)
+		}
+	
+	RETURN retVal
+	
+GET_EMAIL_ADDRESSES:
+	ENTER Group$,ToList$
+		If LEN(ToList$) {
+			ToList$+=";"
+		}
+		EmailCHN = _OBJ'OpenTable("EmailAddresses","EmailAddress")
+		SELECT * FROM EmailCHN BEGIN $$ END $FE$ WHERE POS(UCS(GROUP$)+","=UCS(GROUPS$)+",")
+			toList$+=EmailAddress$+";"
+		NEXT RECORD
+		toList$=SUB(toList$,";;",";")
+		IF toList$(LEN(ToList$),1)=";" {
+			toList$=toList$(1,LEN(toList$)-1)
+		}
+	RETURN
+!	
+SEND_ERROR_EMAIL:
+	IF toolsErrorCount and NOT(UCS(%Test$)="TEST") {
+		_obj'SendEmail("ERROR",Task$+" Error "+DTE(0:"%Yl-%Mz-%Dz %Hz:%mz"),"Errors occurred during the "+Task$+".  See attached error log",cErrorLogFile$)
+	}
+	RETURN 1
+!
+PARSE_SOAP:
+	ENTER response$,tmpIOL$,tmpREC$,status$
+		retVal=1
+		statusCode$ = ""
+		tmpIOL$=CPL("IOLIST errorMsg$,response$")
+		tmpRec$=""
+		tmpIOLtxt$=""
+		BodyStart=POS("<SOAP-ENV:BODY"=UCS(response$)); offset=14
+		IF NOT(BodyStart) {
+			BodyStart=POS("<SOAPENV:BODY"=UCS(response$)); offset=13
+		}
+		IF NOT(BodyStart) {
+			BodyStart=POS("<ENV:BODY"=UCS(response$)); offset=10
+		}
+		IF NOT(BodyStart) {
+			LastErrorMsg$ = "No response body found"
+			errorMSG$ = LastErrorMsg$
+			tmpREC$=REC(tmpIOL$)
+			return 0
+		}
+		response$=response$(BodyStart+offset)
+		IF POS(">"=response$)<POS("<"=response$) AND POS(">"=response$)>0 {
+			response$=response$(POS(">"=response$)+1) ! remove the remainder of the SOAP Body begin tag
+		}
+		BodyEnd=POS("</SOAP-ENV:BODY>"=UCS(response$))
+		IF NOT(BodyEnd) {
+			BodyEnd=POS("</SOAPENV:BODY>"=UCS(response$))
+		}
+		IF NOT(BodyEnd) {
+			BodyEnd=POS("</ENV:BODY>"=UCS(response$))
+		}
+		IF NOT(BodyEnd) {
+			LastErrorMsg$ = "Invalid XML response - no body end"
+			errorMsg$=LastErrorMsg$
+			tmpREC$=REC(tmpIOL$)
+			return 0
+		}
+		response$=response$(1,BodyEnd-1)
+		WHILE LEN(response$)
+			IF _obj'GetNextTag(response$,Tag$,Data$) {
+				IF NOT(NUL(TAG$)) {
+					IF POS("<"=Data$) AND POS(">"=Data$) AND POS("/"=Data$) {
+						tmpPrefix$=TAG$
+						tmpData$=Data$
+						WHILE LEN(tmpData$) 
+							IF _obj'GetNextTag(tmpData$,tag$,Data$) {
+								TAG$=tmpPrefix$+"."+TAG$
+								tmpIOLTxt$+=","+TAG$
+								DATA$=SUB(DATA$,"&#xD;&#xD;",$0A$)
+								DATA$=SUB(DATA$,"&#xD;",$0A$)
+								VIA TAG$ = DATA$
+							}
+						WEND	
+					} ELSE {
+						tmpIOLtxt$+=","+TAG$
+						DATA$=SUB(DATA$,"&#xD;&#xD;",$0A$)
+						DATA$=SUB(DATA$,"&#xD;",$0A$)
+						VIA TAG$ = DATA$
+					}
+				}
+			}
+		WEND
+		IF LEN(tmpIOLtxt$) {
+			tmpIOLtxt$=tmpIOLtxt$(2) ! get rid of starting comma
+			tmpIOL$=CPL("IOLIST "+tmpIOLtxt$)
+			tmpREC$ = REC(tmpIOL$)
+			IF POS("FAULTCODE$"=UCS(tmpIOLTxt$)) {
+				LastErrorMsg$ = errorDescription$
+				StatusCode$ = "FAILED"
+			}
+			if NOT(NUL(statusCode$)) {
+				status$ = StatusCode$ ! Status will return "FAILED" unless we get one back in SOAP response
+			}
+			retVal=1
+		} ELSE {
+			LastErrorMsg$ = "No fields found"
+			errorMsg$=LastErrorMsg$
+			tmpREC$=REC(tmpIOL$)
+			retVal=0
+		}
+		
+	RETURN retVal
+!
+GET_NEXT_TAG:
+	ENTER XML$,TAG$,DATA$
+		TAG$=""
+		DATA$=""
+		StartTag=POS("<"=XML$); EndTag=POS(">"=XML$)
+		IF NOT(StartTag) OR NOT(EndTag) OR EndTag<StartTag {
+			RETURN 0
+		}
+		TAG$ = UCS(XML$(StartTag,EndTag-StartTag))+" "
+		XML$=XML$(EndTag+1)
+		TAG$ = TAG$(2)
+		TAG$=TAG$(1,POS(" "=TAG$)-1)
+		endTag$="</"+TAG$ ! PLW 2012/07/23	
+		XML$ = STP(XML$,2)
+		endTagPos=POS(endTag$=UCS(XML$))
+		IF endTagPos {
+			DATA$=XML$(1,endTagPos-1)
+			XML$=STP(XML$(endTagPos),2)
+		}
+!		WHILE LEN(XML$) AND MID(XML$,1,1)<>"<"
+!			IF XML$(1,1)>CHR(32) OR XML$(1,1)<CHR(127) {
+!				DATA$+=XML$(1,1)
+!				XML$=XML$(2)
+!			}
+!		WEND
+		IF POS("/"=TAG$)=1 {
+			TAG$="" ! we have an ending tag so no data to 
+		} 
+		TAG$=SUB(TAG$,"/","")
+		tmpColon=POS(":"=Tag$)
+		IF tmpColon {
+			Tag$=Tag$(tmpColon+1)
+		}		
+		IF NOT(NUL(TAG$)) {
+			TAG$=STP(TAG$,2)+"$" ! Create string variable
+		}
+
+	RETURN 1
+!

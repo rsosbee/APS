@@ -1,0 +1,98 @@
+! IN_Installation class definition Template
+! Created 06/28/04 By DSD Business Systems
+! This template is used for 4.0 Installation
+! Rename to the Primary Module (i.e. AP_Installation.pvc for APCB.400)
+! for APS all versions. Updated 2018-04-04 RCS
+! 
+DEF CLASS "IN_Installation"
+	LIKE "SY_Installation"
+	FUNCTION POSTINSTALL()POST_INSTALL
+	FUNCTION PREINSTALL()PRE_INSTALL
+	FUNCTION PREFINALIZE()PRE_FINALIZE
+	FUNCTION POSTFINALIZE()POST_FINALIZE
+	FUNCTION POSTUNINSTALL()POST_UNINSTALL
+	FUNCTION PREUNINSTALL()PRE_UNINSTALL
+END DEF
+! 
+ON_CREATE:
+	! Required to function, set TERM$ for SUMDI4
+	ENTER COSESSION
+RETURN 
+! 
+POST_INSTALL:
+	! Run after the files have been copied from xxINST in MAS90
+	! This should be called to run SUMDI4, after any new Files have been placed in xxINST
+	TERM$		= COSESSION'LEGACYTERM$
+	TEMPASIOBJ	= NEW("*dict/database")
+	TEMPMASOBJ	= NEW("*dict/database")
+	CALL "..\SOA\ASI_AdditionDict",ERR=*NEXT,TERM$,TEMPASIOBJ,TEMPMASOBJ
+	! These are the only calls required to install
+	TERM$		= COSESSION'LEGACYTERM$
+	TEMPOBJ		= NEW("*dict/database")
+	TEMPOBJ2	= NEW("*dict/database")
+	CALL "..\SOA\SUMDI4",ERR=*NEXT,CMP_STRING$,TERM$,TEMPOBJ,TEMPOBJ2
+	IF NOT(NUL(CMP_STRING$)) {
+		FOR COMPILE=1 TO (LEN(CMP_STRING$)-1)
+			APP$=CMP_STRING$(COMPILE,2),%RECOMPILE_FLG=1,V$=APP$(1,1)+"/"+APP$(2,1) ! for speed.
+			TMP=_OBJ'COMPILEDICTIONARY(V$)
+		NEXT COMPILE
+	}
+RETURN 
+!
+
+PRE_INSTALL:
+	! 
+	! This hook is called from SY_Installation'Install before any files are merged from xxINST
+	! 
+	! See if there is a Module to be installed
+	IF MID(PGN,1,2)="IN" { RETURN  }
+	DIR$=MID(PGN,1,2)
+	CWDIR "..\"+DIR$
+	SELECT MODULE_FILE$ FROM LWD WHERE POS("_MODULE"=UCS(MODULE_FILE$))
+		GOSUB INSTALL_MODULE_FILE ! *SC-OK*
+	NEXT RECORD 
+RETURN 
+! 
+
+PRE_FINALIZE:
+	! 
+	! This hook is called from SY_Installation after mergeing, but before compiling menus
+RETURN 
+! 
+
+POST_FINALIZE:
+	! Called from SY_Installation after all installation related task completed.
+	! Menus are compiled here.Test
+	! 
+	! Generate enhancemet records
+	CALL "..\ASI\APS_CREATE_ENHANCEMENT_RECORDS",ERR=*NEXT
+	! 
+	! Create new record(s) in the SY_EmbeddedIOSettings.M4T table
+	CALL "..\SOA\ASI_EmbeddedIolSettings",ERR=*NEXT
+RETURN 
+!
+
+PRE_UNINSTALL:
+	! 
+	! This hook is called from Sy_Installation prior to Uninstall
+RETURN 
+!
+
+POST_UNINSTALL:
+! This hook is called from Sy_Installation After Uninstall
+! 
+RETURN 
+!
+
+INSTALL_MODULE_FILE:
+! 
+	PGMCTL=HFN,E1=PGMCTL,E1$=MODULE_FILE$; OPEN (E1,IOL=*,ERR=*RETURN)E1$
+	SOACTL=COSESSION'OPENTABLE("SY_Module","SYSTEM")
+	IF NOT(PGMCTL OR SOACTL) { RETURN } 
+	SELECT * FROM PGMCTL BEGIN $$ END $FF$
+		E1=SOACTL; WRITE (E1)
+	NEXT RECORD 
+	CLOSE (PGMCTL,ERR=*NEXT)
+	CLOSE (SOACTL,ERR=*NEXT)
+RETURN 
+! 

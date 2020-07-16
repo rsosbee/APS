@@ -1,0 +1,297 @@
+! XML Creation and Parser Object
+! Program <xpxmldoc.pvc>
+! Copyright 2006, Megasys Hospitality Systems, Inc.
+
+! %Id: XPXMLDOC.pvc 2205 2007-01-12 14:58:43Z jhwilder %
+
+DEF CLASS "*obj/xpxmldoc"
+
+	LIKE "*obj/xpxmltag"
+
+	! ** Defines the XML version and character encoding used in the document.  It is the first line of the document.
+
+	PROPERTY Declaration$ GET GetDeclaration SET ERR
+
+	! ** Set to "True" to suppress the generation of the XML declaration at the beginning of the document.  This is typically done when the document will be combined or embedded into another XML document.
+
+	PROPERTY SuppressDeclaration
+
+	! ** Version number from the XML Header
+
+	PROPERTY Version$ SET ERR
+
+	! ** Encoding from the XML Header
+
+	PROPERTY Encoding$ SET ERR
+
+	! ** If an error occurs while importing a file or string, this property will contain the description of the error.
+
+	PROPERTY Error$ SET ERR
+
+	! ** Use this property to pull the XML document back out of the object as a single string.
+
+	PROPERTY XMLString$ GET GetXMLString SET ERR
+
+	! ** Parse the XMLDoc$ file.
+	! ** @param _XMLDoc$ The name of a file to be parsed
+	! ** @returns Will return True if parse is successful
+
+	FUNCTION LoadFile(_XMLDoc$)LoadFile
+
+	! ** Parse the XMLString$ variable as a complete XML document.
+	! ** @param _XMLString$ The variable that contains the XML document to be parsed
+	! ** @returns Will return True if parse is successful
+
+	FUNCTION LoadString(_XMLString$)ParseXML
+
+	! ** Parse the XMLString$ variable as a complete XML document that has been encoded using the HTML escape sequences for <, >, ", and &.  This is typically done when the XMLString$ is part of a payload for a SOAP element
+	! ** @param _XMLString$ The variable that contains the XML document to be parsed
+	! ** @returns Will return True if parse is successful
+
+	FUNCTION LoadEncodedString(_XMLString$)ParseEncodedXML
+
+	! ** This method will initialize the object for creation of a new document.
+
+	FUNCTION NewDocument() NewDocument
+
+	! ** This method will initialize the object for creation of a new document.
+	! ** @param Import Set to boolean true (1) to suppress automatic generation of common tags and comments.  This is typically used only by internal object functions when importing an XML or SOAP document.
+
+	FUNCTION NewDocument(Import)NewDocument
+	FUNCTION LOCAL ParseXML(xml$)ParseXML
+
+	! ** This function returns the specified date in the Universal Time Format:  YYYY-MM-DD
+	! ** @param JulianDate  The input date as a Julian numeric date.  You may also send 0 (zero) to obtain the current system date.
+	! ** @returns the specified date in the Universal Time Format:  YYYY-MM-DD
+
+	FUNCTION UTFDate$(JulianDate)UTFDate
+
+	! ** This function returns the specified date in the Universal Time Format:  YYYY-MM-DD
+	! ** @param JulianDate  The input date as a as a standard long date format (YYYYMMDD).  You may also send 0 (zero) to obtain the current system date.
+	! ** @returns the specified date in the Universal Time Format:  YYYY-MM-DD
+
+	FUNCTION UTFDate$(LongDate$)UTFDateString
+
+	! ** This method returns the specified date and time in the Universal Time Format (UTF)
+	! ** @param JulianDate The date to be converted
+	! ** @returns the specified date and time in the Universal Time Format (UTF): YYYY-MM-DDThh:mm:ss
+
+	FUNCTION UTFDateTime$(JulianDate)UTFDateCurrentTime
+
+	! ** This method returns the specified date and time in the Universal Time Format (UTF)
+	! ** @param JulianDate The date to be converted
+	! ** @param Time The fractional time value to be used in the conversion
+	! ** @returns the specified date and time in the Universal Time Format (UTF): YYYY-MM-DDThh:mm:ss
+
+	FUNCTION UTFDateTime$(JulianDate,Time)UTFDateTime
+
+	! ** This method returns the specified date and time in the Universal Time Format (UTF)
+	! ** @param LongDate$ The date to be converted
+	! ** @returns the specified date and time in the Universal Time Format (UTF): YYYY-MM-DDThh:mm:ss
+
+	FUNCTION UTFDateTime$(LongDate$)UTFDateCurrentTimeString
+
+	! ** This method returns the specified date and time in the Universal Time Format (UTF)
+	! ** @param LongDate$ The date to be converted
+	! ** @param Time The fractional time value to be used in the conversion
+	! ** @returns the specified date and time in the Universal Time Format (UTF): YYYY-MM-DDThh:mm:ss
+
+	FUNCTION UTFDateTime$(LongDate$,Time)UTFDateTimeString
+	FUNCTION LOCAL LongDateToJul(LongDate$)LongDateToJul
+
+END DEF
+
+
+ON_CREATE:
+
+	LineSep$ = $0D0A$ ! Standard line separator
+	_obj'NewDocument() 
+
+	RETURN 
+
+
+Return_False:! Return false
+
+	RETURN False
+
+
+NewDocument:
+
+	ENTER Import,ERR=*NEXT
+
+		IF Elements THEN DROP OBJECT Elements
+			Elements = 0
+			ElementCount = 0
+			Error$ = ""
+			Version$ = "1.0"
+			Encoding$ = "ISO-8859-1"
+
+			RETURN True
+
+
+LoadFile:
+
+	ENTER _XMLDoc$
+
+		LOCAL x$,xmldoc,xml$
+		_ret_val = False
+		Error$ = "Invalid Filename"
+		OPEN OBJECT (UNT, ERR=Return_False)_XMLDoc$; xmldoc=LFO
+		Error$ = "Invalid xml document format"
+
+		SELECT x$ FROM xmldoc
+
+			xml$+ = x$
+
+		NEXT RECORD 
+
+		CLOSE (xmldoc)
+		_ret_val = _obj'ParseXML(xml$)
+
+		RETURN _ret_val
+
+
+ParseEncodedXML:
+
+	ENTER (_xml$)
+
+		RETURN _obj'LoadString(_obj'DecodeText$(_xml$))
+
+
+ParseXML:
+
+	ENTER (xml$)
+
+		LOCAL x,_ret_val
+		_ret_val = False
+		_obj'NewDocument(1)
+
+
+xml$ = STP(CVS(xml$, 16:$00$), 3, $00$)
+
+	xml$ = CVS(xml$, 3)
+	x = POS("<?xml" = LCS(xml$)) ! XML Declaration
+	IF x {
+		xml$ = MID(xml$, x)
+		x = POS("?>" = xml$)+1
+		IF x {
+			Declaration$ = MID(xml$, 1, x)
+			xml$ = MID(xml$, x+1)
+		}
+	}
+
+	WHILE (LEN(xml$))
+
+		IF POS("<"=xml$)=0 {
+			Text$ = xml$
+			xml$ = ""
+			} ELSE {
+			IF NOT(Elements) THEN Elements=NEW("*obj/group")
+				x = NEW("*obj/xpxmltag")
+				xml$ = x'Parse$(xml$)
+				x'LineSep$ = LineSep$
+				IF NOT(SoapEnvelope) AND UCS(x'Name$)="SOAP:ENVELOPE" THEN SoapEnvelope=x
+					Elements'Add(x)
+					x = REF(DROP x) ! Drop my reference, let the group object take over
+				}
+
+	WEND 
+
+	IF SoapEnvelope {
+
+
+SoapHeader = SoapEnvelope'FindElement("soap:Header")
+
+
+SoapBody = SoapEnvelope'FindElement("soap:Body")
+
+	}
+	IF Elements THEN ElementCount=Elements'Count
+		_ret_val = True
+		Error$ = ""
+
+		RETURN _ret_val
+
+
+GetDeclaration:
+
+	IF NOT(SuppressDeclaration) THEN Declaration$="<?xml version="+QUO+Version$+QUO+" encoding="+QUO+Encoding$+QUO+"?>"+LineSep$
+
+		RETURN Declaration$
+
+
+GetXMLString:
+
+	LOCAL xml$
+	xml$ = _obj'Declaration$
+	IF Elements {
+		IF Elements'Count {
+			FOR x=1 TO Elements'Count
+
+				xml$+ = Elements'Item(x)'XMLString$; NEXT 
+		}
+	}
+
+	RETURN xml$
+
+
+UTFDateTime:
+
+	ENTER JulianDate,Time
+
+		RETURN DTE(JulianDate,Time:"%Y-%Mz-%DzT%Hz:%mz:%sz")
+
+
+UTFDateTimeString:
+
+	ENTER LongDate$,Time
+
+		JulianDate = _obj'LongDateToJul(LongDate$)
+
+		RETURN _obj'UTFDateTime$(JulianDate,Time)
+
+
+UTFDateCurrentTime:
+
+	ENTER JulianDate
+
+		RETURN DTE(JulianDate:"%Y-%Mz-%DzT%Hz:%mz:%sz")
+
+
+UTFDateCurrentTimeString:
+
+	ENTER LongDate$
+
+		JulianDate = _obj'LongDateToJul(LongDate$)
+
+		RETURN _obj'UTFDateTime$(JulianDate)
+
+
+UTFDate:
+
+	ENTER JulianDate,ERR=*NEXT
+
+		RETURN DTE(JulianDate:"%Y-%Mz-%Dz")
+
+
+UTFDateString:
+
+	ENTER LongDate$,ERR=*NEXT
+
+		JulianDate = _obj'LongDateToJul(LongDate$)
+
+		RETURN _obj'UTFDate$(JulianDate)
+
+		! Convert YYYYMMDD format to a numeric julian date
+
+
+LongDateToJul:
+
+	ENTER (LongDate$)
+
+		LOCAL JulianDate
+		LongDate$ = STP(LongDate$, "B")
+		IF LEN(LongDate$)=8 AND NUM(LongDate$, ERR=*NEXT)>0 THEN JulianDate=JUL(NUM(LongDate$(1, 4)), NUM(LongDate$(5, 2)), NUM(LongDate$(7, 2)))
+
+			RETURN JulianDate
+

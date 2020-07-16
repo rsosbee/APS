@@ -1,0 +1,284 @@
+! AR_531APSCashReceiptsJournal_UPD.PVC
+! Copyright 2013-2019 Accounting Systems, Inc.
+! #232007 - 2018-02-22 RCS
+!
+DEF CLASS "AR_531APSCashReceiptsJournal_UPD" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "AR_CashReceiptsJournal_UPD"
+
+	! Public Properties
+
+	! Local/Private Properties
+	
+	! objects
+	LOCAL coCompany
+	LOCAL coDocument
+	LOCAL coRequest
+	
+	
+ 	LOCAL c2p.companyCode$
+	LOCAL c2p.APIKey$
+	LOCAL c2p.BlockSize
+	LOCAL c2p.BlocksProcessed
+	LOCAL c2p.CustomerURL$
+	LOCAL c2p.Currency$
+	LOCAL c2p.DataFormat$
+	LOCAL c2p.Enabled
+	LOCAL D531_C2PPaymentId$
+	LOCAL logFile$
+	LOCAL isNULL$			= ""
+	LOCAL apsTableName$
+
+	! Public Functions (Methods)
+
+	! Local/Private Functions (Methods)
+	FUNCTION LOCAL PERFORM C2PLogErrors()								C2P_LOG_ERRORS
+	FUNCTION LOCAL PERFORM LogFailedTransaction(Display,errString$)		LOG_FAILED_TRANSACTION ! #239287 - 2018-07-05 RCS
+	FUNCTION LOCAL PERFORM PostTableRead(apsTableName$) 				POST_TABLE_READ
+	FUNCTION LOCAL PERFORM PreTableWrite(apsTableName$) 				PRE_TABLE_WRITE
+
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	c2p.companyCode$		= LCS(coSession'companyCode$)
+
+	coCompany				= NEW ("SY_Company_SVC", coSession)
+	coCompany'FIND(coSession'companyKey$)
+
+	c2p.Enabled				= coCompany'C2PEnabled
+	c2p.CustomerURL$		= coCompany'C2PPrimary$
+
+	coCompany'GetValue("D531_C2PCustomerLink$",			c2p.CustomerLink$)
+
+	coDocument 				= NEW("SY_531APSDocument_SVC",	coSession)
+	coRequest				= NEW("SY_531APSRequest",		coSession)
+
+RETURN
+!
+
+ON_DELETE:
+	DROP OBJECT coRequest,	ERR=*PROCEED; coRequest		= 0
+	DROP OBJECT coDocument,	ERR=*PROCEED; coDocument	= 0
+	DROP OBJECT coCompany,	ERR=*PROCEED; coCompany		= 0
+RETURN
+!
+
+C2P_LOG_ERRORS:				! #239287 - 2018-07-05 RCS
+
+	cErrString$				= "CashReceipts"
+	errorDesc$				= " - Code: "+str(c2p.statusCode)+" - "+c2p.errorMessage$+" Exception ID: "+c2p.exceptionID$
+	IF rtnVal				= retFAILURE {		! DB# 1307 - 2020-03-12 - RCS
+		errorDesc$			= "Connection to Click To Pay failed! "+c2p.errorMessage$
+	}
+	IF cBatchFlag$			= isYES$ {
+		coRequest'WriteLog(cErrString$,"Inv: "+tInvoiceNo$+" ("+BatchNo$+") "+errorDesc$,logFile$)
+	} ELSE {
+		coRequest'WriteLog(cErrString$,"Inv: "+tInvoiceNo$+" "+errorDesc$,logFile$)
+	}
+	ErrorText$				= isNULL$
+	cErrString$				= isNULL$
+	%logFile$				= logFile$
+
+RETURN retSUCCESS
+!
+
+LOG_FAILED_TRANSACTION:		! #239287 - 2018-07-05 RCS
+Enter Display,errString$,err=*next
+	cErrorsExist			= isTRUE
+	errorDesc$				= c2p.errorMessage$
+	IF cBatchFlag$			= isYES$ {
+		ErrorLog'WriteError(errString$,tInvoiceNo$+" ("+BatchNo$+")",errorDesc$)
+	} ELSE {
+		ErrorLog'WriteError(errString$,tInvoiceNo$,errorDesc$)
+	}
+	_obj'C2PLogErrors()
+	ErrorText$				= isNULL$
+	errString$				= isNULL$
+	if Display {
+		coSession'UI'MessageBox$(isNULL$,										\
+							"Failed ClickToPay Payment Transaction!"+SEP+ 		\
+							"APS ClickToPay error message: "+c2p.ErrorMessage$,	\
+							"title=APS ClickToPay,style=OK,icon=S,beep")
+	}
+
+RETURN retSUCCESS
+!			
+ 							
+POST_TABLE_READ:
+ENTER (apsTableName$)
+
+ 	retVal 					= _OBJ'PostTableRead(FROM "AR_531APSCashReceiptsJournal_UPD_base", apsTableName$)
+
+	IF retVal AND c2p.Enabled {
+		
+		! in case of restarts (interrupted updates...)
+		if not(coGLAcct) or not(ErrorLog) {
+			if not(coGLAcct) {
+				! Create Account Service and Error Log objects
+				coGLAcct	= NEW("GL_Account_svc",coSession, ERR =*NEXT)			! for account related validations
+			}
+			if not(ErrorLog) {
+				ErrorLog	= NEW("SY_JournalErrorLog", coSession, ERR =*NEXT)		! Init Error Log and populate work tables
+			}
+		}
+		if not(cInvHistoryFH)	{
+			cInvHistoryFH	= _obj'OpenTable("AR_InvoiceHistoryHeader",pthCOMPANY$)
+		}
+
+		IF UCS(apsTableName$)	= UCS("AR_CashReceiptsHeader") {
+
+			IF coSession'Updating {
+				READ (cCashReceiptsHdrFH, KEY=KEC(cCashReceiptsHdrFH), REC=c2p.header$)
+				
+				IF NOT(NUL(c2p.header.D531_C2PPaymentId$)) {
+
+					memoryFH		= coRequest'CreateMemoryFile()
+
+					documentCode$	= "PM###Q"
+					coDocument'FIND(documentCode$)
+					coDocument'GetValue("documentPath$", documentPath$)
+
+					coRequest'LoadHeader()
+					
+ 					rtnVal	= coRequest'SendRequest(documentCode$, documentPath$, memoryFH)		! DB# 1307 - 2020-03-12 - RCS
+
+ 					coRequest'LoadResponse()
+ 					
+					SWITCH rtnVal		! DB# 1307 - 2020-03-12 - RCS
+						CASE retSUCCESS ! was able to send the request and get an answer
+							BREAK
+						CASE retWARNING
+							if not(coSession'Updating) and coRequest'tlsWarning = isFALSE {
+								coRequest'TlsWarning()
+							}
+							BREAK
+						DEFAULT
+							! failed to send transaction!
+							tInvoiceNo$		= "Deposit: " + c2p.header.DepositNo$ + "-" + c2p.header.DepositType$ + "-" + c2p.header.CreditCardEntryNo$+ "-" + c2p.header.CheckNo$
+							_obj'LogFailedTransaction(isFalse,"A0")
+							BREAK
+					END SWITCH
+						
+					IF c2p.statusClassCode > 1 { ! #232007 - 2018-07-05 RCS
+						tInvoiceNo$			= "Deposit: " + c2p.header.DepositNo$ + "-" + c2p.header.DepositType$ + "-" + c2p.header.CreditCardEntryNo$+ "-" + c2p.header.CheckNo$
+						_obj'LogFailedTransaction(isTrue,"A0")
+					}
+ 					
+					c2p.BlocksProcessed					= coRequest'c2p.BlocksProcessed	+ 1
+					coRequest'c2p.BlocksProcessed		= c2p.BlocksProcessed
+					if coRequest'c2p.BlocksProcessed	> 50 {
+						tlsChk							= coRequest'ResetDotNet()
+						coRequest'c2p.BlocksProcessed	= 0
+						if not(coSession'Updating)						\
+							and tlsChk					= retWARNING	\
+							and coRequest'tlsWarning	= isFALSE {
+								coRequest'TlsWarning()
+						}
+					}
+				}
+			}
+		}
+
+		IF UCS(apsTableName$)		= UCS("AR_CashReceiptsDetail") {
+			IF coSession'Updating {
+				READ (cCashReceiptsHdrFH, KEY=KEC(cCashReceiptsHdrFH), REC=c2p.header$)
+
+				IF NUL(c2p.header.D531_C2PPaymentId$) {
+
+					READ (cCashReceiptsDtlFH, KEY=KEC(cCashReceiptsDtlFH), REC=c2p.detail$)
+					tempKey$			= c2p.Detail.invoiceNo$
+					SELECT D531_C2PLinkCode$, REC=c2p.detail$ FROM cInvHistoryFH BEGIN tempKey$ END tempKey$:$FE$
+						IF NOT(NUL(c2p.detail.D531_C2PLinkCode$))	{
+							BREAK
+						}
+					NEXT RECORD
+
+					IF NOT(NUL(c2p.detail.D531_C2PLinkCode$)) {
+						memoryFH		= coRequest'CreateMemoryFile()
+
+						documentCode$	= "IP###Q"
+						coDocument'FIND(documentCode$)
+						coDocument'GetValue("documentPath$", documentPath$)
+
+						coRequest'LoadHeader()
+
+ 						rtnVal = coRequest'SendRequest(documentCode$, documentPath$, memoryFH)		! DB# 1307 - 2020-03-12 - RCS
+
+ 						coRequest'LoadResponse()
+ 						
+						SWITCH rtnVal		! DB# 1307 - 2020-03-12 - RCS
+							CASE retSUCCESS ! was able to send the request and get an answer
+								IF c2p.statusClassCode		= retSUCCESS {
+									WRITE (cInvHistoryFH,REC=c2p.header$) ! write the link code
+									c2p.D531_C2PPaymentId$	= c2p.detail.D531_C2PPaymentId$
+								}
+								BREAK
+							CASE retWARNING
+								if not(coSession'Updating) and coRequest'tlsWarning = isFALSE {
+									coRequest'TlsWarning()
+								}
+								IF c2p.statusClassCode		= retSUCCESS {
+									WRITE (cInvHistoryFH,REC=c2p.header$) ! write the link code
+									c2p.D531_C2PPaymentId$	= c2p.detail.D531_C2PPaymentId$
+								}
+								BREAK
+							DEFAULT
+								! failed to send transaction!
+								if not(coSession'Updating) {
+									tInvoiceNo$				= c2p.detail.invoiceNo$ + c2p.detail.invoiceType$
+									_obj'LogFailedTransaction(isFalse,"A1")
+								}
+								BREAK
+						END SWITCH
+						IF c2p.statusClassCode > 1 {		! #232007 - 2018-07-05 RCS
+							tInvoiceNo$						= c2p.detail.invoiceNo$ + c2p.detail.invoiceType$
+							SWITCH int(c2p.statusCode)
+								CASE 30001 					! Skip not on file but log.  Should not be getting this.
+									_obj'LogFailedTransaction(isFalse,"A0")
+									BREAK
+								CASE 30003 					! skip not on file. #232007 - 2018-02-19 RCS
+									BREAK
+								DEFAULT
+									_obj'LogFailedTransaction(isTrue,"A0")
+									BREAK
+							END SWITCH
+						}
+						c2p.BlocksProcessed					= coRequest'c2p.BlocksProcessed + 1
+						coRequest'c2p.BlocksProcessed		= c2p.BlocksProcessed
+
+						if coRequest'c2p.BlocksProcessed 	> 50 {
+							tlsChk							= coRequest'ResetDotNet()
+							coRequest'c2p.BlocksProcessed	= 0
+							if not(coSession'Updating) 						\
+								and tlsChk 					= retWARNING	\
+								and coRequest'tlsWarning	= isFALSE {
+									coRequest'TlsWarning()
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+RETURN retVal
+!
+
+PRE_TABLE_WRITE: ! AR_TransactionPaymentHistory, AR_CashReceiptsHistory
+ENTER (apsTableName$)
+	retVal							= _OBJ'PreTableWrite(FROM "AR_531APSCashReceiptsJournal_UPD_base", apsTableName$)
+	IF retVal and c2p.Enabled {
+		IF pos("AR_CashReceiptsHistory"	= apsTableName$) {
+			rh.D531_C2PPaymentId$	= D531_C2PPaymentId$
+		}
+		IF pos("AR_TransactionPaymentHistory"	= apsTableName$) {
+			tph.D531_C2PPaymentId$	= D531_C2PPaymentId$
+		}
+	}
+RETURN retVal
+!

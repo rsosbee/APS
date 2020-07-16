@@ -1,0 +1,547 @@
+! $Id: AR_531APSCreditCardCommonEntry_UI.pvc $
+! Sage 100 ERP AR_CreditCardCommonEntry_ui.PVC User Interface for Customer Credit Card Entry
+! Accounting Systems, Inc. 2013-2018. PLWhirley, Bob Sosbee
+!
+DEF CLASS "AR_531APSCreditCardCommonEntry_ui" CREATE REQUIRED DELETE REQUIRED
+
+	! Inherits from the following class(es)
+	LIKE "AR_CreditCardCommonEntry_ui"
+
+	! Public Properties
+
+	! Local/Private Properties
+	LOCAL cAPSActivated
+	LOCAL cARCustCreditCardFH
+	LOCAL isNULL$				= $$
+	LOCAL cCreditCardInfoIOL$	= CPL("IOLIST CardHolderName$, AVSAddressLine1$, AVSAddressLine2$, AVSZipCode$, AVSCity$, AVSState$, AVSCountryCode$, CreditCardEmailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$") ! #231969 - 2018-11-20 RCS
+	LOCAL defIOL$				= CPL("IOLIST CardHolderName$, Address1$, Address2$, Zip$, City$, State$, Country$, EMailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")  ! #231969 - 2018-11-20 RCS
+
+	! Public Methods
+	! ** Cleans data fields
+	! ** @returns [string] data field cleaned of non-printables and certain values that are rejected by JSON and XML.
+	FUNCTION APSCleanData$(EntVal$)							APS_CLEAN_DATA	! #252088 - 2019-06-06 RCS - Fix data changes.
+	
+	! Local Methods
+	! ** Submit Credit Card transaction
+	! ** @returns [boolean] True = success.
+	FUNCTION LOCAL BT_CreditCard()							BT_CREDITCARD
+	! ** Change Credit Card AuthorizationNo
+	! ** @returns [boolean] True = success, False = failure.
+	FUNCTION LOCAL ChangeCreditCardAuthorizationNo()		CHANGE_CREDIT_CARD_AUTHORIZATION_NO
+	! ** Change Credit Card TransactionID
+	! ** @returns [boolean] True = success, False = failure.
+	FUNCTION LOCAL ChangeCreditCardTransactionID()			CHANGE_CREDIT_CARD_TRANSACTION_ID
+	! ** Pre Delete credit card validation
+	! ** @returns [boolean] True = success the record can be deleted, False = failure the record cannot be deleted
+	FUNCTION LOCAL CreditCardPreDelete()					CREDIT_CARD_PRE_DELETE
+	! ** Change Payment Type
+	! ** @returns [boolean] True = success, False = failure.
+	FUNCTION LOCAL ChangePaymentType()						CHANGE_PAYMENT_TYPE
+
+	! ** Updates card on file.
+	! ** @returns [boolean] True = card on file was updated.
+	FUNCTION LOCAL PERFORM UpdateAPSCardOnFile()			UPDATE_APS_CARD_ON_FILE
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+
+END DEF
+!
+
+ON_CREATE:
+	! check for activation
+	coAPSActivation=NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	IF coAPSActivation {
+		cAPSActivated			= coAPSActivation'CheckAPSActivation()
+		DROP OBJECT coAPSActivation
+	}
+RETURN
+!
+
+ON_DELETE:
+	
+	IF cARCustCreditCardFH {
+		CLOSE (cARCustCreditCardFH,ERR=*next)
+		cARCustCreditCardFH		= 0
+	}
+	
+RETURN
+!
+
+APS_CLEAN_DATA:			! #252088 - 2019-06-06 RCS - Fix data changes.
+ENTER inVal$
+
+	retVal$				= $$
+	inVal$				= cvs(inVal$,19) ! #233539 RCS - remove leading and trailing control characters and non printables. 2018-01-11
+	
+	! strip &
+	Inval$				= SUB(Inval$,"&","and")
+	
+	! For hosted form strip certain characters for JSON and XML #236076 - 2019-02-21 RCS
+	if len(InVal$) {
+		Inval$			= SUB(Inval$,quo," ")
+		Inval$			= SUB(Inval$,"\"," ")
+		Inval$			= SUB(Inval$,"[","(")
+		Inval$			= SUB(Inval$,"]",")")
+		Inval$			= SUB(Inval$,"{","(")
+		Inval$			= SUB(Inval$,"}",")")
+	}
+	retVal$			= inVal$
+
+RETURN retVal$
+!
+
+BT_CREDITCARD:
+	
+	if not(cAPSActivated) {
+		retVal					= _OBJ'BT_CreditCard(FROM "AR_531APSCreditCardCommonEntry_ui_BASE")
+		RETURN retVal
+	}
+
+	retVal          			= retSUCCESS
+	cSkipMsgBox     			= isFALSE
+	cTransProcessOK 			= isFALSE
+	savProcessInBatch$ 			= isNULL$
+	cUpdateAPSCard				= isFALSE
+	vaultIOL$          			= CPL("IOLIST CreditCardGUID$, ExpirationDateYear$, ExpirationDateMonth$, CardType$, "	\
+	                    		+ "Last4UnencryptedCreditCardNos$, Last4BankRoutingNos$, Last4BankAccountNos$, BankAccountType$, CardholderName$")
+	if nul(defaultRec$) {		! #237076 - 2018-11-20
+		! clean the data #252088 - 2019-06-06 RCS
+		CardHolderName$		= _obj'APSCleanData$(CardHolderName$)
+		AVSAddressLine1$	= _obj'APSCleanData$(AVSAddressLine1$)
+		AVSAddressLine2$	= _obj'APSCleanData$(AVSAddressLine2$)
+		AVSZipCode$			= _obj'APSCleanData$(AVSZipCode$)
+		AVSCity$			= _obj'APSCleanData$(AVSCity$)
+		
+		defaultRec$				= rec(cCreditCardInfoIOL$)
+		defaultIOL$				= defIOL$
+	}
+	ML_Credit_Card_Response$	= $$
+	fromBTCC					= isTRUE
+	%creditMemo					= (InvoiceType$ = "CM")
+	cTestAmt					= TransactionAmt + ML_TransactionAmt_Dep + CreditCard_PostingAmt
+	
+	if %cEmvDevice$ = isYES$ and %EmvEnabled = isTRUE and cTestAmt <= 0 {
+		LastErrorNum$			= "SY_531APSEmvAmount"
+		LastErrorMsg$			= MSG("SY_531APSEmvAmount")
+		cSkipMsgBox				= isTRUE
+		coSession'UI'MessageBox$( "","EMV amount cannot be zero or negative.  Please enter an amount to process." )
+		retVal					= retFAILURE
+		IF NOT(NUL(savProcessInBatch$)) {
+			CB_PROCESS_IN_BATCH$= savProcessInBatch$
+			_OBJ'ChangeCB_Process_In_Batch()
+		}
+		RETURN retVal
+	}
+
+
+	reqCols$					= TBL(cCreditCardBusObject'ProcessInBatch$ = isYES$, $$, "cCreditCardRequiredCols$+"",""+cCreditCardSPSRequiredAddressCols$")
+	expression					= TBL(cCreditCardBusObject'ProcessInBatch$ = isYES$, isFALSE, isTRUE)
+	retVal						= cCreditCardBusObject'CheckRequired(reqCols$, expression, fromBTCC)
+	! need to do all CC req columns validation so ImpliedWrite() following processing SPS will not fail
+
+	IF retVal = retFAILURE {
+		cSkipMsgBox				= isTRUE
+		errMessage$				= MSG(cCreditCardBusObject'LastErrorNum$, "to accept the transaction." \
+								+ cCreditCardBusObject'LastErrorMsg$)
+		coSession'UI'MessageBox$(cCreditCardBusObject'LastErrorNum$, errMessage$)
+	} ELSE {
+		oldExpDate$				= ExpirationDateYear$ + ExpirationDateMonth$
+		oldValidated$			= D531APSValidated$			! #236076 - 2019-02-06 RCS
+		oldMaskedCard$			= D531APSMaskedCard$		! #236076 - 2019-02-06 RCS
+		oldAchAccountType$		= D531APSAchAccountType$	! #236076 - 2019-02-06 RCS
+
+		IF NOT(cARCustCreditCardFH) {
+			cARCustCreditCardFH	= _OBJ'OpenTable("AR_CustomerCreditCard", pthCOMPANY$)
+		}
+
+		cardIDOnFile			= isFALSE
+
+		IF NOT(NUL(CreditCardID$)) {
+			tmpDiv$				= ARDivisionNo$
+			tmpCust$			= CustomerNo$
+			IF NOT(NUL(BillToDivisionNo$)) AND NOT(NUL(BillToCustomerNo$)) {
+				tmpDiv$			= BillToDivisionNo$
+				tmpCust$		= BillToCustomerNo$
+			}
+			READ (cARCustCreditCardFH, KEY=tmpDiv$:tmpCust$:CreditCardID$, KNO="KCARDID", REC=custcc$, DOM=*NEXT); cardIDOnFile = isTRUE
+			custCCExpDate$		= TBL(cardIDOnFile = isTRUE, $$, custcc.ExpirationDateYear$ + custcc.ExpirationDateMonth$)
+		}
+
+		! vaulting
+		IF cCreditCardBusObject'ProcessInBatch$ = isYES$			\
+			OR NOT(cCreditCardBusObject'SPSEnabled)					\
+			OR NOT(cCreditCardBusObject'SPSPaymentType)				\
+			OR cCreditCardBusObject'VaultOnly						\
+			OR	( (SaveCreditCard$ = isYES$ 						\
+					OR NUL(CreditCardGUID$))						\
+					AND NOT(NUL(CreditCardAuthorizationNo$))		\
+				) {
+
+			! Process Vault
+			vaultOp$			= TBL(NUL(CreditCardGUID$), "UPDATE", "CREATE")
+			IF cardIDOnFile {
+				IF pos(cCreditCardBusObject'PaymentTypeMethod$ = "RA")	\ 
+					AND NOT(coSession'CheckSecurityEvent( "SE_ARAllowAddEditCreditCards" )) { ! #233534 RCS 2018-01-10
+					vaultOp$	= "RETRIEVE"
+				}
+			}
+
+			IF NOT(cCreditCardBusObject'SPSPaymentType) {  ! from AR_CreditCard.pvc this property simply means the payment type was found
+				!  if it is not APS payment type - Process SPS Vault
+				retVal 			= cCreditCardBusObject'ProcessVault(	\
+										vaultOp$,						\
+										PaymentType$,					\
+										CreditCardGUID$,				\
+										Last4UnencryptedCreditCardNos$,	\
+										ExpirationDateYear$,			\
+										ExpirationDateMonth$,			\
+										CardType$,						\
+										Last4BankRoutingNos$,			\
+										Last4BankAccountNos$,			\
+										BankAccountType$)
+			} ELSE {
+				accountName$	= CustomerName$
+				IF NOT(NUL(BillToName$)) {
+					accountName$= BillToName$
+				}
+! *******
+				CustomerName$	= accountName$									! PLW 2018-08-17 Ticket #236076
+				CustomerID$		= STP(ARDivisionNo$)+"-"+STP(CustomerNo$)		! PLW 2018-08-17 Ticket #236076
+				IF CustomerID$	= "-" { 
+					CustomerID$	= ""											! PLW 2018-08-17 Ticket #236076
+				}
+				CardID$			= CreditCardID$									! PLW 2018-08-17 Ticket #236076
+				%SaveCard		= ML_New.ctl'Visible							! RCS 2018-11-29 Ticket #236076
+
+! *******
+				retVal			= cCreditCardBusObject'ProcessAPSVault(		\
+									vaultOp$,								\
+									PaymentType$,							\
+									CreditCardGUID$,						\
+									Last4UnencryptedCreditCardNos$,			\
+									ExpirationDateYear$,					\
+									ExpirationDateMonth$,					\
+									CardType$,								\
+									Last4BankRoutingNos$,					\
+									Last4BankAccountNos$,					\
+									BankAccountType$,						\
+									accountName$,							\
+									CustomerName$,							\
+									CustomerID$,							\
+									CardID$,								\
+									defaultRec$, 							\
+									defaultIOL$)  								! PLW 2018-08-17 Ticket #236076
+				%SaveCard$		= $$
+			}
+			! *** check to verify that if not ACH that the ACH fields are null.  #226341 - 2017-09-20 RCS
+			if retVal and not(cCreditCardBusObject'PaymentTypeMethod$ = "A") {	! #233534 RCS 2018-01-10
+				Last4BankRoutingNos$	= $$
+				Last4BankAccountNos$	= $$
+			}
+
+			IF retVal = retFAILURE AND cCreditCardBusObject'LastErrorNum$ = "AR_PaymentType_05" {
+				IF UCS(_OBJ'_Class$)	= "AR_CASHRECEIPTS_UI" {
+					tmp1$				= TBL(cCreditCardBusObject'PaymentTypeMethod$ = "A", "ACH", "credit card") ! #233534 RCS 2018-01-10
+					coSession'UI'MessageBox$("AR_PaymentType_06", MSG("AR_PaymentType_06", TBL(tmp1$="ACH", "a ", "an ")+tmp1$, tmp1$, "ontop"))
+					CreditCardGUID$		= $$
+				} ELSE {
+					IF cCreditCardBusObject'PaymentTypeMethod$ = "A" AND NOT(coSession'CheckSecurityEvent( "SE_ARAllowAddEditCreditCards" )) { ! #233534 RCS 2018-01-10
+						cSkipMsgBox		= isTRUE
+						coSession'UI'MessageBox$("CI_Rights", MSG("CI_Rights", "add", "credit card record"), "ontop")
+					} ELSE {
+						oARCustCreditCardUI	= NEW("AR_CustomerCreditCard_UI", coSession)
+						newPayType$			= oARCustCreditCardUI'FixPaymentType$(cCreditCardBusObject'PaymentTypeMethod$)
+						IF NOT(NUL(newPayType$)) {
+							cCreditCardBusObject'ARCreditCard'APSGetPaymentTypeData(PaymentType$, from_m_id$, from_m_key$)
+							cCreditCardBusObject'ARCreditCard'APSGetPaymentTypeData(newPayType$, to_m_id$, to_m_key$)
+
+							IF from_m_id$ + from_m_key$ <> to_m_id$ + to_m_key$ {
+								CreditCardGUID$	= cCreditCardBusObject'ARCreditCard'SwitchVaultRecord$(from_m_id$, from_m_key$, to_m_id$, to_m_key$, \
+													CreditCardGUID$, PaymentType$, coSession'CompanyCode$)
+							}
+							CardHolderName$	= _obj'APSCleanData$(CardHolderName$)	! #252088 - 2019-06-06 RCS
+							vaultRec$		= REC(vaultIOL$)
+							ID				= PaymentType.ctl
+							ID$				= "PaymentType"
+							PaymentType$	= newPayType$
+							retVal			= _OBJ'ChangePaymentType()
+							IF retVal {
+								READ DATA FROM vaultRec$ TO IOL = vaultIOL$
+								savProcessInBatch$						= cCreditCardBusObject'ProcessInBatch$
+								cCreditCardBusObject'ProcessInBatch$	= isYES$ ! skip processing cc transaction in implied write
+								retVal		= retSUCCESS
+							}
+						} ELSE {
+							CreditCardGUID$	= $$
+						}
+						DROP OBJECT oARCustCreditCardUI
+						oARCustCreditCardUI	= 0
+					}
+				}
+			}
+
+			SWITCH retVal
+				CASE retFAILURE
+					cSkipMsgBox			= isTRUE
+					IF cCreditCardBusObject'LastErrorNum$ <> "AR_PaymentType_05" {
+						coSession'UI'MessageBox$(cCreditCardBusObject'LastErrorNum$, cCreditCardBusObject'LastErrorMsg$, "ontop")
+					}
+					BREAK
+				CASE retWARNING
+					! cancel pressed on Sage Exchange vault screen
+					cSkipMsgBox			= isTRUE
+					retVal				= retFAILURE
+					BREAK
+				CASE retSUCCESS
+					vaultRec$			= REC(vaultIOL$)
+					newExpDate$			= ExpirationDateYear$ + ExpirationDateMonth$
+					cSkipMsgBox			= isFALSE
+					retVal				= cCreditCardBusObject'SetPartialRecord(vaultRec$, vaultIOL$)
+					IF retVal {
+						IF oldExpDate$ <> newExpDate$		\
+							AND cardIDOnFile				\
+							AND SaveCreditCard$ <> isYES$	\
+							AND custCCExpDate$ <> newExpDate$ {
+
+							cCreditCardBusObject'SaveVaultRecOnly	= isTRUE
+							cUpdateAPSCard							= isTRUE
+						}
+
+						if SaveCreditCard$			<> isYES$ 						\
+							AND cardIDOnFile										\
+							AND (oldValidated$		<> D531APSValidated$			\
+							OR oldMaskedCard$		<> D531APSMaskedCard$			\
+							OR oldAchAccountType$	<> D531APSAchAccountType$) {
+							cCreditCardBusObject'SaveVaultRecOnly	= isTRUE
+							cUpdateAPSCard							= isTRUE
+						}
+						
+						if cUpdateAPSCard {
+							_obj'UpdateApsCardOnFile()					! #260849 - 2019-12-05 RCS
+						}
+						
+						IF NOT(cSkipImpliedWrite) {
+							retVal		= _OBJ'CreditCardImpliedWrite()
+							! PostWrite may have set SaveCreditCard$ to No.  Refresh screen.
+							cCreditCardBusObject'GetValue("SaveCreditCard$", SaveCreditCard$)
+						}
+
+						IF cCreditCardBusObject'PaymentTypeMethod$ = pmtCREDIT$ {
+							ML_Exp_Label$	= _OBJ'CheckExpiration$(ExpirationDateYear$ + ExpirationDateMonth$)
+						}
+					} ELSE {
+						cSkipMsgBox		= isTRUE
+						coSession'UI'MessageBox$(cCreditCardBusObject'LastErrorNum$, cCreditCardBusObject'LastErrorMsg$)
+					}
+					BREAK
+			END SWITCH
+
+		} ELSE {
+
+			! Process Credit Card Transaction via SPS Exchange
+			retVal = cCreditCardBusObject'ProcessCreditCard()
+
+			IF NOT(retVal	= retSUCCESS) {
+				cSkipMsgBox				= isTRUE
+				coSession'UI'MessageBox$(cCreditCardBusObject'LastErrorNum$, cCreditCardBusObject'LastErrorMsg$, "ontop")
+
+				IF retVal	= retFAILURE {
+					ML_Credit_Card_Response$	= MSG("AR_CreditCard_Authorized", " not", TBL(cCreditCardBusObject'PaymentTypeMethod$="A", "credit card", "ACH")) ! #233534 RCS 2018-01-10
+				}
+			}
+
+			IF NOT(retVal	= retFAILURE) {
+				cTransProcessOK			= 1
+				cSkipMsgBox				= isFALSE
+				newExpDate$				= ExpirationDateYear$ + ExpirationDateMonth$
+
+				IF oldExpDate$ <> newExpDate$		\
+					AND cardIDOnFile				\
+					AND SaveCreditCard$ <> isYES$	\
+					AND custCCExpDate$ <> newExpDate$ {
+
+					cUpdateAPSCard							= isTRUE
+					cCreditCardBusObject'SaveVaultRecOnly	= isTRUE
+				}
+				
+				if SaveCreditCard$			<> isYES$ 						\
+					AND cardIDOnFile										\
+					AND (oldValidated$		<> D531APSValidated$			\
+					OR oldMaskedCard$		<> D531APSMaskedCard$			\
+					OR oldAchAccountType$	<> D531APSAchAccountType$) {
+					cUpdateAPSCard							= isTRUE
+					cCreditCardBusObject'SaveVaultRecOnly	= isTRUE
+				}
+				
+				if cUpdateAPSCard {
+					_obj'UpdateApsCardOnFile()					! #260849 - 2019-12-05 RCS
+				}
+				
+
+				IF NOT(cSkipImpliedWrite) {
+					retVal				= _OBJ'CreditCardImpliedWrite()
+					! PostWrite may have set SaveCreditCard$ to No.  Refresh screen.
+					cCreditCardBusObject'GetValue("SaveCreditCard$", SaveCreditCard$)
+				}
+
+				ML_Exp_Label$			= _OBJ'CheckExpiration$(ExpirationDateYear$ + ExpirationDateMonth$)
+
+				IF NOT(retVal	= retSUCCESS) {
+					cSkipMsgBox			= isTRUE
+					coSession'UI'MessageBox$(cCreditCardBusObject'LastErrorNum$, cCreditCardBusObject'LastErrorMsg$)
+				}
+			}
+		}
+	}
+
+	IF cTransProcessOK {
+		ML_Credit_Card_Response$		= MSG("AR_CreditCard_Authorized")
+		NEXT_ID							= BT_Accept.ctl
+
+		IF NOT(cSavedSecurity = secVIEWONLY) AND NOT(cSavedSecurity = secDELETEONLY) {
+			! allow change in sales order/invoice entry
+			IF NOT(cCreditCardBusObject'AllowChangeAfterProcessing) {
+				cSecurityAccess 		= secVIEWONLY
+				_OBJ'SetFormState(ctlDISABLE)
+
+				IF POS("PCREDITCARD" 	= UCS(FOLDER_ID$))  {
+					BT_Clear.ctl'Enabled= isFALSE
+				}
+
+				IF NUL(CreditCardID$) {
+					cTransProcessOK		= 2
+
+					IF POS("PCREDITCARD"= UCS(FOLDER_ID$)) {
+						CreditCardID.ctl'Lock		= isFALSE
+						CreditCardID.ctl'Enabled	= isTRUE
+						SaveCreditCard.ctl'Enabled	= isTRUE
+					}
+				}
+			}
+		}
+	}
+	IF NOT(NUL(savProcessInBatch$)) {
+		CB_PROCESS_IN_BATCH$			= savProcessInBatch$
+		_OBJ'ChangeCB_Process_In_Batch()
+	}
+
+
+RETURN retVal
+!
+
+CHANGE_CREDIT_CARD_AUTHORIZATION_NO:
+CHANGE_CREDIT_CARD_TRANSACTION_ID:
+
+	retVal=retSUCCESS
+
+	IF cAPSActivated {
+		IF NOT(NUL(CreditCardAuthorizationNo$)) AND NUL(CreditCardTransactionID$) {
+			CreditCardTransactionID$	= "VOICEAUTH"
+			IF NOT(cCreditCardBusObject'SetValue("CreditCardTransactionID$",CreditCardTransactionID$)) {
+				retVal					= retFAILURE
+			}
+		}
+	}
+
+	IF retVal {
+		retVal = _OBJ'ChangeCreditCardAuthorizationNo(FROM "AR_531APSCreditCardCommonEntry_ui_BASE")
+	}
+
+RETURN retVal
+!
+
+CREDIT_CARD_PRE_DELETE: ! #232007 for C2P. RCS 2018-02-28 - does NOT call back to base.
+
+	coBusiness'GetValue("D531_C2PPaymentId$",D531_C2PPaymentId$)
+
+	if nul(D531_C2PPaymentId$)  {
+		retVal							= _OBJ'CreditCardPreDelete(FROM "AR_531APSCreditCardCommonEntry_ui_BASE")
+	} ELSE {
+
+		retVal							= coBusiness'CreditCardPreDelete()
+		answer$							= "CONTINUE"
+
+		IF retVal {
+			IF NOT(cSkipDialog) { ! AR_CommonEntry_ui
+				retVal 					= _OBJ'ConfirmDelete(FROM "SY_LineEntry_UI")
+			}
+
+			IF retVal AND NOT(NUL(answer$)) {
+				SWITCH answer$
+					CASE "CONTINUE"
+						retVal			= cCreditCardBusObject'SkipCCVoid()
+					BREAK
+					CASE "VOID"
+						retVal			= cCreditCardBusObject'ProcessCCVoid()
+					BREAK
+				END SWITCH
+			}
+		}
+	}
+
+RETURN retVal
+!
+
+CHANGE_PAYMENT_TYPE:
+	
+! 	if %ptTraceCH {
+! 		endtrace 
+! 		close (%ptTraceCH)
+! 		%ptTraceCH	= 0
+! 	}
+! 	serial "../soa/PT_trace.txt",err=*next
+! 	%ptTraceCH	= hfn
+! 	open lock (%ptTraceCH)"../soa/PT_trace.txt"
+! 	%NOMADS_TRACE_FILE$		= "../soa/PT_Trace.txt"
+! 	settrace (%ptTraceCH)
+	
+
+	retVal					= _OBJ'ChangePaymentType(FROM "AR_531APSCreditCardCommonEntry_ui_BASE")
+	
+RETURN retVal
+
+
+UPDATE_APS_CARD_ON_FILE:
+
+		IF NOT(cARCustCreditCardFH) {
+			cARCustCreditCardFH	= _OBJ'OpenTable("AR_CustomerCreditCard", pthCOMPANY$)
+		}
+
+		cardIDOnFile			= isFALSE
+
+		IF NOT(NUL(CreditCardID$)) {
+			tmpDiv$				= ARDivisionNo$
+			tmpCust$			= CustomerNo$
+			IF NOT(NUL(BillToDivisionNo$)) AND NOT(NUL(BillToCustomerNo$)) {
+				tmpDiv$			= BillToDivisionNo$
+				tmpCust$		= BillToCustomerNo$
+			}
+			READ (cARCustCreditCardFH, KEY=tmpDiv$:tmpCust$:CreditCardID$, KNO="KCARDID", REC=custcc$, DOM=*NEXT); cardIDOnFile = isTRUE
+			if SaveCreditCard$			<> isYES$ 						\
+				AND cardIDOnFile										\
+				AND (oldValidated$		<> D531APSValidated$			\
+				OR oldMaskedCard$		<> D531APSMaskedCard$			\
+				OR oldAchAccountType$	<> D531APSAchAccountType$) {
+					custcc.D531APSValidated$		= D531APSValidated$
+					custcc.D531APSMaskedCard$		= D531APSMaskedCard$
+					custcc.D531APSAchAccountType$	= D531APSAchAccountType$
+
+					if CardholderName$+AVSAddressLine1$+AVSAddressLine2$+AVSCity$+AVSState$+AVSCountryCode$+AVSZipCode$ <> \
+						custcc.CardholderName$+custcc.AVSAddressLine1$+custcc.AVSAddressLine2$+custcc.AVSCity$+custcc.AVSState$+custcc.AVSCountryCode$+custcc.AVSZipCode$ {
+						
+						custcc.CardholderName$		= CardHolderName$
+						custcc.AVSAddressLine1$		= AVSAddressLine1$
+						custcc.AVSAddressLine2$		= AVSAddressLine2$
+						custcc.AVSCity$				= AVSCity$
+						custcc.AVSState$			= AVSState$
+						custcc.AVSCountryCode$		= AVSCountryCode$
+						custcc.AVSZipCode$			= AVSZipCode$
+
+					}
+					write (cARCustCreditCardFH, REC=custcc$)
+					retVal		= retSUCCESS
+			}
+		}
+	
+RETURN retval
+!

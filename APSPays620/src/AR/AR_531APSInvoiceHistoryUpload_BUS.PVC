@@ -1,0 +1,393 @@
+! $Id: AR_531APSInvoiceHistoryUpload_BUS.pvc $
+! Copyright 2017-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! #232007 - 2019-02-20 RCS
+
+DEF CLASS "AR_531APSInvoiceHistoryUpload_BUS"
+
+	! Inherits from the following class(es)
+	LIKE "SY_Constant"
+	LIKE "SY_531APSMultiCurrencyCommon" ! PLW 2019-02-12 Ticket #248049
+
+	! Public Properties
+	PROPERTY c2p.BlocksProcessed
+
+	! Local/Private Properties
+	
+	! objects
+	LOCAL coCompany
+	LOCAL coDocument
+	LOCAL coRequest
+	
+	LOCAL c2p.companyCode$
+	LOCAL c2p.APSLevelIIIProcessing$
+	LOCAL c2p.APSSummaryCommodityCode$
+	LOCAL c2p.APSItemCommodityCode$
+
+	LOCAL c2p.Enabled
+	LOCAL c2p.Option
+	LOCAL c2p.APIKey$
+	LOCAL c2p.Currency$
+!	LOCAL c2p.CustomerURL$
+	LOCAL c2p.DataFormat$
+	LOCAL c2p.Null$				= $$
+
+	LOCAL D531_C2PLinkCode$
+	LOCAL D531_C2PUrlLink$
+	LOCAL D531_C2PCustomer$
+	LOCAL arInvoiceHistHdrSrc$
+	LOCAL arInvoiceHistHdrDst$
+	LOCAL cLevel3LineLimit		= 10 ! PLW limit the number of lines sent for Level III
+
+	! file handles
+	LOCAL arInvoiceHistHdrFH
+	LOCAL arInvoiceHistDtlFH
+	LOCAL c2p.ArCustFH
+	LOCAL cAR_AROpenInvoiceFH
+	LOCAL cAR_ARTranPaymentFH
+
+	! Public Functions (Methods)
+	FUNCTION  ProcessInvoice(cInvoice$,cHdrSeq$,D531_C2PLinkCode$,c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$) 	PROCESS_INVOICE
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+END DEF
+!
+
+ON_CREATE:
+ENTER coSession
+
+	c2p.companyCode$	= LCS(coSession'companyCode$)
+	c2p.companyKey$		= coSession'companyKey$
+
+	coCompany			= NEW ("SY_Company_SVC", coSession)
+	coCompany'FIND(c2p.companyKey$)
+
+	c2p.Enabled			= coCompany'C2PEnabled
+	c2p.Option			= coCompany'C2POption
+!	c2p.CustomerURL$	= coCompany'C2PPrimary$
+
+ 	coCompany'GetValue("D531APSLevelIIIProcessing$",	c2p.APSLevelIIIProcessing$)
+ 	coCompany'GetValue("D531APSSummaryCommodityCode$",	c2p.APSSummaryCommodityCode$)
+ 	coCompany'GetValue("D531APSItemCommodityCode$",		c2p.APSItemCommodityCode$)
+ 	coCompany'GetValue("D531APSShipFromPostal$",		c2p.APSShipFromPostal$) ! PLW 2017-12-18
+
+	coCompany'GetValue("D531_C2PAPIKey$",				c2p.APIKey$)
+	coCompany'GetValue("D531_C2PCurrency$",				c2p.Currency$)
+
+	coDocument			= NEW ("SY_531APSDocument_SVC", coSession)
+
+	coRequest			= NEW("SY_531APSRequest", coSession)
+	c2p.DataFormat$		= coRequest'DataFormat$
+	c2p.Null$			= $$
+
+	c2p.ArCustFH		= coSession'OpenTable("AR_Customer","COMPANY")
+	arInvoiceHistHdrFH	= coSession'OpenTable("AR_InvoiceHistoryHeader","COMPANY")
+	arInvoiceHistDtlFH	= coSession'OpenTable("AR_InvoiceHistoryDetail","COMPANY")
+	cAR_AROpenInvoiceFH	= coSession'OpenTable("AR_OpenInvoice","COMPANY")
+	cAR_ARTranPaymentFH	= coSession'OpenTable("AR_TransactionPaymentHistory","COMPANY")
+
+RETURN
+!
+
+ON_DELETE:
+	DROP OBJECT coRequest,	ERR=*PROCEED;	coRequest	= 0
+	DROP OBJECT coDocument,	ERR=*PROCEED;	coDocument	= 0
+	DROP OBJECT coCompany,	ERR=*PROCEED;	coCompany	= 0
+
+	IF c2p.ArCustFH {
+ 		CLOSE (c2p.ArCustFH)
+ 		c2p.ArCustFH = 0
+ 	}
+	IF arInvoiceHistHdrFH {
+ 		CLOSE (arInvoiceHistHdrFH)
+ 		arInvoiceHistHdrFH = 0
+ 	}
+	IF cAR_AROpenInvoiceFH {
+ 		CLOSE (cAR_AROpenInvoiceFH)
+ 		cAR_AROpenInvoiceFH = 0
+ 	}
+	IF arInvoiceHistDtlFH {
+		CLOSE (arInvoiceHistDtlFH)
+		arInvoiceHistDtlFH = 0
+	}
+	IF cAR_ARTranPaymentFH {
+		CLOSE (cAR_ARTranPaymentFH)
+		cAR_ARTranPaymentFH = 0
+	}
+
+RETURN
+!
+
+PROCESS_INVOICE:
+
+ENTER (cInvoice$),(cHdrSeq$),D531_C2PLinkCode$,c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$,err=*next
+
+	retVal = retFAILURE
+
+	READ (arInvoiceHistHdrFH, KEY=cInvoice$:cHdrSeq$, REC=c2p$)
+	c2p.InvoiceKey$		= kec(arInvoiceHistHdrFH)
+	
+	! Skip ADjustments, CAsh invoices, Credit Memos, Debit Memos, deleted, and Finance Charges #251756 - 2019-05-22 RCS
+	IF pos(c2p.InvoiceType$	= "AD|CA|CM|DM|FC|XD") {
+		c2p.errorMessage$	= "Invalid invoice type"					! DT# 1272 - 2020-03-12 RCS
+		RETURN retVal
+	}
+
+	! Opt in/Opt Out
+	READ (c2p.ArCustFH,rec=TMP$,key=c2p.ARDivisionNo$:c2p.CustomerNo$)
+	if tmp.OpenItemCustomer$ <> isYES$ {
+		c2p.errorMessage$	= "Balance Forward is not supported"		! DT# 1272 - 2020-03-12 RCS
+		RETURN retVal ! skip balance foward.
+	}
+	
+	cSkip				= coRequest'OptInOrOut(tmp.D531_C2POption$)
+	if cSkip {
+		c2p.errorMessage$	= "Skipped per customer option"				! DT# 1272 - 2020-03-12 RCS
+		RETURN retVal
+	}
+	D531_C2PCustomer$	= isYES$
+
+	! check invoice balance
+	ML_INVOICETOTAL		= 0
+	ML_BALANCE			= 0
+	ML_INVOICETOTAL		= c2p.TaxableSalesAmt + c2p.NonTaxableSalesAmt + c2p.SalesTaxAmt + c2p.FreightAmt - c2p.DiscountAmt
+	READ (cAR_AROpenInvoiceFH, KEY = c2p.ARDivisionNo$:c2p.CustomerNo$:c2p.InvoiceNo$:c2p.InvoiceType$, REC = bal$,DOM=*NEXT ); ML_BALANCE = bal.BALANCE
+
+	IF ML_BALANCE	<= 0 {
+		c2p.errorMessage$	= "Paid in full, not uploaded"				! DT# 1272 - 2020-03-12 RCS
+		RETURN retVal
+	}
+	! there is a balance...
+	retVal				= retSUCCESS
+	doInvoice			= isFALSE
+
+	! not on file, create.
+	if NUL(stp(c2p.D531_C2PLinkCode$)) {
+		coSession'UI'ProgressBar("init", "APS Click To Pay", "Uploading... ", 1, "")
+		wait .1
+		doInvoice		= isTRUE
+	} else {
+		return retVal
+	}
+	
+	! Begin processing the invoice.
+
+UPLOAD_INVOICE:
+	coSession'UI'ProgressBar("update", "APS Click To Pay", "Uploading... ", 25, "")
+	wait .1
+
+	SWITCH doInvoice ! Upload it.
+		CASE isTRUE
+			READ (arInvoiceHistHdrFH, KEY=cInvoice$:cHdrSeq$, REC=c2p.header$)
+			
+			_OBJ'SetC2PCurrency(c2p.header.ARMC_234_EntryCurrency$, c2p.Currency$) ! PLW 2019-02-12 Ticket #248049
+			
+			c2p.timeStamp$				= DTE(0, TIM:"%Y-%Mz-%DzT%Hz:%mz:%sz")
+			c2p.InvoiceDate$			= c2p.header.InvoiceDate$(1,4)+"-"+c2p.header.InvoiceDate$(5,2)+"-"+c2p.header.InvoiceDate$(7,2)+"T00:01:00"
+			c2p.InvoiceDueDate$			= c2p.header.InvoiceDueDate$(1,4)+"-"+c2p.header.InvoiceDueDate$(5,2)+"-"+c2p.header.InvoiceDueDate$(7,2)+"T00:01:00"
+			c2p.header.TaxableAmt		= c2p.header.TaxableSalesAmt
+			c2p.header.NonTaxableAmt	= c2p.header.NonTaxableSalesAmt
+			c2p.OrderDescription$		= "Products and Services"
+			coRequest'FindNames(c2p.header.ShipToName$,c2p.header.ShipToFirstName$,c2p.header.ShipToLastName$)
+			coRequest'FindNames(c2p.header.BillToName$,c2p.header.BillToFirstName$,c2p.header.BillToLastName$)
+			c2p.CustomerPO$ 			= c2p.header.CustomerPONo$
+			if nul(c2p.header.CustomerPONo$) {
+				c2p.CustomerPO$			= "Verbal"
+			}
+			if nul(c2p.header.EmailAddress$) {
+				c2p.header.EmailAddress$	= tmp.EmailAddress$ ! default to customer if none on invoice.
+			}
+			x	= pos(";"=c2p.header.EmailAddress$)
+			if x {
+				c2p.header.EmailAddress$	= c2p.header.EmailAddress$(1,x-1)	! strip multiple email addresses  #257342 - 2019-09-17 - RCS
+			}
+
+			if c2p.Header.ModuleCode$	= "A/R" {
+				READ (c2p.ArCustFH,rec=C2P$,key=c2p.Header.ARDivisionNo$:c2p.Header.CustomerNo$) ! for A/R invoices.  Not used for S/O invoices.
+				c2p.Header.SoldTo$		= c2p.Header.BillToName$ ! difference between A/R Invoice and Invoice History.
+				c2p.OrderDescription$	= "Services and fees"
+				coRequest'FindNames(c2p.CustomerName$,	c2p.ShipToFirstName$,	c2p.ShipToLastName$)
+				coRequest'FindNames(c2p.header.SoldTo$,	c2p.BillToFirstName$,	c2p.BillToLastName$)
+
+			}
+			memoryFH					= coRequest'CreateMemoryFile()
+
+			documentCode$				= "IC"+c2p.Header.ModuleCode$+"Q"
+
+			coDocument'FIND(documentCode$)
+			coDocument'GetValue("documentPath$", documentPath$)
+
+			coRequest'LoadHeader()
+			
+			!
+			coSession'UI'ProgressBar("update", "APS Click To Pay", "Uploading... ", 50, "")
+			wait .1
+			cLineCnt						= 0
+			SELECT *,REC=c2p.detail$ FROM arInvoiceHistDtlFH 				\
+				BEGIN	c2p.header.invoiceNo$:c2p.header.HeaderSeqNo$:$00$	\
+				END		c2p.header.invoiceNo$:c2p.header.HeaderSeqNo$:$FE$
+
+				cLineCnt					++
+				! 2019-02-18 RCS - hide line logic
+				! // Option to suppress the line in C2P invoice payment web page.  Future option.
+				c2p.hideLine$				= "N"
+				
+				! line commodty processing #248453 - 2019-02-20 RCS
+				c2p.LineCommodityCode$		= tbl(nul(c2p.detail.CommodityCode$),c2p.detail.CommodityCode$,c2p.APSItemCommodityCode$)
+				! 2018-03-29 RCS - line discount and percentage processing
+				
+				! unit cost
+				IF c2p.detail.ItemType$="3" {
+					tmpUnitCost=PRC(c2p.detail.ExtensionAmt,4)
+				} ELSE {
+					tmpUnitCost=PRC(c2p.detail.UnitPrice,4)
+				}
+				! item discount amount
+				cLineDiscountPercent		= c2p.detail.LineDiscountPercent
+				if cLineDiscountPercent {
+					tLineDiscountPercent	= cLineDiscountPercent * .01
+				} else {
+					tLineDiscountPercent	= 0
+				}
+				tmpItemDiscAmt				= prc((tmpUnitCost * tLineDiscountPercent),2)
+				IF c2p.detail.ItemType$ = "3" {
+					tmpItemDiscAmt			= 0
+				}
+				c2p.lineDiscount			= tmpItemDiscAmt
+	
+				! item discount rate
+				tmpItemDiscRate				= prc(cLineDiscountPercent,2)
+				c2p.lineDiscountPercent		= tmpItemDiscRate
+
+				coRequest'LoadLine()
+				
+				if cLineCnt >= cLevel3LineLimit { ! Level III max
+					BREAK
+				}
+
+			NEXT RECORD
+
+			retVal = coRequest'SendRequest(documentCode$, documentPath$, memoryFH)
+
+			coRequest'LoadResponse()
+			
+			if c2p.StatusClassCode				= retSUCCESS {
+				c2p.header.D531_C2PLinkCode$	= c2p.D531_C2PLinkCode$
+				D531_C2PLinkCode$				= c2p.D531_C2PLinkCode$
+			}
+
+			SWITCH retVal
+				CASE retSUCCESS ! was able to send the request and get an answer
+					IF c2p.statusClassCode		= retSUCCESS OR c2p.statusCode = 50003 { ! Duplicate invoice on gateway.
+						c2p.header.D531_C2PWebInvCreated$	= isYES$
+						c2p.header.D531_C2PWebInvUpdated$	= isNO$
+						WRITE (arInvoiceHistHdrFH, REC=c2p.header$)
+!						D531_C2PLinkCode$					= c2p.header.D531_C2PLinkCode$
+					}
+					BREAK
+				CASE retWARNING
+					IF NOT(coRequest'TlsWarning) {
+						coRequest'TlsWarning()
+					}
+					IF c2p.statusClassCode		= retSUCCESS OR c2p.statusCode = 50003 { ! Duplicate invoice on gateway.
+						c2p.header.D531_C2PWebInvCreated$	= isYES$
+						c2p.header.D531_C2PWebInvUpdated$	= isNO$
+						WRITE (arInvoiceHistHdrFH, REC=c2p.header$)
+!						D531_C2PLinkCode$					= c2p.header.D531_C2PLinkCode$
+					}
+					BREAK
+				DEFAULT
+					! failed to send transaction!
+					coRequest'DisplayError(c2p.errorMessage$)
+					retVal									= retFAILURE
+					BREAK
+					
+			END SWITCH
+			! failed to send transaction!
+			IF retVal and c2p.statusClassCode > 1 and c2p.statusCode <> 50003 {			! #256753 - 2019-09-04 - RCS - skips message on duplicate update.
+				coRequest'DisplayError(c2p.errorMessage$)
+				retVal									= retFAILURE
+			}
+			BREAK
+		DEFAULT ! already uploaded.
+			BREAK
+	END SWITCH
+	
+	! See if invoice already exists, if so grab, update, and return.  #232007 - 2019-02-20 RCS
+ 	IF NUL(c2p.D531_C2PLinkCode$) and c2p.statusCode		= 50003 {	! Duplicate invoice on gateway.
+ 		retVal		= coRequest'GetLinkCode(c2p.ArDivisionNo$,c2p.CustomerNo$,c2p.InvoiceNo$,c2p.InvoiceType$,c2p.D531_C2PLinkCode$,c2p.statusCode,c2p.statusClassCode,c2p.errorMessage$)
+ 		if retVal and not(nul(c2p.D531_C2PLinkCode$)) {
+ 			D531_C2PLinkCode$						= c2p.D531_C2PLinkCode$
+ 			c2p.header.D531_C2PLinkCode$			= c2p.D531_C2PLinkCode$
+ 			c2p.header.D531_C2PWebInvCreated$		= isYES$
+ 			c2p.header.D531_C2PWebInvUpdated$		= isNO$
+ 			WRITE (arInvoiceHistHdrFH, REC = c2p.header$)
+ 		}
+ 	}
+
+	c2p.BlocksProcessed++
+	if c2p.BlocksProcessed > 50 {
+		coRequest'ResetDotNet()
+		c2p.BlocksProcessed = 0
+	}
+	coSession'UI'ProgressBar("update", "APS Click To Pay", "Uploading... ", 75, "")
+	wait .1
+
+UPLOAD_PAYMENTS: ! Check each payment to insure the payments are all included on the ClickToPay Gateway.
+
+	cBegDate$="19011231",cBegSeq$="000000"
+	cEndDate$="99991231",cEndSeq$="999999"
+	SELECT *,rec=c2p.Detail$ from cAR_ARTranPaymentFH \
+		BEGIN c2p.header.ARDivisionNo$:c2p.header.CustomerNo$:c2p.header.InvoiceNo$:c2p.header.InvoiceType$:cBegDate$:cBegSeq$+$00$ \
+		END   c2p.header.ARDivisionNo$:c2p.header.CustomerNo$:c2p.header.InvoiceNo$:c2p.header.InvoiceType$:cEndDate$:cEndSeq$+$FE$ \
+		WHERE pos(c2p.Detail.TransactionType$ = "PCA") ! payments and credit memos.
+
+		if nul(c2p.detail.D531_C2PPaymentId$) and c2p.Detail.TransactionAmt {
+			c2p.Detail.AmountPosted	= c2p.Detail.TransactionAmt
+
+			memoryFH				= coRequest'CreateMemoryFile()
+
+			documentCode$			= "IP###Q"
+			coDocument'FIND(documentCode$)
+			coDocument'GetValue("documentPath$", documentPath$)
+
+			coRequest'LoadHeader()
+			
+			retVal = coRequest'SendRequest(documentCode$, documentPath$, memoryFH)
+
+			coRequest'LoadResponse()
+			
+			SWITCH retVal
+				CASE retSUCCESS ! was able to send the request and get an answer
+					IF c2p.statusClassCode = 1 {
+						WRITE (cAR_ARTranPaymentFH, REC=c2p.Detail$) ! write the link code
+					}
+					BREAK
+				CASE retWARNING ! was able to send the request and get an answer
+					IF NOT(coRequest'TlsWarning) {
+						coRequest'TlsWarning()
+					}
+					IF c2p.statusClassCode = 1 {
+						WRITE (cAR_ARTranPaymentFH, REC=c2p.Detail$) ! write the link code
+					}
+					BREAK
+
+				DEFAULT
+					! failed to send transaction!
+					coRequest'DisplayError(c2p.errorMessage$)
+					retVal			= retFAILURE
+					BREAK
+			END SWITCH
+
+			c2p.BlocksProcessed++
+			if c2p.BlocksProcessed > 50 {
+				coRequest'ResetDotNet()
+				c2p.BlocksProcessed = 0
+			}
+		}
+	NEXT RECORD
+	coSession'UI'ProgressBar("update", "APS Click To Pay", "Uploading... ", 100, "")
+	wait .5
+	coSession'UI'ProgressBar("close"); wait .1
+
+RETURN retVal
+!

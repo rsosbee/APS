@@ -1,0 +1,80 @@
+! SY_531APSDocument_BUS.PVC
+! Copyright 2017 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+!
+
+DEF CLASS "SY_531APSDocument_BUS" CREATE REQUIRED DELETE REQUIRED
+	LIKE "SY_LineEntryHeader_BUS"
+	LIKE "CI_ModuleCode_VAL"
+
+	! Public Properties
+
+	! Public Methods
+	FUNCTION CopyFromDocument(selection$)				CopyFromDocument
+
+	! Private Properties
+	LOCAL cMainTable$		= "SY_531APSDocumentHeader"
+	LOCAL cIsSysDB			= isTRUE
+
+	LOCAL cModuleFH
+	LOCAL cValidModules$	= "A/R" + SEP + "S/O" + SEP
+
+	! Private Methods
+	FUNCTION LOCAL setChildColl() 						setChildColl
+
+	FUNCTION LOCAL validateModuleCode(value$) 			validateModuleCode
+	FUNCTION LOCAL onExit() 							onExit
+END DEF
+
+! ----------------------------------------------------------------------------------------------
+ON_CREATE:
+ENTER coSession
+
+	Lines		= NEW("SY_531APSDocumentDetail_BUS", coSession, _OBJ )
+	cModuleFH	= coSession'openTable("SY_Module", pthSYSTEM$)
+	
+RETURN
+
+! ----------------------------------------------------------------------------------------------
+ON_DELETE:
+RETURN
+
+! ----------------------------------------------------------------------------------------------
+setChildColl:
+	_OBJ'InitChildCollection("moduleCode", "SY_Module_SVC", "moduleCode$", idxPRIMARY$, $$)
+RETURN
+
+! ----------------------------------------------------------------------------------------------
+validateModuleCode:
+ENTER value$
+	IF value$="###" {
+		retVal			= retSUCCESS
+	} ELSE {
+		retVal			= _OBJ'ClassValidateModuleCode("moduleCode$",value$)
+	}
+	IF NOT(POS(value$="###"+SEP+cValidModules$)) {
+		lastErrorNum$	= "CI_Invalid"
+		lastErrorMsg$	= MSG(LastErrorNum$, "Module Code (" + value$ + ")")
+		retVal			= retFAILURE
+	}
+RETURN retVal
+
+! ----------------------------------------------------------------------------------------------
+CopyFromDocument:
+ENTER (selection$)
+
+	retVal = retSUCCESS
+	IF EditState = edtNEW {
+		copyList$		= SUB(cKeyColumns$, SEP, ",")
+		copyList$		= MID(copyList$, 1, LEN(copyList$)-1)
+		copyIOL$		= CPL("IOList " + copyList$)
+		copyREC$		= REC(copyIOL$)
+		Lines'CopyFromDocument(copyREC$, copyIOL$,selection$)
+	}
+RETURN retVal
+
+! ----------------------------------------------------------------------------------------------
+onExit:
+	retVal = _OBJ'OnExitGridView()
+	IF retVal { _OBJ'OnExitFolder() }
+RETURN retVal
+!
