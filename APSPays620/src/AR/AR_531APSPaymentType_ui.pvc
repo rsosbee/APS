@@ -1,6 +1,5 @@
 ! $Id$: AR_531APSPaymentType_ui.pvc $
-! Copyright 2013-2019 Accounting Systems, Inc.
-! PLWhirley, Bob Sosbee
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 !
 DEF CLASS "AR_531APSPaymentType_ui" CREATE REQUIRED DELETE REQUIRED
 	! Inherits from the following class(es)
@@ -21,8 +20,8 @@ DEF CLASS "AR_531APSPaymentType_ui" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION LOCAL ChangeD531APSMerchantID()			CHANGE_APS_MERCHANT_ID
 	FUNCTION LOCAL ChangePaymentMethod()				CHANGE_PAYMENT_METHOD
 	FUNCTION LOCAL ChangePreAuthorizationTerm()			CHANGE_PREAUTHORIZIATIONTERM
-	FUNCTION LOCAL ChangeD531APSRequireCVV()			CHANGE_D531_APS_REQUIRE_CVV		! RCS #237825 - 2018-05-23
-	FUNCTION LOCAL ChangeD531APSUseEmvDevice()			CHANGE_D531_APS_USE_EMV_DEVICE	! RCS #236076 - 2018-12-23
+	FUNCTION LOCAL ChangeD531APSRequireCVV()			CHANGE_D531_APS_REQUIRE_CVV
+	FUNCTION LOCAL ChangeD531APSUseEmvDevice()			CHANGE_D531_APS_USE_EMV_DEVICE
 	FUNCTION LOCAL CheckForEnable()						CHECK_FOR_ENABLE
 	FUNCTION LOCAL PostLoad()							POST_LOAD
 	FUNCTION LOCAL PostReadRec()						POST_READ_REC
@@ -236,7 +235,7 @@ POST_LOAD:
 
 	IF coBusiness'cAPSActivated {
 
-		IF coBusiness'CreditCardEnabled$ <> isNO$ {  		! PLW 2017-03-21
+		IF coBusiness'CreditCardEnabled$ <> isNO$ {
 			_OBJ'SetControlState("CC_SPS.grp$", ctlHIDE)
 			_OBJ'SetControlState("CC_APS.grp$", ctlSHOW)
 			SHOW	CONTROL DISPLAYAVSCVVRESPONSE.ctl

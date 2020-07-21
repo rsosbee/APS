@@ -33,13 +33,13 @@ DEF CLASS "AR_531APSConvertFromCSV" CREATE REQUIRED DELETE REQUIRED
 	LOCAL cUnencryptedMerchantKey$
 	LOCAL cEncryptedMerchantKey$
 
-	LOCAL inputIOL$ = CPL("IOLIST RefID$:[STR("","")],SPSGUID$:[STR("","")]")
+	LOCAL inputIOL$ 			= CPL("IOLIST RefID$:[STR("","")],SPSGUID$:[STR("","")]")
 
 	! Functions
-	FUNCTION LOCAl RemoveObsoleteWrkTables()									REMOVE_OBSOLETE_WRK_TABLES
+	FUNCTION LOCAL RemoveObsoleteWrkTables()									REMOVE_OBSOLETE_WRK_TABLES
 	FUNCTION LOCAL ConvertCardsToAPS()											CONVERT_CARDS_TO_APS
 	FUNCTION LOCAL SwitchVaultRecord$(APSfromID$, APSfromKey$, APStoID$, \
-					APStoKey$, APSorig_guid$)									SWITCH_VAULT_RECORD
+					APStoKey$, APSorig_guid$, D531APSApiKey$)					SWITCH_VAULT_RECORD
 	FUNCTION LOCAL ValidateCredentials(APS_m_Id$,APS_Pwd$,SPS_vID$,SPS_key$)	VALIDATE_CREDENTIALS
 	FUNCTION LOCAL ValidateSPS(vaultID$, MerchKey$)								VALIDATE_SPS
  	FUNCTION LOCAL UpdatesURLs()												UPDATE_URLS
@@ -52,9 +52,9 @@ END DEF
 ON_CREATE:
 
 ENTER coSession
-	%APSPreConversion = 1 ! PLW 2016-05-12 allow for conversion before activation
+	%APSPreConversion			= 1 ! PLW 2016-05-12 allow for conversion before activation
 	! Inheritance check to ensure object is not directly created
-	IF POS(UCS(_OBJ'_Class$) = UCS(PGN)) {
+	IF POS(UCS(_OBJ'_Class$)	= UCS(PGN)) {
 		coSession'LastErrorNum$ = "SY_NotInherited"
 		coSession'LastErrorMsg$ = MSG("SY_NotInherited", _OBJ'_Class$)
 		EXIT 200 ! SY_Constant not in direct inheritance structure of this class
@@ -102,8 +102,8 @@ RETURN retSUCCESS
 
 CONVERT_CARDS_TO_APS:
 
-	retVal = retSUCCESS
-	inputFH = HFN
+	retVal			= retSUCCESS
+	inputFH			= HFN
 	OPEN(inputFH)ML_IMPORT_PATH$
 	SERIAL ML_EXPORT_PATH$
 	outputFH = HFN
@@ -115,16 +115,15 @@ CONVERT_CARDS_TO_APS:
 	totalRecs		= 0
 	recordCount		= 0
 	SELECT JUNK$ FROM inputFH
-		totalRecs++
+		totalRecs	++
 	NEXT RECORD
 	CLOSE (inputFH)
 	OPEN (inputFH)ML_IMPORT_PATH$
 	SELECT IOL=inputIOL$ FROM inputFH
 		recordCount++
-		APSGUID$	= _OBJ'SwitchVaultRecord$((fromID$), (fromKey$), (cEncryptedAPSMerchantID$), \
-					(cEncryptedAPSMerchantPassword$),(SPSGUID$))
+		APSGUID$	= _OBJ'SwitchVaultRecord$((fromID$), (fromKey$), (cEncryptedAPSMerchantID$), (cEncryptedAPSMerchantPassword$),(SPSGUID$))
 		IF NUL(APSGUID$) { APSGUID$ = "*******" }
-		outputRec$=RefID$+","+SPSGUID$+","+APSGUID$
+		outputRec$	= RefID$+","+SPSGUID$+","+APSGUID$
 		WRITE RECORD(outputFH)outputRec$
 
 		IF progressMeterDelay++>25 AND coSession'UI {
@@ -136,24 +135,25 @@ CONVERT_CARDS_TO_APS:
 	NEXT RECORD
 	CLOSE (outputFH)
 	CLOSE (inputFH)
-	inputFH=0,outputFH=0
+	inputFH			= 0
+	outputFH		= 0
 RETURN retVal
 !
 
 SWITCH_VAULT_RECORD:
 
-ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, ERR = *NEXT
+ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, D531APSApiKey$, ERR = *NEXT
 	IF NOT(coARCreditCard) { coARCreditCard = NEW("AR_CreditCard", coSession, ERR=*NEXT) }
-	cAPSActivated=isFALSE ! the data must be taken from the SPS vault
-	new_guid$ = $$
-	data$     = coARCreditCard'VerifyGUID$(APSfromID$, APSfromKey$, APSorig_guid$)
-	cAPSActivated=isTRUE
+	cAPSActivated	= isFALSE ! the data must be taken from the SPS vault
+	new_guid$		= $$
+	data$			= coARCreditCard'VerifyGUID$(APSfromID$, APSfromKey$, APSorig_guid$)
+	cAPSActivated	= isTRUE
 	IF NOT(NUL(data$)) {
-		P=POS("|"=data$)
+		P			= POS("|"=data$)
 		IF P {
-			CCnumber$=MID(data$,1,P-1)
-			expdate$=MID(data$,P+1)
-			new_guid$ = coARCreditCard'AddAPSCreditCard$((APStoID$), (APStoKey$), (CCnumber$), (expdate$))
+			CCnumber$	= MID(data$,1,P-1)
+			expdate$	= MID(data$,P+1)
+			new_guid$	= coARCreditCard'AddAPSCreditCard$((APStoID$), (APStoKey$), (CCnumber$), (expdate$), (D531APSApiKey$))
 			IF NOT(NUL(new_guid$)) { NumberOfConvertedCards++ } ! I will use this property in CopyAPSVaultToCCPaymentTypes() method
 
 		}
@@ -164,11 +164,14 @@ RETURN new_guid$
 
 VALIDATE_CREDENTIALS:
 
-ENTER EncryptedAPSMerchantID$,EncryptedAPSPassword$,EncryptedSPSVaultID$,EncryptedSPSMerchantKey$
+ENTER EncryptedAPSMerchantID$,EncryptedAPSPassword$,EncryptedSPSVaultID$,EncryptedSPSMerchantKey$, cAPSApiKey$,err=*next
 
 	IF NOT(coARCreditCard) { coARCreditCard = NEW("AR_CreditCard", coSession, ERR=*NEXT) }
-
-	IF NOT(coARCreditCard'TestAPSCredentials(EncryptedAPSMerchantID$,EncryptedAPSPassword$))=retSUCCESS {
+	
+	tmpVal				= isFALSE
+	tmpval				= coARCreditCard'TestAPSCredentials(EncryptedAPSMerchantID$,EncryptedAPSPassword$, cAPSApiKey$,err=*next)
+	
+	IF NOT(tmpVal) {
 		LastErrorNum$ = "APS - "+coARCreditCard'LastErrorNum$
 		LastErrorMsg$ = "APS - "+coARCreditCard'LastErrorMsg$
 		RETURN retFAILURE
@@ -184,25 +187,27 @@ VALIDATE_SPS:
 ENTER cUnencryptedVaultID$, cUnencryptedMerchantKey$
 
 	IF NOT(NUL(cUnencryptedVaultID$)) AND NOT(NUL(cUnencryptedMerchantKey$)) {
-		IF NOT(coARCreditCard) { coARCreditCard = NEW("AR_CreditCard", coSession, ERR=*NEXT) }
+		IF NOT(coARCreditCard) { 
+			coARCreditCard	= NEW("AR_CreditCard", coSession, ERR=*NEXT) 
+		}
 
 		IF coARCreditCard {
-			retVal = coARCreditCard'TestSPSConnection(cUnencryptedVaultID$, cUnencryptedMerchantKey$)
+			retVal		= coARCreditCard'TestSPSConnection(cUnencryptedVaultID$, cUnencryptedMerchantKey$)
 
-			IF retVal = retSUCCESS {
-				CreditCardSetupTested$ = isYES$
+			IF retVal	= retSUCCESS {
+				CreditCardSetupTested$	= isYES$
 			} ELSE {
-				retVal        = retWARNING
-				LastErrorNum$ = "AR_InvalidMerchant"
-				LastErrorMsg$ = MSG("AR_InvalidMerchant")
+				retVal			= retWARNING
+				LastErrorNum$	= "AR_InvalidMerchant"
+				LastErrorMsg$	= MSG("AR_InvalidMerchant")
 			}
 		} ELSE {
-			retVal = retFAILURE
-			LastErrorNum$ = "SPS - "+coSession'LastErrorNum$
-			LastErrorMsg$ = "SPS - "+coSession'LastErrorMsg$
+			retVal				= retFAILURE
+			LastErrorNum$		= "SPS - "+coSession'LastErrorNum$
+			LastErrorMsg$		= "SPS - "+coSession'LastErrorMsg$
 		}
 	} ELSE {
-		retVal = retSUCCESS
+		retVal			= retSUCCESS
 
 	}
 
@@ -210,47 +215,47 @@ RETURN retVal
 !
 
 UPDATE_URLS:
-	retVal = retSUCCESS
-	URLMaintenanceObj=NEW("SY_URLMaintenance_bus",coSession)
+	retVal				= retSUCCESS
+	URLMaintenanceObj	= NEW("SY_URLMaintenance_bus",coSession)
 
 	IF URLMaintenanceObj {
 		! primary URL
-		tmpRet=URLMaintenanceObj'SetKey("APS PRIMARY")
+		tmpRet			= URLMaintenanceObj'SetKey("APS PRIMARY")
 		IF tmpRet {
-			tmpRet=URLMaintenanceObj'SetValue("URLDesc$","APS Primary URL")
+			tmpRet		= URLMaintenanceObj'SetValue("URLDesc$","APS Primary URL")
 		}
 		IF tmpRet {
-			tmpRet=URLMaintenanceObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/transact.php")
+			tmpRet		= URLMaintenanceObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/transact.php")
 		}
 		IF tmpRet {
-			tmpRet=URLMaintenanceObj'WRITE()
+			tmpRet		= URLMaintenanceObj'WRITE()
 		}
 		IF tmpRet {
 			! query URL
-			tmpRet=URLMaintenanceObj'SetKey("APS Query")
+			tmpRet		= URLMaintenanceObj'SetKey("APS Query")
 			IF tmpRet {
-				tmpRet=URLMaintenanceObj'SetValue("URLDesc$","APS Query URL")
+				tmpRet	= URLMaintenanceObj'SetValue("URLDesc$","APS Query URL")
 			}
 			IF tmpRet {
-				tmpRet=URLMaintenanceObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/query.php")
+				tmpRet	= URLMaintenanceObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/query.php")
 			}
 			IF tmpRet {
-				tmpRet=URLMaintenanceObj'WRITE()
+				tmpRet	= URLMaintenanceObj'WRITE()
 			}
 			IF NOT(tmpRet) {
-				retVal = retFAILURE
-				LastErrorNum$ = URLMaintenanceObj'LastErrorNum$
-				LastErrorMsg$ = URLMaintenanceObj'LastErrorMsg$
+				retVal			= retFAILURE
+				LastErrorNum$	= URLMaintenanceObj'LastErrorNum$
+				LastErrorMsg$	= URLMaintenanceObj'LastErrorMsg$
 			}
 		} ELSE {
-				retVal = retFAILURE
-				LastErrorNum$ = URLMaintenanceObj'LastErrorNum$
-				LastErrorMsg$ = URLMaintenanceObj'LastErrorMsg$
+				retVal			= retFAILURE
+				LastErrorNum$	= URLMaintenanceObj'LastErrorNum$
+				LastErrorMsg$	= URLMaintenanceObj'LastErrorMsg$
 		}
 	} ELSE {
-		retVal = retFAILURE
-		LastErrorNum$ = coSession'LastErrorNum$
-		LastErrorMsg$ = coSession'LastErrorMsg$
+		retVal			= retFAILURE
+		LastErrorNum$	= coSession'LastErrorNum$
+		LastErrorMsg$	= coSession'LastErrorMsg$
 	}
 
 	DROP OBJECT URLMaintenanceObj,ERR=*NEXT

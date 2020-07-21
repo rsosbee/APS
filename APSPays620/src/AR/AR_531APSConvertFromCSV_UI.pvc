@@ -59,10 +59,10 @@ ON_CREATE:
 
 ENTER coSession
 
-	SCREEN_LIB$ = "AR_531APSConvertFromCSV.m4l"
-	SCREEN_ID$  = "dMain"
+	SCREEN_LIB$			= "AR_531APSConvertFromCSV.m4l"
+	SCREEN_ID$			= "dMain"
 
-	cDB_Refresh_Clear$ = "R"
+	cDB_Refresh_Clear$	= "R"
 
 	coSession'GetParameter("SYS", "CreditCardEnable$", CreditCardEnable$)
 
@@ -76,7 +76,7 @@ RETURN
 
 BT_CANCEL:
 
-	CMD_STR$ = "E"
+	CMD_STR$			= "E"
 
 RETURN
 !
@@ -86,15 +86,15 @@ BT_PROCEED:
 		coSession'UI'MessageBox$(LastErrorNum$,LastErrorMsg$)
 		RETURN retFAILURE
 	}
-	IF NOT(_obj'ValidateCredentials(cEncryptedAPSMerchantID$,cEncryptedAPSMerchantPassword$,cEncryptedVaultID$,cEncryptedMerchantKey$) = retSUCCESS) {
+	IF NOT(_obj'ValidateCredentials(cEncryptedAPSMerchantID$,cEncryptedAPSMerchantPassword$,cEncryptedVaultID$,cEncryptedMerchantKey$, D531APSApiKey$) = retSUCCESS) {
 		coSession'UI'MessageBox$(LastErrorNum$,LastErrorMsg$)
 		RETURN retFAILURE
 	}
 
-	SCREEN_ID$ = "dConfirm"
-	retVal = _OBJ'PROCESS(answer$)
+	SCREEN_ID$			= "dConfirm"
+	retVal				= _OBJ'PROCESS(answer$)
 
-	IF answer$ = isYES$ {
+	IF answer$			= isYES$ {
 		coSession'UI'ProgressBar("init", "Copying SPS Card Information to APS", "Converting credit card data", 0)
 		coSession'WriteLog$(logACTIVITY$,"A/R Convert to APS Utility was run.")
 
@@ -102,28 +102,28 @@ BT_PROCEED:
 			_OBJ'RemoveObsoleteWrkTables()
 		}
 
-		retVal = _obj'ConvertCardsToAPS()
+		retVal			= _obj'ConvertCardsToAPS()
 
 		coSession'UI'ProgressBar("close")
 	}
 
-	CMD_STR$ = "E"
+	CMD_STR$			= "E"
 
 RETURN retVal
 !
 
 BT_NO:
 
-	ARG_1$   = isNO$
-	CMD_STR$ = "E"
+	ARG_1$				= isNO$
+	CMD_STR$			= "E"
 
 RETURN retSUCCESS
 !
 
 BT_YES:
 
-	ARG_1$   = isYES$
-	CMD_STR$ = "E"
+	ARG_1$				= isYES$
+	CMD_STR$			= "E"
 
 RETURN retSUCCESS
 !
@@ -141,34 +141,34 @@ RETURN retSUCCESS
 
 POST_LOAD:
 
-	IF UCS(SCREEN_ID$) = "DCONFIRM" {
+	IF UCS(SCREEN_ID$)	= "DCONFIRM" {
 		! Confirmation dialog messages based on selections made
 
 		IF ClearExpiredCreditCards$ = isYES$ {
 			coSession'FormatDate(ML_ExpireDate$, cFormattedExpireDate$)
-			ML_Line1$ = "Clear expired credit cards dated on or before " + cFormattedExpireDate$ + "."
+			ML_Line1$	= "Clear expired credit cards dated on or before " + cFormattedExpireDate$ + "."
 		} ELSE {
-			ML_Line1$ = "Clear expired credit cards not selected."
+			ML_Line1$	= "Clear expired credit cards not selected."
 		}
 
-		ML_Line2$ = "SPS Cards will be copied to the APS vault but APS will not be enabled."
+		ML_Line2$		= "SPS Cards will be copied to the APS vault but APS will not be enabled."
 
-			ML_Line3$   = ""
+			ML_Line3$	= ""
 	}
 
-	IF UCS(SCREEN_ID$) = "DMAIN" {
-		DB_REFRESH_CLEAR$ = cDB_Refresh_Clear$
-		refresh_flg = isTrue
+	IF UCS(SCREEN_ID$)	= "DMAIN" {
+		DB_REFRESH_CLEAR$	= cDB_Refresh_Clear$
+		refresh_flg		= isTrue
 	}
 
 	! Append Company and Date to panel caption
-	retVal = _OBJ'AppendTitleBar()
+	retVal				= _OBJ'AppendTitleBar()
 
 RETURN retVal
 !
 
 CHANGE_APS_MERCHANT_ID:
-	retVal = retSUCCESS
+	retVal				= retSUCCESS
 	cUnencryptedAPSMerchantID$	= D531APSMerchantID$
 	_obj'EncryptPassword(cUnencryptedAPSMerchantID$,cEncryptedAPSMerchantID$)
  	_obj'CheckToDisableBT_Proceed()
@@ -176,8 +176,8 @@ RETURN retVal
 !
 
 CHANGE_ML_APS_PASSWORD:
-	retVal = retSUCCESS
-	cUnencryptedAPSMerchantPassword$=ML_APSPassword$
+	retVal				= retSUCCESS
+	cUnencryptedAPSMerchantPassword$	= ML_APSPassword$
 	_obj'EncryptPassword(cUnencryptedAPSMerchantPassword$,cEncryptedAPSMerchantPassword$)
 	_obj'CheckToDisableBT_Proceed()
 RETURN retVal
@@ -186,7 +186,7 @@ RETURN retVal
 CHANGE_MERCHANT_ID:
 	retVal = retSUCCESS
 	IF NOT(NUL(MerchantID$)) {
-		cUnencryptedVaultID$	= MerchantID$
+		cUnencryptedVaultID$		= MerchantID$
 		_obj'EncryptPassword(cUnencryptedVaultID$,cEncryptedVaultID$)
 		ENABLE CONTROL MerchantPassword.ctl
 	} ELSE {
@@ -215,44 +215,44 @@ RETURN retVal
 
 BT_OK2:
 
-	cConfirmationAnswer				= (stp(UCS(ML_CONFIRM2$),3)="YES")
-	CMD_STR$ = "E"
+	cConfirmationAnswer	= (stp(UCS(ML_CONFIRM2$),3)="YES")
+	CMD_STR$			= "E"
 
 RETURN retSUCCESS
 !
 
 BT_IMPPATH:
 
-	SAVE_PATH$=ML_IMPORT_PATH$
+	SAVE_PATH$			= ML_IMPORT_PATH$
  	IF NOT(NUL(ML_IMPORT_PATH$)) {
- 		dir$=ML_IMPORT_PATH$
+ 		dir$			= ML_IMPORT_PATH$
  		IF POS("\"=dir$) {
- 			dir$=dir$(1,POS("\"=dir$,-1))
+ 			dir$		= dir$(1,POS("\"=dir$,-1))
  		}
 	} ELSE {
-		dir$=coSession'PathBase$
+		dir$			= coSession'PathBase$
 	}
 
-	rtn=0
- 	fileType$ = "Comma Delimited|*.CSV,"
+	rtn					= 0
+ 	fileType$			= "Comma Delimited|*.CSV,"
  	GET_FILE_BOX READ ML_IMPORT_PATH$,dir$,"Sage Payments Input CSV File",fileType$,""
 	retVal = _obj'ChangeML_IMPORT_PATH()
  	IF NOT(retVal) {
-		ML_IMPORT_PATH$=SAVE_PATH$
-		NEXT_ID=ML_IMPORT_PATH.CTL
+		ML_IMPORT_PATH$	= SAVE_PATH$
+		NEXT_ID			= ML_IMPORT_PATH.CTL
   	}
-	REFRESH_FLG = isTRUE
+	REFRESH_FLG			= isTRUE
 RETURN retVal
 !
 
 CHANGE_ML_IMPORT_PATH:
-	retVal=retFAILURE
-	tmpFH = HFN
+	retVal				= retFAILURE
+	tmpFH				= HFN
 	OPEN(tmpFH,ERR=*NEXT)ML_IMPORT_PATH$; retVal = retSUCCESS
 	CLOSE(tmpFH)
  	IF NOT(retVal) {
-		ML_IMPORT_PATH$=cOldImportPath$
-		NEXT_ID=ML_IMPORT_PATH.CTL
+		ML_IMPORT_PATH$	= cOldImportPath$
+		NEXT_ID			= ML_IMPORT_PATH.CTL
   	}
 
 RETURN retVal
@@ -260,47 +260,47 @@ RETURN retVal
 
 BT_EXPPATH:
 
-	SAVE_PATH$=ML_EXPORT_PATH$
+	SAVE_PATH$			= ML_EXPORT_PATH$
 
  	IF NOT(NUL(ML_EXPORT_PATH$)) {
- 		dir$=ML_EXPORT_PATH$
+ 		dir$			= ML_EXPORT_PATH$
  		IF POS("\"=dir$) {
- 			dir$=dir$(1,POS("\"=dir$,-1))
+ 			dir$		= dir$(1,POS("\"=dir$,-1))
  		}
 	} ELSE {
-		dir$=ML_IMPORT_PATH$(1,POS("\"=ML_IMPORT_PATH$,-1))
+		dir$			= ML_IMPORT_PATH$(1,POS("\"=ML_IMPORT_PATH$,-1))
 	}
 	IF NUL(dir$) {
-		dir$=coSession'PathBase$
+		dir$			= coSession'PathBase$
 	}
 
-	rtn=0
- 	fileType$ = "Comma Delimited|*.CSV,"
- 	fileName$ = $$
+	rtn					= 0
+ 	fileType$			= "Comma Delimited|*.CSV,"
+ 	fileName$			= $$
  	GET_FILE_BOX ML_EXPORT_PATH$,dir$,"Cross Reference Outpu CSV File",fileType$,""
-	retVal = _obj'ChangeML_EXPORT_PATH()
+	retVal				= _obj'ChangeML_EXPORT_PATH()
  	IF NOT(retVal) {
-		ML_EXPORT_PATH$=SAVE_PATH$
-		NEXT_ID=ML_EXPORT_PATH.CTL
+		ML_EXPORT_PATH$	= SAVE_PATH$
+		NEXT_ID			= ML_EXPORT_PATH.CTL
   	}
-	REFRESH_FLG = isTRUE
+	REFRESH_FLG			= isTRUE
 RETURN retVal
 !
 
 CHANGE_ML_EXPORT_PATH:
 
-	retVal=retSUCCESS
-	tmpFH = HFN
-	OPEN(tmpFH,ERR=*NEXT)ML_EXPORT_PATH$; retVal = retFAILURE
+	retVal				= retSUCCESS
+	tmpFH				= HFN
+	OPEN(tmpFH,ERR=*NEXT)ML_EXPORT_PATH$; retVal	= retFAILURE
 	CLOSE(tmpFH)
 	IF retVal { ! now test if we can create the file
-		retVal = retFAILURE
-		SERIAL ML_EXPORT_PATH$,ERR=*NEXT; retVal = retSUCCESS
+		retVal			= retFAILURE
+		SERIAL ML_EXPORT_PATH$,ERR=*NEXT; retVal	= retSUCCESS
 		ERASE ML_EXPORT_PATH$,ERR=*NEXT
 	}
  	IF NOT(retVal) {
-		ML_EXPORT_PATH$=cOldExportPath$
-		NEXT_ID=ML_EXPORT_PATH.CTL
+		ML_EXPORT_PATH$	= cOldExportPath$
+		NEXT_ID			= ML_EXPORT_PATH.CTL
   	}
 
 RETURN retVal

@@ -79,7 +79,7 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION AddAPSCreditCard$(APSMerchantID$, MerchantPassword$, CCnumber$, expdate$, APSroutingNo$, \
 			 APSacctNo$, APSacctType$)																					ADD_APS_CREDIT_CARD
 	FUNCTION AddAPSCreditCard$(APSMerchantID$, MerchantPassword$, CCnumber$, expdate$, APSroutingNo$, \
-			 APSacctNo$, APSacctType$, APSAcctName$)																	ADD_APS_CREDIT_CARD
+			 APSacctNo$, APSacctType$, APSAcctName$, D531APSApiKey$)													ADD_APS_CREDIT_CARD
 
 	FUNCTION AddBillingData(RequestStr$, defaultRec$, defaultIOL$)														ADD_BILLING_DATA
 	FUNCTION AddBillingURLData(RequestStr$, defaultRec$, defaultIOL$)													ADD_BILLING_URL_DATA
@@ -135,6 +135,7 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	! If the transaction has not been settled - use void
 	! If it has been settled - use refund
 	FUNCTION ConvertVoidToRefund(RequestString$,TROUTD$,TransactionOut$,cVaultID$)										CONVERT_VOID_TO_REFUND
+	FUNCTION CreatApiRequestStrings(cAPSApiKey$,MainRequestStr$,QueryRequestStr$)										CREATE_API_REQUEST_STRINGS	! HS-T47 - 2020-07-16 - RCS
 	FUNCTION CreateRequestStrings(APSMerchantID$,Password$,MainRequestStr$,QueryRequestStr$)							CREATE_REQUEST_STRINGS
 	FUNCTION CredCheck(input$,output$)																					CRED_CHECK
 	FUNCTION CredSwitch$(APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, \
@@ -375,42 +376,49 @@ RETURN
 
 ADD_APS_CREDIT_CARD:
 
-ENTER (APSMerchantID$), (MerchantPassword$), (CCnumber$), (expdate$), (APSroutingNo$), (APSacctNo$), (APSacctType$), (APSAcctName$), ERR=*NEXT
+ENTER (APSMerchantID$), (MerchantPassword$), (CCnumber$), (expdate$), (APSroutingNo$), (APSacctNo$), (APSacctType$), (APSAcctName$), (D531APSApiKey$), ERR=*NEXT	! HS-T47 - 2020-07-16 - RCS
 
 	retVal					= retSUCCESS
 
 	retVal					= _OBJ'ConnectToPaymentServer(cHostCH)
 
-	if len(CCNumber$) { ! #232726 - RCS 2017-12-13
+	if len(CCNumber$) {
 		cPaymentMethod$		= "R"
 	} else {
 		cPaymentMethod$		= "A"
 	}
 	_obj'FindNames(APSAcctName$,ReturnFirstName$,ReturnLastName$)
 	IF retVal {
-		retVal=_OBJ'CreateRequestStrings(APSMerchantID$,MerchantPassword$,CustomerVaultRequestString$,tmp$)
+		SWITCH (not(nul(D531APSApiKey$)))	! HS-T47 - 2020-07-16 - RCS
+			CASE isTRUE
+				retVal		= _obj'CreatApiRequestStrings(D531APSApiKey$,CustomerVaultRequestString$,tmp$)
+				BREAK
+			DEFAULT
+				retVal		= _OBJ'CreateRequestStrings(APSMerchantID$,MerchantPassword$,CustomerVaultRequestString$,tmp$)
+				BREAK
+		END SWITCH
 		IF retVal {
-			CustomerVaultRequestString$+="&customer_vault=add_customer" ! RCS #235036 - 2018-03-08
-			SWITCH cPaymentMethod$ ! #229341 - 2017-09-20 RCS, #230568 - RCS.
+			CustomerVaultRequestString$			+= "&customer_vault=add_customer"
+			SWITCH cPaymentMethod$
 				CASE "R" ! Credit Card
 					CustomerVaultRequestString$	+= "&ccnumber="		+ CCnumber$
 					CustomerVaultRequestString$	+= "&ccexp="		+ expdate$
-					CustomerVaultRequestString$	+= "&company="		+ _OBJ'APSURLEncoding$(APSAcctName$)		! 243530 - 2018-11-18 RCS - pass customer name.
-					CustomerVaultRequestString$	+= "&firstname="	+ _OBJ'APSURLEncoding$(ReturnFirstName$)	! 243530 - 2018-11-18 RCS - pass customer name.
-					CustomerVaultRequestString$	+= "&lastname="		+ _OBJ'APSURLEncoding$(ReturnLastName$)		! 243530 - 2018-11-18 RCS - pass customer name.
+					CustomerVaultRequestString$	+= "&company="		+ _OBJ'APSURLEncoding$(APSAcctName$)
+					CustomerVaultRequestString$	+= "&firstname="	+ _OBJ'APSURLEncoding$(ReturnFirstName$)
+					CustomerVaultRequestString$	+= "&lastname="		+ _OBJ'APSURLEncoding$(ReturnLastName$)
 					
 					IF ARPaymentType.D531APSRetailAccount$ <> "Y" { ! #236603 - 2018-05-15 RCS
-						CustomerVaultRequestString$	+= "&stored_credential_indicator=stored" ! RCS #235036 - 2018-03-07
-						CustomerVaultRequestString$	+= "&initiated_by=merchant" ! RCS #235036 - 2018-03-08
+						CustomerVaultRequestString$	+= "&stored_credential_indicator=stored"
+						CustomerVaultRequestString$	+= "&initiated_by=merchant"
 					}
 					BREAK
 				CASE "A" ! ACH
 					CustomerVaultRequestString$	+= "&checkaba="+APSroutingNo$
 					CustomerVaultRequestString$	+= "&checkaccount="+APSacctNo$
 					CustomerVaultRequestString$	+= "&account_type="+TBL(UCS(APSacctType$)="S","checking","savings")
-				!	CustomerVaultRequestString$	+= "&checkname="+"Sage 100 "+MID(APSAcctNo$,-4) !    *** the customer name, if we have it
+	
 					CustomerVaultRequestString$	+= "&checkname="+_OBJ'APSURLEncoding$(APSAcctName$)	! 243530 - 2018-11-18 RCS - pass customer name.
-				!	CustomerVaultRequestString$	+= "&account_holder_type="+  *** 'business' or 'personal'
+	
 					BREAK
 			END SWITCH
 
@@ -1150,6 +1158,9 @@ ENTER oldRequest$, CustomerName$, CustomerID$, CardID$, (cRequireCVV$), (cPaymen
 	tmpRequest$			= SUB(oldRequest$,"=","$="+QUO)
 	tmpRequest$			= SUB(tmpRequest$,"&",QUO+",")
 	tmpRequest$			+= QUO
+	if mid(tmpRequest$,1,2) = quo+"," {
+		tmpRequest$=mid(tmpRequest$,3)	! strip off leading quo+comma if present
+	}
 
 	EXECUTE tmpRequest$,err=*next; cConv	= isTRUE ! This sets variables with all the direct post request values
 	! if simple conversion didn't work (which will happen with DSD MC), do it by field.  #248049 - 2019-05-31 - RCS
@@ -1473,7 +1484,28 @@ ENTER app_id$, lang_id$
 RETURN request
 !
 
-CREATE_REQUEST_STRINGS:
+CREATE_API_REQUEST_STRINGS:
+ENTER (cAPSApiKey$),MainRequestStr$,QueryRequestStr$
+		
+	retVal				= retSUCCESS
+	MainRequestStr$		= $$
+	QueryRequestStr$	= $$
+
+	if nul(cAPSApiKey$) {
+		retVal			= retFAILURE
+		LastErrorNum$	= "CI_Invalid"
+		LastErrorMsg$	= MSG("CI_Invalid","APS Merchant API Key")
+	}
+	! create request string
+	
+	IF retVal {
+		MainRequestStr$		+= "&security_key="+cAPSApiKey$
+		QueryRequestStr$	+= "&security_key="+cAPSApiKey$
+	}
+RETURN retVal
+!
+
+CREATE_REQUEST_STRINGS: 
 ENTER (APSMerchantID$),(Password$),MainRequestStr$,QueryRequestStr$
 
 	retVal				= retSUCCESS
@@ -3703,13 +3735,14 @@ TEST_APS_CREDENTIALS:
 ENTER (APSMerchantID$), (MerchantPassword$), (cAPSApiKey$),err=*next ! RCS 2018-09-30 Ticket #236076
 
 	retVal	= retSUCCESS
-	IF NUL(cHttpHost$) OR NUL(cHttpQueryHost$) OR NUL(cHttpStepOneUrl$) { ! PLW Ticket #
+	IF NUL(cHttpHost$) OR NUL(cHttpQueryHost$) OR NUL(cHttpStepOneUrl$) {
 		retVal	= _OBJ'FindURLs()
 	}
 
 	IF retVal {
 
-		retVal	= _OBJ'CreateRequestStrings(APSMerchantID$,MerchantPassword$,CustomerVaultRequestString$,tmp$)
+	!	retVal	= _OBJ'CreateRequestStrings(APSMerchantID$,MerchantPassword$,CustomerVaultRequestString$,tmp$)
+		retVal	= _obj'CreatApiRequestStrings(cAPSApiKey$,CustomerVaultRequestString$,tmp$)
 
 		IF retVal {
 			CustomerVaultRequestString$	+= "&ccnumber="
@@ -3730,7 +3763,7 @@ ENTER (APSMerchantID$), (MerchantPassword$), (cAPSApiKey$),err=*next ! RCS 2018-
 			}
 
 			! Hosted form - RCS 2018-09-30 Ticket #236076
-			IF retVal and ( not(nul(cAPSApiKey$)) or POS("AR_531APSPAYMENTTYPE"=UCS(STK(-1))) ) { ! from Payment Type maintenance
+			IF retVal and (not(nul(cAPSApiKey$)) or POS("AR_531APSPAYMENTTYPE"=UCS(STK(-1)))) { ! from Payment Type maintenance
 				! Hosted form API key
 				if nul(cAPSApiKey$) {
 					retVal			= retFAILURE
@@ -3740,7 +3773,8 @@ ENTER (APSMerchantID$), (MerchantPassword$), (cAPSApiKey$),err=*next ! RCS 2018-
 					RETURN retVal
 				}
 
-				_OBJ'CreateRequestStrings(APSMerchantID$,MerchantPassword$,CustomerVaultRequestString$,tmp$)
+				! _OBJ'CreateRequestStrings(APSMerchantID$,MerchantPassword$,CustomerVaultRequestString$,tmp$)
+				_obj'CreatApiRequestStrings(cAPSApiKey$,CustomerVaultRequestString$,tmp$)
 				CustomerVaultRequestString$	+= "&ccnumber=4111111111111111"
 				CustomerVaultRequestString$	+= "&customer_vault=add_customer"
 				CustomerVaultRequestString$	+= "&payment=creditcard"

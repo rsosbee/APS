@@ -1,5 +1,5 @@
 ! $Id: AR_531APSConvertToAPS.pvc $
-! Copyright 2014-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 !
 
 DEF CLASS "AR_531APSConvertToAPS" CREATE REQUIRED DELETE REQUIRED
@@ -301,8 +301,8 @@ CONVERT_CARDS_TO_APS:
 					cc.BankAccountType$						= isNULL$
 					cc.BankName$							= isNULL$
 					cc.D531APSValidated$					= isNO$		! RCS #236076 - 2018-12-03 Sage doesn't validate cards.  Must do that on the next transaction if possible.
-					cc.D531APSMaskedCard$					= isNULL$	! RCS #236076 - 2018-12-03
-					cc.D531APSAchAccountType$				= "B"		! RCS #236076 - 2018-12-03
+					cc.D531APSMaskedCard$					= isNULL$
+					cc.D531APSAchAccountType$				= "B"
 				}
 
 				if cPaymentMethod$ = "A" { ! 229341 - 2017-09-25 RCS
@@ -311,9 +311,9 @@ CONVERT_CARDS_TO_APS:
 					cc.CardType$							= isNULL$
 					cc.CorporateCustIDPurchOrder$			= isNULL$
 					cc.Last4UnencryptedCreditCardNos$		= isNULL$
-					cc.D531APSValidated$					= isNO$		! RCS #236076 - 2018-12-03
-					cc.D531APSMaskedCard$					= isNULL$	! RCS #236076 - 2018-12-03
-					cc.D531APSAchAccountType$				= "B"		! RCS #236076 - 2018-12-03
+					cc.D531APSValidated$					= isNO$
+					cc.D531APSMaskedCard$					= isNULL$
+					cc.D531APSAchAccountType$				= "B"
 				}
 
 				WRITE(cAPSCustCCFH,REC=cc$)
@@ -355,14 +355,14 @@ ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, (cAccountName
 				} ELSE {
 					acctType$	= "S"
 				}
-				CCnumber$	= isNULL$ ! 229341 - 2017-09-20 RCS
-				expdate$	= isNULL$ ! 229341 - 2017-09-20 RCS
+				CCnumber$	= isNULL$
+				expdate$	= isNULL$
 				BREAK
 			CASE "R"
 				read data from data$, sep="|" to iol = tmpCcIOL$		! #243530 - 2018-11-18 RCS
-				acctType$	= isNULL$ ! 229341 - 2017-09-20 RCS
-				acctNo$		= isNULL$ ! 229341 - 2017-09-20 RCS
-				routing$	= isNULL$ ! 229341 - 2017-09-20 RCS
+				acctType$	= isNULL$
+				acctNo$		= isNULL$
+				routing$	= isNULL$
 				
 				BREAK
 			DEFAULT
