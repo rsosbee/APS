@@ -112,11 +112,12 @@ POST_WRITE_REC:
 
 		retVal			= retSUCCESS
 		! Next line added cSkipCardConversion check PLW Ticket #235697 2018-03-20 flag from AR_531APSConvertToAPS
-		IF NOT(cSkipCardConversion)				\
-			AND POS(CreditCardEnable$ = "YAB")	\
-			AND cOrigCreditCardEnable$ = isNO$	\
-			AND NOT(NUL(D531APSMerchantID$))	\
-			AND NOT(NUL(D531APSPassword$)) {	! #231342 - Yes, ACH, Both
+		IF NOT(cSkipCardConversion)					\
+			AND POS(CreditCardEnable$	= "YAB")	\
+			AND cOrigCreditCardEnable$	= isNO$		\
+			AND NOT(NUL(D531APSApiKey$)) {			! #231342 - Yes, ACH, Both
+		!	AND NOT(NUL(D531APSMerchantID$))		\
+		!	AND NOT(NUL(D531APSPassword$)) {
 
 			IF _OBJ'ARCreditCard {
 
@@ -124,12 +125,15 @@ POST_WRITE_REC:
 
 					! if we don't have SPS vault ID - we cannot convert credit cards to APS
 					ARCreditCard'NumberOfConvertedCards		= 0
+
 					retVal	= ARCreditCard'APSSwitchVaults(cOrigUnencryptedCreditCardVaultOnlyID$,		\
 															cOrigUnencryptedCreditCardVaultOnlyKey$,	\
 															D531APSMerchantID$,							\
 															D531APSPassword$,							\
 															$$,											\
-															CompanyCode$)
+															CompanyCode$,								\
+															copyFlag,									\
+															D531APSApiKey$)
 				}
 
 				retVal	= ARCreditCard'CopyAPSVaultToCCPaymentTypes(CompanyCode$,		\
@@ -344,9 +348,11 @@ ENTER (APS531val$)
 		IF retVal {
 
 			IF cOrigCreditCardEnable$ = isNO$ AND POS(APS531val$ = "YAB") { ! 231342 - Yes, ACH, Both
-				IF NOT(NUL(D531APSMerchantID$)) AND NOT(NUL(D531APSPassword$)) {
+!				IF NOT(NUL(D531APSMerchantID$)) AND NOT(NUL(D531APSPassword$)) {
+				IF NOT(NUL(D531APSApiKey$)) {
+
 					IF _OBJ'ARCreditCard {
-						retVal	= ARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$))
+						retVal	= ARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$), (D531APSApiKey$))
 						IF NOT(retVal = retSUCCESS) {
 							IF POS("AUTHENTICATION FAILED"=ARCreditCard'LastErrorMsg$) {
 								retVal			= retWARNING

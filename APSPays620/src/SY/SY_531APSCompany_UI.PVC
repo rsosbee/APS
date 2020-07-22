@@ -13,6 +13,7 @@ DEF CLASS "SY_531APSCompany_ui" CREATE REQUIRED DELETE REQUIRED
 	! Local/Private Properties
 	LOCAL cOrigD531APSMerchantID$
 	LOCAL cOrigD531APSPassword$
+	LOCAL cOrigD531APSApiKey$
 	LOCAL cOldAPSLevelIIIProcessing$
 
 	! C2P Change
@@ -206,7 +207,7 @@ CHANGE_APS_CREDENTIALS:
 		
 		tstVal	= EVN("coBusiness'ARCreditCard",err=*next) ! checks to see if SED is running #232007 2018-04-11
 		if tstVal {
-			test	= coBusiness'ARCreditCard'TestAPSCredentials(tmpAPSMerchantID$, tmpAPSPassword$)
+			test	= coBusiness'ARCreditCard'TestAPSCredentials(tmpAPSMerchantID$, tmpAPSPassword$, D531APSApiKey$)
 			IF test	= retSUCCESS {
 				IF CreditCardEnable$	= isNO$ {
 					coBusiness'SetValue("CreditCardEnable$", isYES$)
@@ -221,7 +222,8 @@ CHANGE_APS_CREDENTIALS:
 				}
 				ML_APSMerchantID$  		= $$
 				ML_APSPassword$  		= $$
-				NEXT_ID					= ML_APSMerchantID.ctl
+				D531APSApiKey$			= $$
+				NEXT_ID					= D531APSApiKey.ctl ! wasML_APSMerchantID.ctl
 				REFRESH_FLG				= isTRUE
 			}
 			! PLW 2017-12-06 four lines below. Code wasn't doing SetValue(). Not sure how it was working in the old system
@@ -229,11 +231,13 @@ CHANGE_APS_CREDENTIALS:
 			D531APSPassword$	= tmpAPSPassword$ ! PLW 2017-12-06
 			coBusiness'SetValue("D531APSMerchantID$",D531APSMerchantID$) ! PLW 2017-12-06
 			coBusiness'SetValue("D531APSPassword$",D531APSPassword$) ! PLW 2017-12-06
+			coBusiness'SetValue("D531APSApiKey$",D531APSApiKey$)
 		} ELSE {
 			coSession'UI'MessageBox$( "SY_531APSSedRequired" )
 			ML_APSMerchantID$   		= $$
 			ML_APSPassword$  			= $$
-			NEXT_ID						= ML_APSMerchantID.ctl
+			D531APSApiKey$				= $$
+			NEXT_ID						= D531APSApiKey.ctl ! was ML_APSMerchantID.ctl
 			REFRESH_FLG					= isTRUE
 		}
 	}
@@ -285,9 +289,10 @@ CHANGE_CREDIT_CARD_ENABLE:
 						IF answer$	= msgYES$ {
 							ML_APSMerchantID$	= $$
 							ML_APSPassword$		= $$
+							D531APSApiKey$		= $$
 							_OBJ'SetControlState("APS_VAULT.grp$", ctlENABLE)
 							_OBJ'CreditCardCheckForEnable()
-							NEXT_ID				= ML_APSMerchantID.ctl
+							NEXT_ID				= D531APSApiKey.ctl ! was ML_APSMerchantID.ctl
 						} ELSE {
 							retVal	= coBusiness'SetValue("CreditCardEnable$", isNO$) ! set value back
 						}
@@ -566,9 +571,11 @@ POST_READ_REC:
 
 	cOrigD531APSMerchantID$	= D531APSMerchantID$
 	cOrigD531APSPassword$	= D531APSPassword$
+	cOrigD531APSApiKey$		= D531APSApiKey$
 	if CreditCardEnable$	= isNO$ {
 		ML_APSMerchantID$	= $$
 		ML_APSPassword$		= $$
+		D531APSApiKey$		= $$
 	}
 
 	! C2P Change

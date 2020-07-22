@@ -6,42 +6,45 @@
 
 BEGIN
 	PRINT 'CS',"Convert skipped credit cards from old/backup file"
-	cAPSActivated=1
-	PmtFH = %sys_ss'OpenTable("AR_PaymentType","COMPANY")
-	ccFH = %sys_ss'OpenTable("AR_CustomerCreditCard","COMPANY")
-	oCC = NEW("AR_CreditCard",%SYS_SS)
-	compFH = %sys_ss'OpenTable("SY_Company","SYSTEM")
+	cAPSActivated		= 1
+	PmtFH				= %sys_ss'OpenTable("AR_PaymentType","COMPANY")
+	ccFH				= %sys_ss'OpenTable("AR_CustomerCreditCard","COMPANY")
+	oCC					= NEW("AR_CreditCard",%SYS_SS)
+	compFH				= %sys_ss'OpenTable("SY_Company","SYSTEM")
 	READ(compFH,REC=comp$,KEY=%sys_ss'CompanyKey$)
-		ColdM$ = "",ColdK$=""
+		ColdM$			= ""
+		ColdK$			= ""
 		oCC'CredCheck(comp.CreditCardVaultOnlyID$,ColdM$)
 		oCC'CredCheck(comp.CreditCardVaultOnlyKey$,ColdK$)
 	REPEAT
-		oldPmtFH = HFN
+		oldPmtFH		= HFN
 		INPUT @(0,2),'CE',"URL for old AR_PaymentType.M4T: ",oldPmt$
-		goodPmt = 0; CLOSE(oldPmtFH,ERR=*NEXT)
+		goodPmt			= 0
+		CLOSE(oldPmtFH,ERR=*NEXT)
 		OPEN(oldPmtFH,IOL=*,ERR=*NEXT)oldPmt$; goodPmt = 1
 		IF NOT(goodPmt) {
 			%SYS_SS'UI'MessageBox$("Unable to open "+oldPmt$)
 		} ELSE {
-			L$ = UCS(LST(IOL(oldPmtFH)))
+			L$			= UCS(LST(IOL(oldPmtFH)))
 			IF NOT(POS("MERCHANTKEY$"=L$)) OR NOT(POS("MERCHANTID$"=L$)) {
-				goodPmt=0
+				goodPmt	= 0
 				%SYS_SS'UI'MessageBox$("That doesn't look like an AR_PaymentType file")
 			}
 		}
 	UNTIL goodPmt
 	!
 	REPEAT
-		oldCCFH = HFN
+		oldCCFH			= HFN
 		INPUT @(0,6),'CE',"URL for old AR_CustomerCreditCard.M4T: ",oldCC$
-		goodCC = 0; CLOSE(oldCCFH,ERR=*NEXT)
+		goodCC			= 0
+		CLOSE(oldCCFH,ERR=*NEXT)
 		OPEN(oldCCFH,IOL=*,ERR=*NEXT)oldCC$; goodCC = 1
 		IF NOT(goodCC) {
 			%SYS_SS'UI'MessageBox$("Unable to open "+oldCC$)
 		} ELSE {
-			L$ = UCS(LST(IOL(oldCCFH)))
+			L$			= UCS(LST(IOL(oldCCFH)))
 			IF NOT(POS("CREDITCARDGUID$"=L$)) OR NOT(POS("CREDITCARDID$"=L$)) {
-				goodCC=0
+				goodCC	= 0
 				%SYS_SS'UI'MessageBox$("That doesn't look like an AR_CustomerCreditCard file")
 			}
 		}
@@ -50,35 +53,42 @@ BEGIN
 	REPEAT
 		INPUT @(0,10),'CE',"Type 'GO' to proceed, 'END' to cancel: ",E$
 		E$=UCS(E$)
-	UNTIL E$="GO" or E$="END"
-	IF E$="END" { RUN "SOA" }
+	UNTIL E$			= "GO" or E$ = "END"
+	IF E$				= "END" { RUN "SOA" }
 	!
 	SELECT *,REC=oldCC$ FROM oldCCFH BEGIN $$ END $FE$
-		COUNT++; PRINT "Cards Read: ",COUNT," ",oldCC.ARDivisionNo$+"-"+oldCC.CustomerNo$," ",oldCC.CreditCardID$," ",
-		missing = 1
+		COUNT			++ 
+		PRINT "Cards Read: ",COUNT," ",oldCC.ARDivisionNo$+"-"+oldCC.CustomerNo$," ",oldCC.CreditCardID$," ",
+		missing			= 1
 		READ(ccFH,KEY=oldCC.ARDivisionNo$:oldCC.CustomerNo$:oldCC.CreditCardID$,REC=newCC$,KNO="kCARDID",DOM=*NEXT); MISSING = 0
 		IF MISSING {
-			CardsMissing++
+			CardsMissing	++
 			PRINT " Missing!! ",CardsMissing
-			gotOldPmt=0; read(oldPmtFH,KEY=oldCC.PaymentType$,DOM=*NEXT,REC=oldPmt$); gotOldPmt = 1
+			gotOldPmt	= 0
+			read(oldPmtFH,KEY=oldCC.PaymentType$,DOM=*NEXT,REC=oldPmt$); gotOldPmt = 1
 			IF NOT(gotOldPmt) {
 				%sys_ss'UI'MessageBox$("Invalid old Payment Type: "+oldCC.PaymentType$)
 			}
-			oldM$ = "",oldK$=""
+			oldM$		= ""
+			oldK$		= ""
 			oCC'CredCheck(oldPmt.VirtualTerminalID$,oldM$)
 			oCC'CredCheck(oldPmt.MerchantKey$,oldK$)
-			gotNewPmt=0; read(PmtFH,KEY=oldCC.PaymentType$,DOM=*NEXT,REC=newPmt$); gotNewPmt = 1
+			gotNewPmt	= 0
+			read(PmtFH,KEY=oldCC.PaymentType$,DOM=*NEXT,REC=newPmt$); gotNewPmt = 1
 			IF NOT(gotNewPmt) {
 				%sys_ss'UI'MessageBox$("Invalid new Payment Type: "+oldCC.PaymentType$)
 			}
-			newM$ = "",newK$=""
+			newM$		= ""
+			newK$		= ""
+			cAPSApiKey$	= newPmt.D531APSApiKey$
 			oCC'CredCheck(newPmt.D531APSMerchantID$,newM$)
 			oCC'CredCheck(newPmt.D531APSPassword$,newK$)
-			newCreditCardGUID$ = $$
-			newCreditCardGUID$ = oCC'CredSwitch$((oldM$), (oldK$), (newM$), (newK$), (oldCC.CreditCardGUID$),"","",1)
+			newCreditCardGUID$	= $$
+			newCreditCardGUID$	= oCC'CredSwitch$((oldM$), (oldK$), (newM$), (newK$), (oldCC.CreditCardGUID$),"","",1,"",cAPSApiKey$)
 			IF NOT(NUL(newCreditCardGUID$)) {
-				oldCC.CreditCardGUID$ = newCreditCardGUID$
-				WRITE(ccFH,REC=oldCC$); Restored++
+				oldCC.CreditCardGUID$	= newCreditCardGUID$
+				WRITE(ccFH,REC=oldCC$)
+				Restored		++
 			}
 		} ELSE {
 			PRINT ""

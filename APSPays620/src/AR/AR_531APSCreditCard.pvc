@@ -107,7 +107,7 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	! ** @returns [boolean] Success unless parameters are not passed-in correctly.
 	FUNCTION APSSwitchVaults(fromID$, fromKey$, toID$, toKey$, payType$)												APS_SWITCH_VAULTS
 	FUNCTION APSSwitchVaults(fromID$, fromKey$, toID$, toKey$, payType$, companyCode$)									APS_SWITCH_VAULTS
-	FUNCTION APSSwitchVaults(fromID$, fromKey$, toID$, toKey$, payType$, companyCode$, copyFlag)						APS_SWITCH_VAULTS
+	FUNCTION APSSwitchVaults(fromID$, fromKey$, toID$, toKey$, payType$, companyCode$, copyFlag, cAPSApiKey$)			APS_SWITCH_VAULTS
 	FUNCTION APSURLEncoding$(EntVal$)																					APS_URL_ENCODING
 	FUNCTION APSXMLEncoding$(EntVal$)																					APS_XML_ENCODING	! #263758 - 2020-02-24 - RCS
 	
@@ -141,8 +141,7 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION CreateRequestStrings(APSMerchantID$,Password$,MainRequestStr$,QueryRequestStr$)							CREATE_REQUEST_STRINGS
 	FUNCTION CredCheck(input$,output$)																					CRED_CHECK
 	FUNCTION CredSwitch$(APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, \
-						APSpayType$, APScompanyCode$, APScopyFlag, APSAccountName$)										SWITCH_VAULT_RECORD
-
+						APSpayType$, APScompanyCode$, APScopyFlag, APSAccountName$,cAPSApiKey$)							SWITCH_VAULT_RECORD
 	! ** Method to delete a particular GUID from the vault.
 	! ** @param guid$ [string] GUID value to be deleted from the vault.
 	! ** @param payType$ [string] Payment Type (required for MerchantID$ and D531APSPassword$ values)
@@ -286,10 +285,10 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	! ** @param companyCode$ [input, string] The Company Code.
 	! ** @param copyFlag {optional} [input, boolean] Flag set to isTRUE if source data is not to be deleted from original vault.
 	! ** @returns [boolean] Always returns Success.
+!	FUNCTION LOCAL SwitchVaultRecord$(APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, \
+!										APSpayType$, APScompanyCode$)													SWITCH_VAULT_RECORD
 	FUNCTION LOCAL SwitchVaultRecord$(APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, \
-													APSpayType$, APScompanyCode$)										SWITCH_VAULT_RECORD
-	FUNCTION LOCAL SwitchVaultRecord$(APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, \
-													APSpayType$, APScompanyCode$, APScopyFlag, APSAccountName$)			SWITCH_VAULT_RECORD
+										APSpayType$, APScompanyCode$, APScopyFlag, APSAccountName$, cAPSApiKey$)		SWITCH_VAULT_RECORD
 
 	FUNCTION LOCAL PERFORM TlsDirectCast()																				TLS_DIRECT_CAST
 	
@@ -675,7 +674,7 @@ RETURN retVal
 
 APS_SWITCH_VAULTS:
 
-ENTER fromID$, fromKey$, (APSMerchantID$), (Password$),(PayType$), (companyCode$), copyFlag, ERR=*NEXT
+ENTER fromID$, fromKey$, (APSMerchantID$), (Password$),(PayType$), (companyCode$), copyFlag, cAPSApiKey$, ERR=*NEXT
 
 	retVal = retSUCCESS
 
@@ -755,7 +754,7 @@ ENTER fromID$, fromKey$, (APSMerchantID$), (Password$),(PayType$), (companyCode$
 			if cPtRead {
 				cPaymentMethod$	= pt.PaymentMethod$
 			}
-			cc.CreditCardGUID$	= _OBJ'SwitchVaultRecord$((fromID$), (fromKey$), (APSMerchantID$), (Password$), (oldGUID$), (cc.PaymentType$), (companyCode$), (copyFlag), (cc.CardholderName$))
+			cc.CreditCardGUID$	= _OBJ'SwitchVaultRecord$((fromID$), (fromKey$), (APSMerchantID$), (Password$), (oldGUID$), (cc.PaymentType$), (companyCode$), (copyFlag), (cc.CardholderName$),(cAPSApiKey$))
 
 			IF NOT(NUL(cc.CreditCardGUID$)) {
 				! must remove the record first to avoid an error 11 on unigue kCARDID
@@ -3675,7 +3674,7 @@ RETURN CardType$
 !
 
 SWITCH_VAULT_RECORD:
-ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, APSpayType$, APScompanyCode$, APScopyFlag, cAccountName$, ERR = *NEXT ! 243530 - 2018-11-01 RCS
+ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, APSpayType$, APScompanyCode$, APScopyFlag, cAccountName$, cAPSApiKey$, ERR = *NEXT ! 243530 - 2018-11-01 RCS
 
 	if not(cAPSActivated) {
 		new_guid$				= _OBJ'SwitchVaultRecord$(FROM "AR_531APSCreditCard_BASE", APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, APSpayType$, APScompanyCode$, APScopyFlag)
@@ -3721,7 +3720,7 @@ ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, APSpayType$, 
 			DEFAULT
 				BREAK
 		END SWITCH
-		new_guid$			= _obj'AddAPSCreditCard$((APStoID$), (APStoKey$), (CCnumber$), (expdate$), (routing$), (acctNo$), (acctType$), (cAccountName$))
+		new_guid$			= _obj'AddAPSCreditCard$((APStoID$), (APStoKey$), (CCnumber$), (expdate$), (routing$), (acctNo$), (acctType$), (cAccountName$), (cAPSApiKey$))
 		IF NOT(NUL(new_guid$)) {
 			NumberOfConvertedCards	++ ! I will use this property in CopyAPSVaultToCCPaymentTypes() method
 		}
