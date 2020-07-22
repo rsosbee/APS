@@ -69,10 +69,12 @@ DEF CLASS "AR_531APSCreditCardCommon" CREATE REQUIRED DELETE REQUIRED
 	! ** @param defaultIOL$ [output, string] iolist for defaultRec$
 	! ** @returns [boolean] Success if card was created or updated in the vault, Warning if cancel was pressed, otherwise failure
 	! PLW 2018-08-17 Ticket #236076, updated 2018-10-16 RCS to add defaultRec$, defaultIOL$
-	FUNCTION ProcessAPSVault(service$, payType$, guid$, last4Nos$, expYear$,	\
-								expMonth$, cardType$, routingNo$, account$, 	\
-								accountType$, accountName$,	CustomerName$, 		\
-								CustomerID$, CardID$, defaultRec$, defaultIOL$)	PROCESS_APS_VAULT   ! PLW 2018-08-17 Ticket #236076
+! 	FUNCTION ProcessAPSVault(service$, payType$, guid$, last4Nos$, expYear$,	\
+! 								expMonth$, cardType$, routingNo$, account$, 	\
+! 								accountType$, accountName$,	CustomerName$, 		\
+! 								CustomerID$, CardID$, defaultRec$, defaultIOL$)	PROCESS_APS_VAULT   ! PLW 2018-08-17 Ticket #236076
+	FUNCTION ProcessAPSVault(service$,vaultRec$,vaultIOL$,						\
+								defaultRec$,defaultIOL$)						PROCESS_APS_VAULT 
 
 	! ** Process credit card transaction
 	! ** @Param APSvoid {optional} [input, boolean] True = Process void / credit transaction to reverse previously completed credit card transaction; -1 = Void failed, process credit
@@ -1462,47 +1464,64 @@ RETURN retSUCCESS
 !
 
 PROCESS_APS_VAULT:
+	
+ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$
 
-ENTER service$, (payType$), guid$, last4Nos$, expYear$, expMonth$, creditCardType$, lastFourRoutingNo$, lastFourAccount$, \
-					accountType$, accountName$, CustomerName$, CustomerID$, CardID$, defaultRec$, defaultIOL$, ERR=*NEXT ! PLW 2018-08-17 Ticket #236076
+! ENTER service$,				\
+! 		(PaymentType$), 		\
+! 		CreditCardGUID$,		\
+! 		last4Nos$,				\
+! 		expYear$,				\
+! 		expMonth$,				\
+! 		creditCardType$,		\
+! 		lastFourRoutingNo$,		\
+! 		lastFourAccount$,		\
+! 		accountType$,			\
+! 		accountName$,			\
+! 		CustomerName$,			\
+! 		CustomerID$,			\
+! 		CardID$,				\
+! 		defaultRec$,			\
+! 		defaultIOL$, ERR=*NEXT
 
 	ARCreditCard 		= _OBJ'ARCreditCard
 
-	! #236076 - 2019-02-27 RCS
 	READ DATA FROM defaultRec$ TO IOL = defaultIOL$
+	READ DATA FROM vaultRec$ to IOL = vaultIOL$
 	! fix for & and brackets in the data		
-	cHoldXml		= ArCreditCard'isXML
+	cHoldXml			= ArCreditCard'isXML
 	ArCreditCard'isXML	= isTRUE
-	CardHolderName$	= ARCreditCard'APSURLEncoding$(CardHolderName$)
-	Address1$		= ARCreditCard'APSURLEncoding$(Address1$)
-	Address2$		= ARCreditCard'APSURLEncoding$(Address2$)
-	City$			= ARCreditCard'APSURLEncoding$(City$)
+	CardHolderName$		= ARCreditCard'APSURLEncoding$(CardHolderName$)
+	Address1$			= ARCreditCard'APSURLEncoding$(Address1$)
+	Address2$			= ARCreditCard'APSURLEncoding$(Address2$)
+	City$				= ARCreditCard'APSURLEncoding$(City$)
 	ArCreditCard'isXML	= cHoldXml
-	defaultRec$		= REC(defaultIOL$)
-	
-	IF ARCreditCard {
+	defaultRec$			= REC(defaultIOL$)
 
-		retVal = ARCreditCard'ProcessAPSVault(	\
-						service$,				\
-						payType$,				\
-						guid$,					\
-						last4Nos$,				\
-						expYear$,				\
-						expMonth$,				\
-						creditCardType$,		\
-						lastFourRoutingNo$,		\
-						lastFouraccount$,		\
-						accountType$,			\
-						accountName$,			\
-						CustomerName$,			\
-						CustomerID$,			\
-						CardID$,				\ 
-						defaultRec$, 			\
-						defaultIOL$) ! PLW 2018-08-17 Ticket #236076
+	IF ARCreditCard {
+		retVal			= ARCreditCard'ProcessAPSVault(service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$)
+
+! 		retVal 			= ARCreditCard'ProcessAPSVault(	\
+! 							service$,				\
+! 							PaymentType$,			\
+! 							guid$,					\
+! 							last4Nos$,				\
+! 							expYear$,				\
+! 							expMonth$,				\
+! 							creditCardType$,		\
+! 							lastFourRoutingNo$,		\
+! 							lastFouraccount$,		\
+! 							accountType$,			\
+! 							accountName$,			\
+! 							CustomerName$,			\
+! 							CustomerID$,			\
+! 							CardID$,				\ 
+! 							defaultRec$, 			\
+! 							defaultIOL$)
 
 		! Save CreditCardGUID$ list to clean-up Vault for entries not in AR_CustomerCreditCard
-		IF retVal AND NOT(POS(guid$ = cGUIDList$)) {
-			cGUIDList$	+= guid$ + "," + payType$ + SEP
+		IF retVal AND NOT(POS(CreditCardGUID$ = cGUIDList$)) {
+			cGUIDList$	+= CreditCardGUID$ + "," + PaymentType$ + SEP
 		}
 		IF retVal <> retSUCCESS {
 			LastErrorNum$	= ARCreditCard'LastErrorNum$
@@ -1541,7 +1560,7 @@ ENTER APSvoid,APStype$,APSkey$,ERR=*NEXT
 	}
 	
 	! check edit state
-	eState=EVN("_OBJ'EditState",ERR=*NEXT)
+	eState				= EVN("_OBJ'EditState",ERR=*NEXT)
 	IF NOT(eState) AND NUL(cCreditCardRec$) {
 		retVal			= retFAILURE
 		LastErrorNum$	= "AR_531APSCreditCard_InvalidAPS"
@@ -1662,10 +1681,12 @@ ENTER APSvoid,APStype$,APSkey$,ERR=*NEXT
 	! set default flags for processing
 	ArCreditCard'isXML				= isFALSE
 	ArCreditCard'ProcessHostedForm	= isFALSE
+	
+	retVal	= ARCreditCard'CreateApiRequestStrings(ApiKey$,MainRequestString$,QueryRequestString$)
 
-	retVal	= ARCreditCard'CreateRequestStrings(ARPaymentType.D531APSMerchantID$,	\
-												ARPaymentType.D531APSPassword$,		\
-												MainRequestString$,QueryRequestString$)
+!	retVal	= ARCreditCard'CreateRequestStrings(ARPaymentType.D531APSMerchantID$,	\
+!												ARPaymentType.D531APSPassword$,		\
+!												MainRequestString$,QueryRequestString$)
 	if not(retVal) {
 		! invalid Merchant ID or password
 		LastErrorNum$	= ARCreditCard'LastErrorNum$
@@ -1812,7 +1833,7 @@ ENTER APSvoid,APStype$,APSkey$,ERR=*NEXT
 				CustomerVaultRequestString$			+= "&ccnumber="+CCnumber$
 				CustomerVaultRequestString$			+= "&ccexp="+CCexp$
 				
-				if amount=0 and ARPaymentType.D531APSRetailAccount$ <> "Y" {					! #236603 - 2018-05-15 RCS - makes it into a validate 
+				if amount = 0 and ARPaymentType.D531APSRetailAccount$ <> "Y" {					! #236603 - 2018-05-15 RCS - makes it into a validate 
 					CustomerVaultRequestString$		+= "&amount=0.00"							! validate
 					CustomerVaultRequestString$		+= "&type=validate"							! RCS #235036 - 2018-03-07
 					CustomerVaultRequestString$		+= "&stored_credential_indicator=stored"	! RCS #235036 - 2018-03-07

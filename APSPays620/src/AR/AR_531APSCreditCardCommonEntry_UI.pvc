@@ -214,23 +214,31 @@ BT_CREDITCARD:
 				%SaveCard		= ML_New.ctl'Visible							! RCS 2018-11-29 Ticket #236076
 
 ! *******
-				retVal			= cCreditCardBusObject'ProcessAPSVault(		\
-									vaultOp$,								\
-									PaymentType$,							\
-									CreditCardGUID$,						\
-									Last4UnencryptedCreditCardNos$,			\
-									ExpirationDateYear$,					\
-									ExpirationDateMonth$,					\
-									CardType$,								\
-									Last4BankRoutingNos$,					\
-									Last4BankAccountNos$,					\
-									BankAccountType$,						\
-									accountName$,							\
-									CustomerName$,							\
-									CustomerID$,							\
-									CardID$,								\
-									defaultRec$, 							\
-									defaultIOL$)  								! PLW 2018-08-17 Ticket #236076
+
+				vTmpIOL$		= CPL ("IOLIST PaymentType$,CreditCardGUID$,Last4UnencryptedCreditCardNos$,ExpirationDateYear$,ExpirationDateMonth$,CardType$,Last4BankRoutingNos$,Last4BankAccountNos$,BankAccountType$,accountName$,CustomerName$,CustomerID$,CardID$")
+				vTmpRec$		= rec(vTmpIOL$)
+				cVaultIOL$		= cCreditCardBusObject'vaultIOL$
+				
+				retVal			= cCreditCardBusObject'ProcessAPSVault(vaultOp$,vTmpRec$,cVaultIOL$,defaultRec$,defaultIOL$)
+				
+				
+! 				retVal			= cCreditCardBusObject'ProcessAPSVault(		\
+! 									vaultOp$,								\
+! 									PaymentType$,							\
+! 									CreditCardGUID$,						\
+! 									Last4UnencryptedCreditCardNos$,			\
+! 									ExpirationDateYear$,					\
+! 									ExpirationDateMonth$,					\
+! 									CardType$,								\
+! 									Last4BankRoutingNos$,					\
+! 									Last4BankAccountNos$,					\
+! 									BankAccountType$,						\
+! 									accountName$,							\
+! 									CustomerName$,							\
+! 									CustomerID$,							\
+! 									CardID$,								\
+! 									defaultRec$, 							\
+! 									defaultIOL$)  								! PLW 2018-08-17 Ticket #236076
 				%SaveCard$		= $$
 			}
 			! *** check to verify that if not ACH that the ACH fields are null.  #226341 - 2017-09-20 RCS

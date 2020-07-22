@@ -93,26 +93,30 @@ BT_EDIT_CARD:
 				accountName$	= custCard.CardholderName$									! RCS 2018-11-21 Ticket #236076
 				CustomerID$		= STP(cCurrentARDivisionNo$)+"-"+STP(cCurrentCustomerNo$)	! PLW 2018-08-17 Ticket #236076
 				IF CustomerID$	= "-" { 													! PLW 2018-08-17 Ticket #236076
-					CustomerID$	= isNLL$													! PLW 2018-08-17 Ticket #236076
+					CustomerID$	= isNULL$													! PLW 2018-08-17 Ticket #236076
 				}																			! PLW 2018-08-17 Ticket #236076
 				CardID$			= CreditCardID$ 											! PLW 2018-08-17 Ticket #236076
+				cVaultIOL$		= coBusiness'ARCreditCard'vaultIOL$
+				vaultRec$		= rec(cVaultIOL$)
 
-				retVal			= coBusiness'ARCreditCard'ProcessAPSVault(vaultOp$,		\
-														PaymentType$,					\
-														CreditCardGUID$,				\
-														Last4UnencryptedCreditCardNos$,	\
-														ExpirationDateYear$,			\
-														ExpirationDateMonth$,			\
-														CardType$,						\
-														Last4BankRoutingNos$,			\
-														Last4BankAccountNos$,			\
-														BankAccountType$,				\
-														accountName$,					\
-														CustomerName$,					\
-														CustomerID$,					\
-														CardID$,						\ 
-														defaultRec$, 					\
-														defaultIOL$ ) 						! PLW 2018-08-17 Ticket #236076, updated 2018-10-16 RCS to add defaultRec$, defaultIOL$
+				retVal			= coBusiness'ARCreditCard'ProcessAPSVault(vaultOp$,vaultRec$,cVaultIOL$,defaultRec$,defaultIOL$)
+
+! 				retVal			= coBusiness'ARCreditCard'ProcessAPSVault(vaultOp$,		\
+! 														PaymentType$,					\
+! 														CreditCardGUID$,				\
+! 														Last4UnencryptedCreditCardNos$,	\
+! 														ExpirationDateYear$,			\
+! 														ExpirationDateMonth$,			\
+! 														CardType$,						\
+! 														Last4BankRoutingNos$,			\
+! 														Last4BankAccountNos$,			\
+! 														BankAccountType$,				\
+! 														accountName$,					\
+! 														CustomerName$,					\
+! 														CustomerID$,					\
+! 														CardID$,						\ 
+! 														defaultRec$, 					\
+! 														defaultIOL$ ) 						! PLW 2018-08-17 Ticket #236076, updated 2018-10-16 RCS to add defaultRec$, defaultIOL$
 
 				SWITCH retVal
 					CASE retSUCCESS
@@ -223,23 +227,27 @@ BT_NEW_CARD:
 			CardID$			= CreditCardID$ ! PLW 2018-08-17 Ticket #236076
 			CustomerName$	= custcard.CardholderName$ ! PLW 2018-08-17 Ticket #236076
 			accountName$	= custcard.CardholderName$ ! RCS 2018-11-21 Ticket #236076
+			cVaultIOL$		= coBusiness'ARCreditCard'vaultIOL$
+			vaultRec$		= rec(cVaultIOL$)
 
-			retVal			= coBusiness'ARCreditCard'ProcessAPSVault("CREATE",			\
-														PaymentType$,					\
-														CreditCardGUID$,				\
-														Last4UnencryptedCreditCardNos$,	\
-														ExpirationDateYear$,			\
-														ExpirationDateMonth$,			\
-														CardType$,						\
-														Last4BankRoutingNos$,			\
-														Last4BankAccountNos$,			\
-														BankAccountType$,				\
-														accountName$,					\
-														CustomerName$,					\
-														CustomerID$,					\
-														CardID$,						\ 
-														defaultRec$, 					\
-														defaultIOL$ ) ! PLW 2018-08-17 Ticket #236076, updated 2018-10-16 RCS to add defaultRec$, defaultIOL$
+			retVal			= coBusiness'ARCreditCard'ProcessAPSVault("CREATE",vaultRec$,cVaultIOL$,defaultRec$,defaultIOL$)
+			
+! 			retVal			= coBusiness'ARCreditCard'ProcessAPSVault("CREATE",			\
+! 														PaymentType$,					\
+! 														CreditCardGUID$,				\
+! 														Last4UnencryptedCreditCardNos$,	\
+! 														ExpirationDateYear$,			\
+! 														ExpirationDateMonth$,			\
+! 														CardType$,						\
+! 														Last4BankRoutingNos$,			\
+! 														Last4BankAccountNos$,			\
+! 														BankAccountType$,				\
+! 														accountName$,					\
+! 														CustomerName$,					\
+! 														CustomerID$,					\
+! 														CardID$,						\ 
+! 														defaultRec$, 					\
+! 														defaultIOL$ ) ! PLW 2018-08-17 Ticket #236076, updated 2018-10-16 RCS to add defaultRec$, defaultIOL$
 
 			SWITCH retVal
 				CASE retSUCCESS
