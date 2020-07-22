@@ -184,7 +184,7 @@ ENTER (APS531key$)
 
 	SWITCH CreditCardEnabled$
 		CASE isYES$, "A", "B"
-			IF NUL(D531APSMerchantID$) OR NUL(D531APSPassword$) {
+			IF NUL(D531APSMerchantID$) OR NUL(D531APSPassword$) OR NUL(D531APSApiKey$) {
 				_OBJ'SetValueNoValidate("CreditCardSetupTested$",	isNO$)
 			}
 			BREAK
@@ -304,110 +304,110 @@ RETURN retVal
 
 WRITE_REC:
 
-	IF cAPSActivated {
+	IF NOT(cAPSActivated) {
+		retVal=_OBJ'Write(FROM "AR_531APSPaymentType_bus_BASE")
+		RETURN retVal
+  	}
 
-		retVal	= retSUCCESS
+	retVal		= retSUCCESS
 
-		IF PaymentMethod$ = "R" OR PaymentMethod$ = "A" {
+	IF PaymentMethod$ = "R" OR PaymentMethod$ = "A" {
 
-			IF nul(D531APSApiKey$) {						! HS-T47 - 2020-07-16 - RCS
-				retVal			= retFAILURE
-				LastErrorNum$	= "AR_531APSInvalidMerchant"
-				LastErrorMsg$	= MSG("AR_531APSInvalidMerchant")
+		IF nul(D531APSApiKey$) {						! HS-T47 - 2020-07-16 - RCS
+			retVal			= retFAILURE
+			LastErrorNum$	= "AR_531APSInvalidMerchant"
+			LastErrorMsg$	= MSG("AR_531APSInvalidMerchant")
+		}
+
+		IF retVal {
+
+			IF NOT(coARCreditCard) {
+				coARCreditCard	= NEW("AR_CreditCard", coSession, ERR=*NEXT)
 			}
 
-			IF retVal {
+			IF coARCreditCard {
 
-				IF NOT(coARCreditCard) {
-					coARCreditCard	= NEW("AR_CreditCard", coSession, ERR=*NEXT)
-				}
+	 			IF D531APSMerchantID$ <> cOrigEncryptedMerchantID$ AND NOT(NUL(D531APSMerchantID$)) {
+	 				! D531APSMerchantID$ has been re-entered and is now unencrypted
+					cUnencryptedAPSMerchantID$	= D531APSMerchantID$
+	 				_OBJ'EncryptPassword((D531APSMerchantID$), D531APSMerchantID$)
+	  			} ELSE {
+					cUnencryptedAPSMerchantID$	= OrigUnencryptedMerchantID$
+	  			}
+	  			IF D531APSPassword$ <> cOrigEncryptedAPSPassword$ AND NOT(NUL(D531APSPassword$)) {
+	 				! D531APSPassword$ has been re-entered and is now unencrypted
+					cUnencryptedD531APSPassword$	= D531APSPassword$
+	 				_OBJ'EncryptPassword((D531APSPassword$),EncryptedAPSPassword$)
+	 				_OBJ'SetValue("D531APSPassword$", EncryptedAPSPassword$)
+	  			} ELSE {
+					cUnencryptedD531APSPassword$	= OrigUnencryptedAPSPassword$
+	  			}
 
-				IF coARCreditCard {
+	  		} ELSE {
+				retVal			= retFAILURE
+				LastErrorNum$	= coSession'LastErrorNum$
+				LastErrorMsg$	= coSession'LastErrorMsg$
+			}
 
-		 			IF D531APSMerchantID$ <> cOrigEncryptedMerchantID$ AND NOT(NUL(D531APSMerchantID$)) {
-		 				! D531APSMerchantID$ has been re-entered and is now unencrypted
-						cUnencryptedAPSMerchantID$	= D531APSMerchantID$
-		 				_OBJ'EncryptPassword((D531APSMerchantID$), D531APSMerchantID$)
-		  			} ELSE {
-						cUnencryptedAPSMerchantID$	= OrigUnencryptedMerchantID$
-		  			}
-		  			IF D531APSPassword$ <> cOrigEncryptedAPSPassword$ AND NOT(NUL(D531APSPassword$)) {
-		 				! D531APSPassword$ has been re-entered and is now unencrypted
-						cUnencryptedD531APSPassword$	= D531APSPassword$
-		 				_OBJ'EncryptPassword((D531APSPassword$),EncryptedAPSPassword$)
-		 				_OBJ'SetValue("D531APSPassword$", EncryptedAPSPassword$)
-		  			} ELSE {
-						cUnencryptedD531APSPassword$	= OrigUnencryptedAPSPassword$
-		  			}
-
-		  		} ELSE {
-					retVal			= retFAILURE
-					LastErrorNum$	= coSession'LastErrorNum$
-					LastErrorMsg$	= coSession'LastErrorMsg$
-  				}
-
-		  		IF retVal {
- 					IF NOT(EditState 	= edtNEW) {
-
-						IF UCS(OrigUnencryptedMerchantID$) <> UCS(cUnencryptedAPSMerchantID$) {
-							! if APS activated, we do not have SPS credit cards any more
-							! do not allow to change merchant ID if there are credit cards
-							! we should allow this change only if the fix button was pressed
-							IF FixCredentials {
-								retVal	= retSUCCESS
-							} ELSE {
- 								retVal	= coARCreditCard'CheckARPaymentTypeNotUsed(PaymentType$)
-							}
+	  		IF retVal {
+				IF NOT(EditState 	= edtNEW) {
+					IF UCS(OrigUnencryptedMerchantID$) <> UCS(cUnencryptedAPSMerchantID$) {
+						! if APS activated, we do not have SPS credit cards any more
+						! do not allow to change merchant ID if there are credit cards
+						! we should allow this change only if the fix button was pressed
+						IF FixCredentials {
+							retVal	= retSUCCESS
+						} ELSE {
+							retVal	= coARCreditCard'CheckARPaymentTypeNotUsed(PaymentType$)
+						}
+						IF NOT(retVal) {
+							LastErrorNum$		= "SY_531APSMerchantIDChange"
+							LastErrorMsg$		= MSG("SY_531APSMerchantIDChange")
+						} ELSE {
+							retVal = coARCreditCard'LockConvFiles()
 							IF NOT(retVal) {
-								LastErrorNum$		= "SY_531APSMerchantIDChange"
-								LastErrorMsg$		= MSG("SY_531APSMerchantIDChange")
-							} ELSE {
-								retVal = coARCreditCard'LockConvFiles()
-								IF NOT(retVal) {
-									LastErrorNum$	= coARCreditCard'LastErrorNum$
-									LastERrorMsg$	= coARCreditCard'LastErrorMsg$
-								}
+								LastErrorNum$	= coARCreditCard'LastErrorNum$
+								LastERrorMsg$	= coARCreditCard'LastErrorMsg$
 							}
 						}
 					}
-		  		}
-		  		IF NOT(retVal) {
-					D531APSMerchantID$	= cUnencryptedAPSMerchantID$
-					D531APSPassword$	= cUnencryptedD531APSPassword$
 				}
-			}
-
-			IF retVal {
-				retVal	= coARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$), (D531APSApiKey$))	! RCS #236076 - 2018-10-10
-				IF retVal {
-					CreditCardSetupTested$	= isYES$
-				} ELSE {
-					retVal			= retFAILURE
-					LastErrorNum$	= "AR_531APSInvalidMerchant"
-					LastErrorMsg$	= MSG("AR_531APSInvalidMerchant")
-				}
-			}
-		}
-
-		if nul(D531APSSendEmail$) { 	D531APSSendEmail$		= isNO$ }	! RCS #226560 - 2017-07-28, #231618 changed to N by default per Zac 2018-03-27
-		if nul(D531APSRequireCVV$) { 	D531APSRequireCVV$		= isYES$ }	! RCS #237825 - 2018-05-23, changed to Y by default per Zac
-		if nul(D531APSRetailAccount$) { D531APSRetailAccount$	= isNO$ }
-		if nul(D531APSUseEmvDevice$) {	D531APSUseEmvDevice$	= isNO$ }
-		IF not(PaymentMethod$		= "R") {	
-			D531APSRequireCVV$		= isNO$	! RCS #237825 - 2018-05-23 for non cRedit card payment types.
-			D531APSUseEmvDevice$	= isNO$	! RCS #236076 - 2018-12-23
-			D531APSRetailAccount$	= isNO$	! RCS #237825 - 2018-12-23
-		}
-		IF retVal {
-			retVal					= _OBJ'Write(FROM "SY_Maint")
-			IF NOT(retVal) AND POS(PaymentMethod$="RA") {				! PLW 2016-03-21
+	  		}
+	  		IF NOT(retVal) {
 				D531APSMerchantID$	= cUnencryptedAPSMerchantID$
 				D531APSPassword$	= cUnencryptedD531APSPassword$
 			}
 		}
 
-	} ELSE {
-		retVal=_OBJ'Write(FROM "AR_531APSPaymentType_bus_BASE")
+		IF retVal {
+			retVal	= coARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$), (D531APSApiKey$))	! RCS #236076 - 2018-10-10
+			IF retVal {
+				CreditCardSetupTested$	= isYES$
+			} ELSE {
+				retVal			= retFAILURE
+				LastErrorNum$	= "AR_531APSInvalidMerchant"
+				LastErrorMsg$	= MSG("AR_531APSInvalidMerchant")
+			}
+		}
 	}
+
+	if nul(D531APSSendEmail$) { 	D531APSSendEmail$		= isNO$ }	! RCS #226560 - 2017-07-28, #231618 changed to N by default per Zac 2018-03-27
+	if nul(D531APSRequireCVV$) { 	D531APSRequireCVV$		= isYES$ }	! RCS #237825 - 2018-05-23, changed to Y by default per Zac
+	if nul(D531APSRetailAccount$) { D531APSRetailAccount$	= isNO$ }
+	if nul(D531APSUseEmvDevice$) {	D531APSUseEmvDevice$	= isNO$ }
+	IF not(PaymentMethod$		= "R") {	
+		D531APSRequireCVV$		= isNO$	! RCS #237825 - 2018-05-23 for non cRedit card payment types.
+		D531APSUseEmvDevice$	= isNO$	! RCS #236076 - 2018-12-23
+		D531APSRetailAccount$	= isNO$	! RCS #237825 - 2018-12-23
+	}
+	IF retVal {
+		retVal					= _OBJ'Write(FROM "SY_Maint")
+		IF NOT(retVal) AND POS(PaymentMethod$="RA") {
+			D531APSMerchantID$	= cUnencryptedAPSMerchantID$
+			D531APSPassword$	= cUnencryptedD531APSPassword$
+		}
+	}
+
+
 RETURN retVal
 !

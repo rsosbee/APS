@@ -16,10 +16,11 @@ DEF CLASS "AR_531APSPaymentType_ui" CREATE REQUIRED DELETE REQUIRED
 	
 	! Local/Private Functions (Methods)
 	FUNCTION LOCAL BT_FIX()								BT_FIX
-	FUNCTION LOCAL ChangeML_APSPassword()				CHANGE_ML_APS_PASSWORD
-	FUNCTION LOCAL ChangeD531APSMerchantID()			CHANGE_APS_MERCHANT_ID
+!	FUNCTION LOCAL ChangeML_APSPassword()				CHANGE_ML_APS_PASSWORD
+!	FUNCTION LOCAL ChangeD531APSMerchantID()			CHANGE_APS_MERCHANT_ID
 	FUNCTION LOCAL ChangePaymentMethod()				CHANGE_PAYMENT_METHOD
 	FUNCTION LOCAL ChangePreAuthorizationTerm()			CHANGE_PREAUTHORIZIATIONTERM
+	FUNCTION LOCAL ChangeD531APSApiKey()				CHANGE_D531_APS_API_KEY
 	FUNCTION LOCAL ChangeD531APSRequireCVV()			CHANGE_D531_APS_REQUIRE_CVV
 	FUNCTION LOCAL ChangeD531APSUseEmvDevice()			CHANGE_D531_APS_USE_EMV_DEVICE
 	FUNCTION LOCAL CheckForEnable()						CHECK_FOR_ENABLE
@@ -68,6 +69,29 @@ CHANGE_APS_MERCHANT_ID:
 
 RETURN retVal
 !
+
+CHANGE_D531_APS_API_KEY:
+	
+	retVal				= coBusiness'SetValue("D531APSApiKey$",D531APSAPIKey$)
+
+	SWITCH retVal
+ 		CASE retSUCCESS
+			refresh_flg	= isTRUE
+ 		BREAK
+ 		CASE retWARNING
+ 			coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+			NEXT_ID		= ID
+ 		BREAK
+ 		CASE retFAILURE
+ 			coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+ 			! re-set screen value.  The SetValue() above will re-set VirtualTerminalID$ to the encrypted value
+			D531APSAPIKey$	= isNULL$
+ 		BREAK
+ 	END SWITCH
+
+RETURN retVal
+!
+
 
 CHANGE_D531_APS_REQUIRE_CVV:	! RCS #237825 - 2018-05-23
 	
@@ -241,7 +265,7 @@ POST_LOAD:
 			SHOW	CONTROL DISPLAYAVSCVVRESPONSE.ctl
 			ENABLE	CONTROL PREAUTHORIZIATIONTERM.ctl 		! #231968 - 2018-02-12 RCS
 			IF cAPSAllowChangeCredentials {
-				SHOW CONTROL BT_FIX.CTL
+			!	SHOW CONTROL BT_FIX.CTL
 			}
 		}
 		_OBJ'CheckForEnable()
