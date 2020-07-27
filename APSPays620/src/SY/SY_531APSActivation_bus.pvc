@@ -252,13 +252,21 @@ UPDATE_URLS: 										! #232007 - Moved to BUS for C2P processing.
 	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
 	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
 
-	! APS EMV Portal URL #236076 - 2018-12-26 RCS
-	tmpRet				= URLMaintObj'SetKey("APS C2P EMV")
-	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS C2P EMV Gateway URL") }
-	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","http://localhost:3000/emv/startNewTransaction") }	
+	! APS EMV Portal URL
+	tmpRet				= URLMaintObj'SetKey("APS EMV")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS EMV Gateway URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/asyncstatus") }	
 	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
 	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
 
+	! APS EMV Device Portal for IP devices.
+	tmpRet				= URLMaintObj'SetKey("APS EMV DEVICES")
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URLDesc$","APS EMV Devices URL") }
+	IF tmpRet { tmpRet	= URLMaintObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/v2/devices") }	
+	IF tmpRet { tmpRet	= URLMaintObj'WRITE() }
+	IF NOT(tmpRet) { coSession'UI'MessageBox$(URLMaintObj'LastErrorNum$,URLMaintObj'LastErrorMsg$) }
+
+	
 	DROP OBJECT URLMaintObj,ERR=*NEXT
 	URLMaintObj			= 0
 	

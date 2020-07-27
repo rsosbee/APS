@@ -52,13 +52,8 @@ DEF CLASS "SY_531APSTerminal_ui" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION LOCAL BT_Remove()										BT_REMOVE
 	FUNCTION LOCAL BT_Update()										BT_UPDATE
 	
-	FUNCTION LOCAL ChangeComPortNumber()							CHANGE_COMPORTNUMBER
 	FUNCTION local ChangePaymentDevice()							CHANGE_PAYMENT_DEVICE
 	FUNCTION local ChangePaymentType()								CHANGE_PAYMENT_TYPE
-	FUNCTION LOCAL ChangeProxyAuthRequired()						CHANGE_PROXY_AUTH_REQUIRED
-	FUNCTION LOCAL ChangeProxyServer()								CHANGE_PROXY_SERVER
-	FUNCTION LOCAL ChangeML_ProxyPassword()							CHANGE_ML_PROXY_PASSWORD
-	FUNCTION LOCAL ChangeProxyUserName()							CHANGE_PROXY_USER_NAME
 	FUNCTION LOCAL ChangeTerminalCode()								CHANGE_TERMINAL_CODE
 	FUNCTION LOCAL ChangeWorkstationID()							CHANGE_WORKSTATION_ID
 	FUNCTION LOCAL CheckButtons()									CHECK_BUTTONS
@@ -169,7 +164,7 @@ BT_ACTIVATE:
 		! New Terminal record must be saved before activation can occur.
 		answer$=coSession'UI'MessageBox$("SY_NewCompActivation.Y",MSG("SY_NewCompActivation.Y"))
 		IF answer$	= msgYES$ {
-			retVal=coBusiness'Write()
+			retVal	= coBusiness'Write()
 			IF NOT(retVal) {
 				coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
 				tmpRetVal		= _OBJ'SetFocusFailedID()
@@ -194,7 +189,7 @@ BT_ACTIVATE:
 					RETURN retVal
 				}
 			}
-			IF answer$=msgNO$ {
+			IF answer$	= msgNO$ {
 				! Recall the original record and update the UI.
 				retVal	= _OBJ'KeyChange(tmpTerminalCode$,isTRUE)
 				PREINPUT NEXT BT_Activate.ctl
@@ -212,9 +207,9 @@ BT_ACTIVATE:
 	! 4.3	..\web\config\config.private.json
 	
 	! Insure tool is in the workstation folder
-	if coSession'CS {
-		retVal			= coBusiness'CopyFile(cAPSToolSource$,cAPSToolDest$)
-	}
+!	if coSession'CS {
+!		retVal			= coBusiness'CopyFile(cAPSToolSource$,cAPSToolDest$)
+!	}
 
 	coSession'UI'ProgressBar("init", "APS Payments", "Transferring EMV Terminal files", 0)
 	wait 1 ! force screen to update.
@@ -223,12 +218,12 @@ BT_ACTIVATE:
 	coSession'UI'ProgressBar("update","APS Payments","Creating Workstation EMV Folder...",0,"force")
 	wait .1 ! force screen to update.
 
-	retVal				= coBusiness'CreateWorkstationDirectory(TerminalCode$)
-	if not(retVal) {
-		coSession'UI'ProgressBar("close")
-		coSession'UI'MessageBox$("SY_531APSUnable" , MSG("SY_531APSUnable", "APS EMV Client directory"))
-		return retFAILURE
-	}
+!	retVal				= coBusiness'CreateWorkstationDirectory(TerminalCode$)
+!	if not(retVal) {
+!		coSession'UI'ProgressBar("close")
+!		coSession'UI'MessageBox$("SY_531APSUnable" , MSG("SY_531APSUnable", "APS EMV Client directory"))
+!		return retFAILURE
+!	}
 	ARCreditCard		= coBusiness'ARCreditCard
 
 	! Step 2 - Silent install..
@@ -241,25 +236,25 @@ BT_ACTIVATE:
 		RETURN retFAILURE
 	}
 	
-	retVal				= _obj'Step2()		! try to install the client software.
-	if not(retVal) {
-		coSession'UI'MessageBox$("SY_531APSUnable" , MSG("SY_531APSUnable", "APS EMV Client Software"))
-	}
+!	retVal				= _obj'Step2()		! try to install the client software.
+!	if not(retVal) {
+!		coSession'UI'MessageBox$("SY_531APSUnable" , MSG("SY_531APSUnable", "APS EMV Client Software"))
+!	}
 	
 	! Step 3 - copy the root folders to the terminal folders.
 
 	coSession'UI'ProgressBar("update","APS Payments","Stopping Client EMV programs...",0,"force")
 	wait .1 ! force screen to update.
 
-	stopFile$			= "stop.bat"
-	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV"
+!	stopFile$			= "stop.bat"
+!	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV"
 
- 	cSRCDirectory$		= wdx$+"..\ASI\EMV"
- 	cDSTDirectory$		= wdx$+"..\ASI\EMV\"
+!	cSRCDirectory$		= wdx$+"..\ASI\EMV"
+!	cDSTDirectory$		= wdx$+"..\ASI\EMV\"
  	
- !	retVal				= _obj'Step3()	! NCU
+!	retVal				= _obj'Step3()	! NCU
  
- 	retVal				= _obj'Step4()	! Step 4: Write the configuration files
+! 	retVal				= _obj'Step4()	! Step 4: Write the configuration files
  
 	retVal			= coBusiness'FIND(TerminalCode$)
 	IF retVal {
@@ -358,7 +353,7 @@ BT_REMOVE:
 	}
 	
 	! The following code reset the current Terminal for further edits.
-	TerminalFH=_OBJ'OpenTable("SY_531APSEmvTerminal",pthSYSTEM$)
+	TerminalFH		= _OBJ'OpenTable("SY_531APSEmvTerminal",pthSYSTEM$)
 	IF TerminalFH {
 		READ (TerminalFH,KEY=tmpTerminalKey$,REC=tmp$,ERR=*NEXT)
 		IF NUL(tmp.TerminalKey$) {
@@ -366,7 +361,7 @@ BT_REMOVE:
 		}
 		CLOSE (TerminalFH,ERR=*NEXT)
 	}
-	retVal=coBusiness'GetValue("TerminalKey$",TerminalKey$)
+	retVal			= coBusiness'GetValue("TerminalKey$",TerminalKey$)
 	IF NUL(TerminalKey$) {
 		retVal		= _OBJ'BT_Cancel()
 	} ELSE {
@@ -448,25 +443,25 @@ BT_UPDATE:
 		RETURN retFAILURE
 	}
 	
-	retVal				= _obj'Step2()		! try to install the client software.
-	if not(retVal) {
-		coSession'UI'MessageBox$("SY_531APSUnable" , MSG("SY_531APSUnable", "APS EMV Client Software"))
-	}
+!	retVal				= _obj'Step2()		! try to install the client software.
+!	if not(retVal) {
+!		coSession'UI'MessageBox$("SY_531APSUnable" , MSG("SY_531APSUnable", "APS EMV Client Software"))
+!	}
 	
 	! Step 3 - copy the root folders to the terminal folders.
 
 	coSession'UI'ProgressBar("update","APS Payments","Stopping Client EMV programs...",0,"force")
 	wait .1 ! force screen to update.
 
-	stopFile$			= "stop.bat"
-	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV"
+!	stopFile$			= "stop.bat"
+!	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV"
 
- 	cSRCDirectory$		= wdx$+"..\ASI\EMV"
- 	cDSTDirectory$		= wdx$+"..\ASI\EMV\"
+!	cSRCDirectory$		= wdx$+"..\ASI\EMV"
+!	cDSTDirectory$		= wdx$+"..\ASI\EMV\"
  	
- !	retVal				= _obj'Step3()	! NCU
+!	retVal				= _obj'Step3()	! NCU
  
- 	retVal				= _obj'Step4()	! Step 4: Write the configuration files
+! 	retVal				= _obj'Step4()	! Step 4: Write the configuration files
  
 	retVal			= coBusiness'FIND(TerminalCode$)
 	IF retVal {
@@ -476,25 +471,6 @@ BT_UPDATE:
 	}	
 
 RETURN 
-!
-
-CHANGE_COMPORTNUMBER:
-
-	ComPortNumber	= abs(int(ComPortNumber))
-	
-	if ComPortNumber < 1 or ComPortNumber > 99 {
-		coSession'UI'MessageBox$("","A COM port number from 1 to 99 is required")
-		retVal		= retFAILURE
-	} else {
-		cPort$		= "COM"+STR(ComPortNumber)
-		Port$		= cPort$
-		coBusiness'SetValue("Port$",cPort$)
-		coBusiness'SetValue("ComPortNumber",ComPortNumber)
-		retVal		= retSUCCESS
-		refresh_flg	= isTRUE
-	}
-	
-RETURN retVal
 !
 
 CHANGE_PAYMENT_DEVICE:
@@ -561,28 +537,6 @@ CHANGE_PAYMENT_TYPE:
 RETURN retVal
 !
 
-CHANGE_PROXY_AUTH_REQUIRED:
-	
-	coBusiness'SetValue("ProxyAuthRequired$",	ProxyAuthRequired$)
-	coBusiness'GetValue("ProxyUserName$", 		ProxyUserName$)
-	coBusiness'GetValue("ProxyPassword$", 		ProxyPassword$)
-	_OBJ'CheckForEnable()
-	refresh_flg			= isTRUE
-	retVal				= retSUCCESS
-	
-RETURN retVal
-!
-
-CHANGE_PROXY_SERVER:
-
-	coBusiness'SetValue("ProxyServer$",			ProxyServer$)
-	_OBJ'CheckForEnable()
-	refresh_flg			= isTRUE
-	retVal				= retSUCCESS
-	
-RETURN retVal
-!
-
 CHANGE_TERMINAL_CODE:
 	
 	retVal			= _OBJ'KeyChange(TerminalCode$,isTRUE)
@@ -595,34 +549,6 @@ CHANGE_TERMINAL_CODE:
 	} ELSE {
 		_OBJ'BT_Cancel()
 	}
-	
-RETURN retVal
-!
-
-CHANGE_ML_PROXY_PASSWORD:
-	password$		= ML_ProxyPassword$
-	retVal			= coBusiness'SetValue("ProxyPassword$",password$)
-	SWITCH retVal
- 		CASE retSUCCESS
-			cUnencryptedProxyPassword$	= ML_ProxyPassword$
- 		BREAK
- 		CASE retWARNING
- 			coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
-			NEXT_ID	= ID
- 		BREAK
- 		CASE retFAILURE
- 			coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
- 			! re-set screen value.  The SetValue() above will re-set ProxyPassword to the encrypted value
-			ML_ProxyPassword$			= cUnencryptedProxyPassword$
- 		BREAK
- 	END SWITCH
-RETURN retVal
-!
-
-CHANGE_PROXY_USER_NAME:
-	
-	retVal		= coBusiness'SetValue("ProxyUserName$",	ProxyUserName$)
-
 	
 RETURN retVal
 !
@@ -650,31 +576,31 @@ RETURN retSUCCESS
 
 CHECK_FOR_ENABLE:
 	
-	_OBJ'SetControlState("PROXY.grp$", ctlHIDE)
-	SWITCH ProxyServer$
-		CASE isYES$
-			_OBJ'SetControlState("PROXY.grp$", ctlSHOW)
-			_OBJ'SetControlState("PROXY.grp$", ctlENABLE)
-			SWITCH ProxyAuthRequired$
-				CASE isYES$
-					_OBJ'SetControlState("PROXYAUTH.grp$", ctlSHOW)
-					_OBJ'SetControlState("PROXYAUTH.grp$", ctlENABLE)
-					BREAK
-				DEFAULT
-					_OBJ'SetControlState("PROXYAUTH.grp$", ctlDISABLE)
-					_OBJ'SetControlState("PROXYAUTH.grp$", ctlHIDE)
-					BREAK
-			END SWITCH
-			BREAK
-		DEFAULT
-			_OBJ'SetControlState("PROXY.grp$", ctlDISABLE)
-			_OBJ'SetControlState("PROXY.grp$", ctlHIDE)
-			BREAK
-	END SWITCH
+! 	_OBJ'SetControlState("PROXY.grp$", ctlHIDE)
+! 	SWITCH ProxyServer$
+! 		CASE isYES$
+! 			_OBJ'SetControlState("PROXY.grp$", ctlSHOW)
+! 			_OBJ'SetControlState("PROXY.grp$", ctlENABLE)
+! 			SWITCH ProxyAuthRequired$
+! 				CASE isYES$
+! 					_OBJ'SetControlState("PROXYAUTH.grp$", ctlSHOW)
+! 					_OBJ'SetControlState("PROXYAUTH.grp$", ctlENABLE)
+! 					BREAK
+! 				DEFAULT
+! 					_OBJ'SetControlState("PROXYAUTH.grp$", ctlDISABLE)
+! 					_OBJ'SetControlState("PROXYAUTH.grp$", ctlHIDE)
+! 					BREAK
+! 			END SWITCH
+! 			BREAK
+! 		DEFAULT
+! 			_OBJ'SetControlState("PROXY.grp$", ctlDISABLE)
+! 			_OBJ'SetControlState("PROXY.grp$", ctlHIDE)
+! 			BREAK
+! 	END SWITCH
 	
-	cUnencryptedProxyPassword$	= isNULL$
-	_OBJ'DecryptPassword((ProxyPassword$),ML_ProxyPassword$)
-	cUnencryptedProxyPassword$	= ML_ProxyPassword$
+!	cUnencryptedProxyPassword$	= isNULL$
+!	_OBJ'DecryptPassword((ProxyPassword$),ML_ProxyPassword$)
+!	cUnencryptedProxyPassword$	= ML_ProxyPassword$
 	
 RETURN retSUCCESS
 !
@@ -807,9 +733,9 @@ POST_READ_REC:
 	}
 	cOrigPaymentType$	= PaymentType$
 	cOrigPaymentDesc$	= PaymentDesc$
-	cOrigProxyUserName$	= ProxyUserName$
-	cOrigProxyPassword$	= ProxyPassword$
-	cOrigSSLHashKey$	= SSLHashKey$
+!	cOrigProxyUserName$	= ProxyUserName$
+!	cOrigProxyPassword$	= ProxyPassword$
+!	cOrigSSLHashKey$	= SSLHashKey$
 	_obj'CheckForEnable()
 	
 RETURN retVal

@@ -2901,7 +2901,9 @@ PROCESS_SECURE_HTTP:
 
 	WriteFailed			= isTRUE, response$ = coHTTP'DownloadString$(hostString$,ERR=*NEXT); WriteFailed	= isFALSE
 	
-	if nul(Response$) { _OBJ'WriteLog("APS Response"+Action$,"Connection failed: "+msg(-1)+CrLf$+"Response: "+Response$) }	! #230282 - 2017-11-13 RCS, 2018-12-19
+	if nul(Response$) { 
+		_OBJ'WriteLog("APS Response"+Action$,"Connection failed: "+msg(-1)+CrLf$+"Response: "+Response$) 
+	}	! #230282 - 2017-11-13 RCS, 2018-12-19
 
 	IF NOT(WriteFailed) {
 	 	IF coSession'UI AND NOT(coSession'WebEngine) {
