@@ -46,11 +46,8 @@ DEF CLASS "SY_531APSTerminal_ui" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION LOCAL BT_Accept()										BT_ACCEPT
 	FUNCTION LOCAL BT_Activate()									BT_ACTIVATE
 	FUNCTION LOCAL BT_Cancel()										BT_CANCEL
-	FUNCTION LOCAL BT_Explorer()									BT_EXPLORER
 	FUNCTION LOCAL BT_GetWorkstationName()							BT_GET_WORKSTATION_NAME
-	FUNCTION LOCAL BT_Loc_Browse_Main()								BT_LOC_BROWSE
 	FUNCTION LOCAL BT_Remove()										BT_REMOVE
-	FUNCTION LOCAL BT_Update()										BT_UPDATE
 	
 	FUNCTION local ChangePaymentDevice()							CHANGE_PAYMENT_DEVICE
 	FUNCTION local ChangePaymentType()								CHANGE_PAYMENT_TYPE
@@ -58,11 +55,6 @@ DEF CLASS "SY_531APSTerminal_ui" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION LOCAL ChangeWorkstationID()							CHANGE_WORKSTATION_ID
 	FUNCTION LOCAL CheckButtons()									CHECK_BUTTONS
 	FUNCTION LOCAL CheckForEnable()									CHECK_FOR_ENABLE
-	
-	FUNCTION LOCAL DirectoryCheck(path$,pathFULL$)					DIRECTORY_CHECK
-	FUNCTION LOCAL DirectoryErase(path$,existingPath$)				DIRECTORY_ERASE
-	
-	FUNCTION LOCAL GetUNCNamedDrive(drive$,path$)					GET_UNC_NAMED_DRIVE
 	
 	FUNCTION LOCAL ImpliedWrite()									IMPLIED_WRITE
 	
@@ -276,61 +268,12 @@ BT_CANCEL:
 RETURN retVal
 !
 
-BT_EXPLORER:
-	url$			= UCS(CompanyURL$)
-	IF NOT(NUL(STP(url$,1))) {
-		CALL coSession'Wdx$+"../soa/syzdll;goto_url",ERR=*NEXT,url$,"http://",%sys_launch_hwnd
-	}
-RETURN retSUCCESS
-!
-
 BT_GET_WORKSTATION_NAME:
 
 	cWorkstationID$	= coSession'WorkstationName$
 	retVal			= coBusiness'SetValue("WorkstationID$",cWorkstationID$)
 	
 RETURN retVal
-!
-
-BT_LOC_BROWSE:		! // review.
-	LOCAL dir$,rtn,pthCTL,pthTEST$,tmpDIRMAIN$,tmpDIRPR$
-	pthCTL			= TBL(ID=BT_LOC_BROWSE_MAIN.ctl,DataPayrollLocation.ctl,DataMainLocation.ctl)
-	IF NOT(coSession'Hosted) {
-		dir$		= PAD(TBL(ID=BT_LOC_BROWSE_MAIN.ctl,DataPayrollLocation$,DataMainLocation$)+$00$,256)
-		CALL coSession'Wdx$+"SYZDLL; GetDirectory",rtn,dir$
-	} ELSE {
-		dir$		= TBL(ID=BT_LOC_BROWSE_MAIN.ctl,DataPayrollLocation$,DataMainLocation$)
-		tenantDir$	= STP(coSession'Hosted'PathTenant$,1,DLM) ! Remove trailing DLM
-		! Make sure directory is at or below the tenant directory
-		IF POS(UCS(tenantDir$)=UCS(dir$))<>1 {
-			dir$	= tenantDir$
-		}
-		dir$		= STP(dir$,1,DLM) ! Remove trailing DLM
-		! Set display directory one level above directory (but not above tenant directory)
-		dispDir$	= dir$
-		IF UCS(dispDir$)<>UCS(tenantDir$) {
-			tmpPos	= POS(DLM=dispDir$,-1)
-			IF tmpPos {
-				dispDir$	= MID(dispDir$,1,tmpPos-1)
-			}
-		}
-		origDir$	= dir$
-		GET_FILE_BOX DIRECTORY dir$,dispDir$,"Select Directory",tenantDir$
-		IF NUL(dir$) {
-			dir$	= origDir$
-		}
-		rtn			= retSUCCESS
-		dir$		+= $00$
-	}
-	retVal			= retFAILURE
-	IF rtn AND POS($00$=dir$) {
-		pthTEST$	= STP(STP(dir$),1,$00$)
-		retVal=_OBJ'LocationPathCheck(pthTEST$,pthFULL$,pthCTL)
-	}
-	IF NOT(retVal) {
-		NEXT_ID		= pthCTL
-	}
-RETURN
 !
 
 BT_REMOVE:
@@ -370,108 +313,6 @@ BT_REMOVE:
 RETURN retSUCCESS
 !
 
-BT_UPDATE:
-	! Save off the Terminal code and name in case a write occurs.
-	! tmpTerminalCode$ = TerminalCode$
-	! tmpTerminalName$ = TerminalName$
-
-	retVal			= coBusiness'CheckProcessingPaymentTypesExist()
-	if not(retVal) {
-		coSession'UI'MessageBox$("SY_531APSEmvPayTypeMustExist")
-		RETURN retFAILURE
-	}
-	! Determine if record needs to be saved.
-	! Don't want to use accept here, clears everything, need to retain data.
-	IF coBusiness'EditState = edtNEW {
-		! New Terminal record must be saved before activation can occur.
-		answer$=coSession'UI'MessageBox$("SY_NewCompActivation.Y",MSG("SY_NewCompActivation.Y"))
-		IF answer$	= msgYES$ {
-			retVal=coBusiness'Write()
-			IF NOT(retVal) {
-				coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
-				tmpRetVal		= _OBJ'SetFocusFailedID()
-				RETURN retVal
-			}
-		} ELSE {
-			RETURN retSUCCESS
-		}
-	}
-	IF coBusiness'EditState		= edtEXISTS {
-		! Existing record must be saved in case Terminal Level changes.
-		IF coBusiness'RecordChanged {
-			answer$		= coSession'UI'MessageBox$("CI_SaveChanges.N")
-			IF answer$	= msgCANCEL$ {
-				RETURN retSUCCESS
-			}
-			IF answer$	= msgYES$ {
-				retVal	= coBusiness'Write()
-				IF NOT(retVal) {
-					coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
-					tmpRetVal	= _OBJ'SetFocusFailedID()
-					RETURN retVal
-				}
-			}
-			IF answer$=msgNO$ {
-				! Recall the original record and update the UI.
-				retVal	= _OBJ'KeyChange(tmpTerminalCode$,isTRUE)
-				PREINPUT NEXT BT_Update.ctl
-				RETURN retSUCCESS
-			}
-		}
-	}
-	! Do activation.
-	! 1. check to see if the EMV directory exists on the workstation
-	! 2. if not, silent install of APSEMV installer to the root directory.
-	! 3. if it does, exist, copy the root EMV folders to the workstation folder.
-	! 4. Write the configuration files in the new workstation folder:
-	! 4.1	ChipDNA.config.xml
-	! 4.2	appsettings.private.json
-	! 4.3	..\web\config\config.private.json
-
-
-	coSession'UI'ProgressBar("init", "APS Payments", "Transferring EMV Terminal files", 0)
-	wait 1 ! force screen to update.
-	ARCreditCard		= coBusiness'ARCreditCard
-
-	! Step 2 - Silent install..
-	ARCreditCard'FindURLs()
-	pt_found			= isFALSE
-	read (AR_PaymentTypeFH,key=PaymentType$,rec=PT$,dom=*next); pt_found = isTRUE
-	if not(pt_found) {
-		coSession'UI'MessageBox$("CI_Missing2" , MSG("CI_Missing2", "Payment Type", "Please select a valid EMV payment type"))
-		PREINPUT NEXT PaymentType.ctl
-		RETURN retFAILURE
-	}
-	
-!	retVal				= _obj'Step2()		! try to install the client software.
-!	if not(retVal) {
-!		coSession'UI'MessageBox$("SY_531APSUnable" , MSG("SY_531APSUnable", "APS EMV Client Software"))
-!	}
-	
-	! Step 3 - copy the root folders to the terminal folders.
-
-	coSession'UI'ProgressBar("update","APS Payments","Stopping Client EMV programs...",0,"force")
-	wait .1 ! force screen to update.
-
-!	stopFile$			= "stop.bat"
-!	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV"
-
-!	cSRCDirectory$		= wdx$+"..\ASI\EMV"
-!	cDSTDirectory$		= wdx$+"..\ASI\EMV\"
- 	
-!	retVal				= _obj'Step3()	! NCU
- 
-! 	retVal				= _obj'Step4()	! Step 4: Write the configuration files
- 
-	retVal			= coBusiness'FIND(TerminalCode$)
-	IF retVal {
-		! resets the current terminal for further edits.
-		coBusiness'GetValue("TerminalKey$",TerminalKey$)
-		_OBJ'PostReadRec()
-	}	
-
-RETURN 
-!
 
 CHANGE_PAYMENT_DEVICE:
 	
@@ -605,75 +446,6 @@ CHECK_FOR_ENABLE:
 RETURN retSUCCESS
 !
 
-DIRECTORY_CHECK:
-ENTER (path$),pathFULL$
-	retVal				= retFAILURE
-	pathFULL$			= $$
-	REPEAT 
-		OPEN (HFN,ERR=*BREAK)path$
-		pathFIB$		= FIB(LFO)
-		pathFULL$		= PTH(LFO)
-		CLOSE (LFO)
-	UNTIL 1
-	IF MID(pathFIB$,19,1)="D" { ! valid directory found
-		pathFULL$		= STP(pathFULL$,1,DLM)+DLM
-		retVal			= retSUCCESS
-	}
-	IF NOT(retVal) AND NOT(NUL(pathFIB$)) { retVal=2 } ! some other file found
-RETURN retVal
-!
-
-DIRECTORY_ERASE:
-ENTER (path$),(existPath$)
-	retVal				= retFAILURE
-	pathORIG$			= path$
-	path$				= STP(path$,1,DLM)+DLM
-	fileOUT$			= coSession'PathTextOut$+DTE(0:"MMDD-%Hz%mz%sz")+STR(FPT(TIM*10000)*100:"00")+WHO+".txt"
-	dirCMD$="DIR """+path$+""" /ad/s/b > """+fileOUT$+""""
-	ERASE fileOUT$,ERR=*NEXT
-	SERIAL fileOUT$,ERR=*NEXT
-	INVOKE HIDE WAIT ENV("COMSPEC")+" /c "+dirCMD$
-	
-	WHILE 1 ! find and erase all empty subdirectories
-		tmpOK			= 0
-		SELECT tmpSUB$ FROM fileOUT$,ERR=*BREAK WHERE MID(tmpSUB$,1,1)<>"."
-			OPEN (HFN,ERR=*CONTINUE)tmpSUB$; tmpDIR=(MID(FIB(LFO),19,1)="D"); CLOSE (LFO)
-			IF tmpDIR {
-				ERASE tmpSUB$,ERR=*CONTINUE
-				tmpOK	= 1
-			}
-		NEXT RECORD 
-		IF NOT(tmpOK) { BREAK }
-	WEND
-	
-	WHILE POS(DLM		= path$)
-		tmp				= POS(DLM=path$,-1)
-		path$			= path$(1,tmp-1)
-		IF UCS(path$)+DLM	= UCS(existPath$) { BREAK }
-		ERASE path$,ERR=*NEXT; CONTINUE ! subdirectory
-		IF ERR<>12 { BREAK }
-	WEND 
-	retVal				= NOT(_OBJ'DirectoryCheck(pathORIG$,$$))
-RETURN retVal
-!
-
-GET_UNC_NAMED_DRIVE:
-ENTER drive$,path$
-	uncNamedDrive$	= $$
-	CALL coSession'Wdx$+"SYZDLL;Get_Unc_Path",MID(drive$,1,1),uncNamedDrive$
-	uncNamedDrive$	= STP(uncNamedDrive$,3,$00$)
-	IF NOT(NUL(uncNamedDrive$)) {
-		IF MID(uncNamedDrive$,-1)<>DLM {
-			uncNamedDrive$	+= DLM
-		}
-		drive$		= uncNamedDrive$
-		path$		= uncNamedDrive$+MID(path$,4)
-	} ELSE {
-		drive$		= $$
-	}
-RETURN retSUCCESS
-!
-
 IMPLIED_WRITE:
 	retVal				= retSUCCESS
 	curKey$				= coBusiness'GetKey$()
@@ -733,9 +505,6 @@ POST_READ_REC:
 	}
 	cOrigPaymentType$	= PaymentType$
 	cOrigPaymentDesc$	= PaymentDesc$
-!	cOrigProxyUserName$	= ProxyUserName$
-!	cOrigProxyPassword$	= ProxyPassword$
-!	cOrigSSLHashKey$	= SSLHashKey$
 	_obj'CheckForEnable()
 	
 RETURN retVal

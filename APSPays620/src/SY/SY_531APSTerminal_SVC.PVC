@@ -74,14 +74,14 @@ ON_CREATE:
 	! Insure tool is in the workstation folder
 	ToolFound						= isFalse
 	tmpFH							= HFN
-	OPEN (tmpFH,ERR=*NEXT)cAPSToolDest$; ToolFound = isTrue
-	IF NOT(ToolFound) {
-		tmpO						= NEW("*OBJ/pvx_utility")
-		tmpO'CopyFile(cAPSToolSource$,cAPSToolDest$,isFalse,ERR=*NEXT)
-		DROP OBJECT tmpO,ERR=*NEXT
-	} ELSE {
-		CLOSE(tmpFH)
-	}
+! 	OPEN (tmpFH,ERR=*NEXT)cAPSToolDest$; ToolFound = isTrue
+! 	IF NOT(ToolFound) {
+! 		tmpO						= NEW("*OBJ/pvx_utility")
+! 		tmpO'CopyFile(cAPSToolSource$,cAPSToolDest$,isFalse,ERR=*NEXT)
+! 		DROP OBJECT tmpO,ERR=*NEXT
+! 	} ELSE {
+! 		CLOSE(tmpFH)
+! 	}
 	_obj'ResetDotNet()		! activate the .NET assembly - this adds the URL encoding
 RETURN 
 !
@@ -100,7 +100,7 @@ ON_DELETE:
 	
 	! objects
 	IF coSPM {
-		DELETE OBJECT coSPM, ERR=*NEXT ! #230282 - 2017-11-13 RCS
+		DELETE OBJECT coSPM, ERR=*NEXT
 		coSPM			= 0
 	}
 	if coHTTP {
@@ -282,8 +282,6 @@ ENTER TerminalCode$
 	goodResponse		= isFALSE
 	response$			= isNULL$
 	result$				= isNULL$
-!	call Wdx$+"syzfil;get_nid",NID$
-!	cGetURL$			= "http://"+NID$+":"+EmvWebPort$+"/emv/open"
 	cGetURL$			= "http://"+WorkstationID$+":"+EmvWebPort$+"/emv/open"
 
 	ServiceActive	= _obj'CheckEmvServicesRunning()
@@ -458,22 +456,20 @@ RETURN retVal
 
 WRITE_LOG:
 ENTER LogType$, LogMessage$
-!	IF cAPSCreditCardLog$		= isYES$ {
-		_obj'CreateLog()
-		IF cAPSlogCH {
-			time$				= dte(0:"%Hz:%mz:%Sz")
-			date$				= STR(DAY)
-			stamp$				= "Date: " + date$ + " Time: " + time$ + " " + LogType$ + ": "
-			MaskedRequestLog$	= LogMessage$
-		!	_OBJ'LogMask(LogMessage$,MaskedRequestLog$)
-		!	MaskedRequestLog$	= SUB(MaskedRequestLog$, $0A$, $0A0D$)
-			print (cAPSlogCH)""
-			PRINT (cAPSlogCH)stamp$
-			PRINT (cAPSlogCH)MaskedRequestLog$
-			print (cAPSlogCH)""
-			CLOSE(cAPSlogCH)
-			cAPSlogCH			= 0
-	 	}
-!	}
+
+	_obj'CreateLog()
+	IF cAPSlogCH {
+		time$				= dte(0:"%Hz:%mz:%Sz")
+		date$				= STR(DAY)
+		stamp$				= "Date: " + date$ + " Time: " + time$ + " " + LogType$ + ": "
+		MaskedRequestLog$	= LogMessage$
+		print (cAPSlogCH)""
+		PRINT (cAPSlogCH)stamp$
+		PRINT (cAPSlogCH)MaskedRequestLog$
+		print (cAPSlogCH)""
+		CLOSE(cAPSlogCH)
+		cAPSlogCH			= 0
+ 	}
+
 RETURN retSUCCESS
 !

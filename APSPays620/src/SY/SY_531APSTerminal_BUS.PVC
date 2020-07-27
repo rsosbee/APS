@@ -39,36 +39,17 @@ DEF CLASS "SY_531APSTerminal_bus" CREATE REQUIRED DELETE REQUIRED
 	! ** @returns retSUCCESS if there are any payment methods with valid EMV connections
 	FUNCTION CheckProcessingPaymentTypesExist()						CHECK_PROCESSING_PAYMENT_TYPES_EXIST
 	FUNCTION CheckDuplicateWorkstationID(val$, dup$)				CHECK_DUPLICATE_WORKSTATION_ID
-	FUNCTION CopyFile(SrcFile$,DstFile$)							COPY_FILE
 	FUNCTION ConfirmDelete()										CONFIRM_DELETE
-	FUNCTION CreateWorkstationDirectory(TerminalCode$)				CREATE_WORKSTATION_DIRECTORY
 	FUNCTION Delete(key$)											DELETE_REC
-	FUNCTION DirectoryCheck(path$,pathFULL$)						DIRECTORY_CHECK
-	FUNCTION GetDirectoryChain(RootDir$,SubDirChain$,Levels)		GET_DIRECTORY_CHAIN
 	FUNCTION GetOriginalValue(tmpcolumn$)							GET_ORIGINAL_VALUE
 	FUNCTION GetPaymentType(value$,PayType$,PayDesc$,UseEMV$)		GET_PAYMENT_TYPE
-	FUNCTION RunDll()												RUN_DLL
 	FUNCTION SetKey(key$)											SET_KEY
-	FUNCTION ValidateBaudRate(val$)									VALIDATE_BAUDRATE
-	FUNCTION ValidateComPortNumber(val)								VALIDATE_COM_PORT
-	FUNCTION ValidateDataBits(val$)									VALIDATE_DATABITS
 	FUNCTION ValidateDeviceID(val$)									VALIDATE_DEVICEID
 	FUNCTION ValidateD531APSApiKey(val$)							VALIDATE_D531APSAPIKEY
-	FUNCTION ValidateEmvEndPoint(val$)								VALIDATE_EMVENDPOINT
-	FUNCTION ValidateEmvWebPort(val$)								VALIDATE_EMVWEBPORT
-	FUNCTION ValidateFlowControl(val$)								VALIDATE_FLOWCONTROL
-	FUNCTION ValidateParity(val$)									VALIDATE_PARITY
 	FUNCTION ValidatePaymentDevice(val$)							VALIDATE_PAYMENTDEVICE
 	FUNCTION ValidatePaymentType(value$,cPaymentTypeMethod$)		VALIDATE_PAYMENT_TYPE
-	FUNCTION ValidatePort(val$)										VALIDATE_PORT
-	FUNCTION ValidateServerPort(val$)								VALIDATE_SERVERPORT
-	FUNCTION ValidateSocket(val$)									VALIDATE_SOCKET
-	FUNCTION ValidateStopBits(val$)									VALIDATE_STOPBITS
 	FUNCTION ValidateTerminalCode(val$)								VALIDATE_TERMINAL_CODE
 	FUNCTION ValidateTerminalPosId(val$)							VALIDATE_TERMINAL_POS_ID
-	FUNCTION ValidateTickInterval(val)								VALIDATE_TICKINTERVAL
-	FUNCTION ValidateTimeOut(val)									VALIDATE_TIMEOUT
-	FUNCTION ValidateTmsType(val$)									VALIDATE_TMSTYPE
 	FUNCTION ValidateWorkstationID(val$)							VALIDATE_WORKSTATIONID
 	
 	FUNCTION Write()												WRITE
@@ -170,86 +151,6 @@ CONFIRM_DELETE:
 RETURN retVal
 !
 
-COPY_FILE:
-ENTER SrcFile$,DstFile$
-	cCopyOk				= isFALSE
-	coPvxUtil'CopyFile(SrcFile$,DstFile$,isFALSE,ERR=*NEXT);	cCopyOk	= isTRUE
-	retVal				= cCopyOk
-	
-RETURN retval
-
-
-CREATE_WORKSTATION_DIRECTORY:
-ENTER (TerminalCode$)
-	! 1. check to see if the EMV directory exists on the workstation
-	! 2. silent copy of APSEMV installer to the root ASI directory on the workstation.
-
-	retVal				= retSUCCESS
- 	isCS				= coSession'CS
- 	isTS				= coSession'TerminalServer
- 	cInstaller$			= "ApsEmvClientInstaller.exe"
- 	CALL coSession'Wdx$+"*windx.utl;get_val", "HWD", pthClient$
-	pthClient$			+= TBL(MID(pthClient$,-1)=DLM, DLM, $$)
-	pthClientAsi$		= MID(pthClient$, 1, POS("\MAS90\HOME\"=UCS(pthClient$),-1)) + "MAS90\ASI\"
-	pthClientSy$		= MID(pthClient$, 1, POS("\MAS90\HOME\"=UCS(pthClient$),-1)) + "MAS90\SY\"
-	pthServer$ 			= HWD + TBL(MID(HWD,-1)=DLM, DLM, $$)
-	pthServer$ 			= MID(pthServer$, 1, POS("\MAS90\HOME\"=UCS(pthServer$),-1)) + "MAS90\ASI\"
-
- 	wdx$				= coSession'Wdx$
-	isInstalled			= isFALSE
-	tmpFH				= HFN
-	tmpFile$			= wdx$+"..\ASI\EMV\run.bat"
-	open input (tmpFH,err=*next)tmpFile$; isInstalled	= isTRUE
-	close (tmpFH,err=*next)
-	tmpFH				= 0
-	
-	if not(isInstalled) and isCS {
-		DIRECTORY wdx$+"..\ASI",ERR=*NEXT
-		DIRECTORY wdx$+"..\ASI\EMV",ERR=*NEXT
-	}
-
-	DIRECTORY wdx$+"..\ASI\EMV\",ERR=*NEXT
-	
-	tmpFile$			= wdx$+"..\ASI\EMV\"
-	cTermDirChk			= _obj'DirectoryCheck(tmpFile$,tmpPathFull$)
-
-	if not(cTermDirChk) {
-		retVal			= retFAILURE
-		! Error message...
-	}
-
-	! check to see if copy needed
-	cCopyNeeded			= isCS
-	if isCS {
-		! check version on the server
-		pExe$				= pthServer$ + cInstaller$
-		CALL "SY_531APSEmvCsTools.m4p;GET_APS_CLIENT_VERSION",pExe$,pFileVersion$,pProductVersion$,ErrMsg$,Result
-		if not(Result) {
-			coSession'UI'MessageBox$("","Unable to find the APS client installer.")
-			return retFAILURE
-		}
-		! check the version on the workstation
-		cExe$				= pthClientASI$ + cInstaller$
-		CALL coSession'Wdx$+"SY_531APSEmvCsTools.m4p;GET_APS_CLIENT_VERSION",cExe$,cFileVersion$,cProductVersion$,ErrMsg$,Result
-		
-		if result and cFileVersion$ = pFileVersion$ and cProductVersion$ = pProductVersion$ {
-			cCopyNeeded		= isFALSE
-		}
-	}
-	
-	if isCS and cCopyNeeded {				! if CS/SQL always copy the installer to the workstation on activation.
-		cCopyOk			= isFALSE
-		oCopy 			= NEW ("*obj/Copier")
-		oCopy'SetShowProgress(isTRUE)
-		cCopyOK			= oCopy'CopyFileToClient(pthServer$+cInstaller$,pthClientAsi$+cInstaller$,2048,isFALSE)
-		DROP OBJECT oCopy, ERR=*PROCEED; oCopy = 0
-		if not(cCopyOK) {
-			retVal			= retFAILURE
-		}
-	}
-	
-RETURN retVal
-!
 
 DELETE_REC:
 ENTER (key$)
@@ -269,50 +170,6 @@ ENTER (key$)
 RETURN retVal
 !
 
-DIRECTORY_CHECK:
-ENTER (path$),pathFULL$
-	retVal				= retFAILURE
-	pathFULL$			= $$
-	REPEAT 
-		OPEN (HFN,ERR=*BREAK)path$
-		pathFIB$		= FIB(LFO)
-		pathFULL$		= PTH(LFO)
-		CLOSE (LFO)
-	UNTIL 1
-	IF MID(pathFIB$,19,1)="D" { ! valid directory found
-		pathFULL$		= STP(pathFULL$,1,DLM)+DLM
-		retVal			= retSUCCESS
-	}
-	IF NOT(retVal) AND NOT(NUL(pathFIB$)) { retVal=2 } ! some other file found
-RETURN retVal
-!
-
-GET_DIRECTORY_CHAIN:
-ENTER RootDir$,SubDirChain$,Levels
-	retVal 				= retFAILURE
-	tmpRootDir$			= RootDir$
-	
-	tmpFH				= HFN
-	OPEN INPUT(tmpfh, ERR=*NEXT) RootDir$; openOK	= isTRUE
-	if openOK {
-		REPEAT
-			srcFile$	= isNULL$
-			read (tmpFH,end=*next)srcfile$
-			if not(nul(srcfile$)) and mid(srcfile$,1,1) <>	"." { 
-				chkDirPath$			= tmpRootDir$ + DLM + srcfile$
-				cDirChk				= _obj'DirectoryCheck(chkDirPath$,tmpPathFull$)
-				if cDirChk 			= isTRUE {		! will return 2 if a file.
-					retVal			= retSUCCESS
-					SubDirChain$	+= chkDirPath$ + SEP
-					Levels			++
-					tmpRetVal		= _obj'GetDirectoryChain(chkDirPath$,SubDirChain$,Levels)
-				}
-			}
-		UNTIL NUL(srcfile$)
-	}
-	
-RETURN retVal
-!
 
 GET_ORIGINAL_VALUE:
 ENTER tmpcolumn$
@@ -360,19 +217,15 @@ RETURN retVal
 !
 
 POST_DELETE_REC:
-	stopFile$			= "stop.bat"
-	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV"
+	!stopFile$			= "stop.bat"
+	!call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV"
+	! deregister terminal instead?
 
 RETURN retSUCCESS
 !
 
 POST_WRITE_REC:
 	retVal				= retSUCCESS
-RETURN retVal
-!
-
-RUN_DLL:
-	retVal				= DLX("Masext32.dll","ProcessFiles",cCmd$,ERR=*NEXT)
 RETURN retVal
 !
 
@@ -400,15 +253,6 @@ RETURN retVal
 !
 
 ! Validations...
-VALIDATE_BAUDRATE:
-ENTER val$
-
-	val$		= mid(val$,1,1)
-	retVal		= (pos(val$="1234567")>0)		! only valid values.
-
-RETURN retVal
-!
-
 VALIDATE_CCPAYMENTTYPE:
 ENTER (value$)
 	retval				= retSUCCESS
@@ -424,28 +268,6 @@ ENTER (value$)
 RETURN retVal
 !
 
-VALIDATE_COM_PORT:
-ENTER val
-	cVal		= abs(int(val))
-	retVal		= retSUCCESS
-	
-	if cVal < 0 or cVal > 99 {
-!		LastErrorMsg$	= MSG("CI_CharInvalid","Com Port Number")
-		LastErrorMsg$	= MSG("SY_531APSInvalidRange", "Com Port Number", "99" )		
-		retVal			= retFAILURE
-		
-	}
-RETURN retVal
-!
-
-VALIDATE_DATABITS:
-ENTER val$
-
-	val$		= mid(val$,1,1)
-	retVal		= (pos(val$="45678")>0)		! only valid values.
-
-RETURN retVal
-!
 
 VALIDATE_DEVICEID:
 ENTER val$
@@ -465,39 +287,6 @@ ENTER val$
 RETURN retVal
 !
 
-VALIDATE_EMVENDPOINT:
-ENTER val$
-	retVal		= (not(nul(stp(EMVEndpoint$))))
-RETURN retVal
-!
-
-VALIDATE_EMVWEBPORT:
-ENTER val$
-	retVal 		= retFAILURE
-	val			= num(val$,err=*next)
-	if val > 0 and val <= 65536 {
-		retVal	= retSUCCESS
-	}
-
-RETURN retVal
-!
-
-VALIDATE_FLOWCONTROL:
-ENTER val$
-	val$		= mid(val$,1,1)
-	retVal		= (pos(val$="NHX")>0)		! only valid values.
-
-RETURN retVal
-!
-
-VALIDATE_PARITY:
-ENTER val$
-
-	val$		= mid(val$,1,1)
-	retVal		= (pos(val$="NOENS")>0)		! only valid values.
-	
-RETURN retVal
-!
 
 VALIDATE_PAYMENTDEVICE:
 	if nul(PaymentDevice$) {
@@ -551,50 +340,6 @@ ENTER (value$),cPaymentTypeMethod$
 RETURN retVal
 !
 
-VALIDATE_PORT:
-ENTER val$
-
-	retVal 		= retFAILURE
-	p			= 0
-	v			= 0
-	v$			= isNULL$
-	
-	v			= pos("COM"=val$)
-	if v {
-		v$		= mid(val$,v+3)
-	}
-	p			= int(num(v$,err=*next))
-	if p => 1 and p <= 99 {
-		retVal	= retSUCCESS
-	}
-	
-RETURN retVal
-!
-
-VALIDATE_SERVERPORT:
-ENTER val$	
-	retVal 		= retFAILURE
-	val			= num(val$,err=*next)
-	if val > 0 and val <= 65536 {
-		retVal	= retSUCCESS
-	}
-RETURN retVal
-!
-
-VALIDATE_SOCKET:
-	retVal		= retSUCCESS
-RETURN retVal
-!
-
-VALIDATE_STOPBITS:
-ENTER val$
-
-	val$		= mid(val$,1,1)
-	retVal		= (pos(val$="123")>0)		! only valid values. 1=1.0, 2=1.5, 3=2.0
-
-RETURN retVal
-!
-
 VALIDATE_TERMINAL_CODE:
 ENTER (val$)
 	! Terminal code can not be less than 3 characters (SY_Maint only validates max)
@@ -640,32 +385,6 @@ ENTER (val$)
 		LastErrorMsg$	= MSG("CI_CharInvalid","POS ID")
 		RETURN retFAILURE
 	}
-RETURN retVal
-!
-
-VALIDATE_TICKINTERVAL:
-ENTER val
-	retVal 		= retFAILURE
-	if val >= 25 and val <= 1500 {
-		retVal	= retSUCCESS
-	}
-RETURN retVal
-!
-
-VALIDATE_TIMEOUT:
-ENTER val
-	retVal 		= retFAILURE
-	if val >= 15 and Timeout <= 90 {
-		retVal	= retSUCCESS
-	}
-RETURN retVal
-!
-
-VALIDATE_TMSTYPE:
-ENTER val$
-	
-	retVal		= tbl(pos(val$="PT")>0,retFAILURE,retSUCCESS)
-	
 RETURN retVal
 !
 
