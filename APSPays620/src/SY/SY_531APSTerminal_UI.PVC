@@ -12,26 +12,20 @@ DEF CLASS "SY_531APSTerminal_ui" CREATE REQUIRED DELETE REQUIRED
 	
 	! Local/Private Properties
 	LOCAL cAPSActivated
-	LOCAL cAPSToolDest$			= %SYS_WDX$+"../SY/SY_531APSEmvCsTools.m4p"
-	LOCAL cAPSToolSource$		= "../SY/SY_531APSEmvCsTools.m4p"
 	LOCAL cAppIndentifier$		= "APSEMV"
 	LOCAL cListingClass$		= "SY_531APSEmvTerminalListing_RPT"
 	LOCAL CompanyCode$
 	LOCAL cOrigPaymentDesc$
 	LOCAL cOrigPaymentType$
-	LOCAL cOrigProxyPassword$
-	LOCAL cOrigProxyUserName$
-	LOCAL cOrigSSLHashKey$
 	LOCAL cStandbyMessage$		= "APS Payments"
 	LOCAL cTerminalCode$
+	LOCAL cTerminalKey$
 	! ** Local property storing the dictionary length of the SY_531APSEmvTerminal TerminalCode column.
 	LOCAL cTerminalCodeLen
-	LOCAL cUnencryptedProxyPassword$
 	LOCAL CR$					= $0D$
 	LOCAL CrLf$					= $0D0A$
 	LOCAL Tab$					= $09$
-	LOCAL TerminalKey$
-	LOCAL wdx$					= %sys_wdx$
+	
 	
 	! file handles...
 	LOCAL cTerminalFh
@@ -46,8 +40,11 @@ DEF CLASS "SY_531APSTerminal_ui" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION LOCAL BT_Accept()										BT_ACCEPT
 	FUNCTION LOCAL BT_Activate()									BT_ACTIVATE
 	FUNCTION LOCAL BT_Cancel()										BT_CANCEL
+	FUNCTION LOCAL BT_CancelClose()									BT_CANCEL_CLOSE
+	FUNCTION LOCAL BT_DeActivate()									BT_DEACTIVATE
 	FUNCTION LOCAL BT_GetWorkstationName()							BT_GET_WORKSTATION_NAME
 	FUNCTION LOCAL BT_Remove()										BT_REMOVE
+	FUNCTION LOCAL BT_SubmitClose()									BT_SUBMIT_CLOSE
 	
 	FUNCTION local ChangePaymentDevice()							CHANGE_PAYMENT_DEVICE
 	FUNCTION local ChangePaymentType()								CHANGE_PAYMENT_TYPE
@@ -63,10 +60,6 @@ DEF CLASS "SY_531APSTerminal_ui" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION LOCAL PostLoad()										POST_LOAD
 	FUNCTION LOCAL PostReadRec()									POST_READ_REC
 	FUNCTION LOCAL PreLoad()										PRE_LOAD
-	
-	FUNCTION LOCAL PERFORM Step2()									STEP_2
-	FUNCTION LOCAL PERFORM Step3()									STEP_3
-	FUNCTION LOCAL PERFORM Step4()									STEP_4
 	
 	! Elements Defined Elsewhere, but Referenced Locally
 	LOCAL coSession
@@ -142,7 +135,7 @@ RETURN retVal
 
 BT_ACTIVATE:
 	! Save off the Terminal code and name in case a write occurs.
-	! tmpTerminalCode$ = TerminalCode$
+	tmpTerminalCode$ = cTerminalCode$
 	! tmpTerminalName$ = TerminalName$
 
 	retVal			= coBusiness'CheckProcessingPaymentTypesExist()
@@ -154,7 +147,7 @@ BT_ACTIVATE:
 	! Don't want to use accept here, clears everything, need to retain data.
 	IF coBusiness'EditState = edtNEW {
 		! New Terminal record must be saved before activation can occur.
-		answer$=coSession'UI'MessageBox$("SY_NewCompActivation.Y",MSG("SY_NewCompActivation.Y"))
+		answer$		= coSession'UI'MessageBox$("SY_NewCompActivation.Y",MSG("SY_NewCompActivation.Y"))
 		IF answer$	= msgYES$ {
 			retVal	= coBusiness'Write()
 			IF NOT(retVal) {
@@ -189,64 +182,41 @@ BT_ACTIVATE:
 			}
 		}
 	}
-	! Do activation.
-	! 1. check to see if the EMV directory exists on the workstation
-	! 2. if not, silent install of APSEMV installer to the root directory.
-	! 3. if it does, exist, copy the root EMV folders to the workstation folder.
-	! 4. Write the configuration files in the new workstation folder:
-	! 4.1	ChipDNA.config.xml
-	! 4.2	appsettings.private.json
-	! 4.3	..\web\config\config.private.json
 	
-	! Insure tool is in the workstation folder
-!	if coSession'CS {
-!		retVal			= coBusiness'CopyFile(cAPSToolSource$,cAPSToolDest$)
-!	}
-
-	coSession'UI'ProgressBar("init", "APS Payments", "Transferring EMV Terminal files", 0)
-	wait 1 ! force screen to update.
-	
-	! Step 1 - check and create the workstation folder (and copy the installer if needed)
-	coSession'UI'ProgressBar("update","APS Payments","Creating Workstation EMV Folder...",0,"force")
-	wait .1 ! force screen to update.
-
-!	retVal				= coBusiness'CreateWorkstationDirectory(TerminalCode$)
-!	if not(retVal) {
-!		coSession'UI'ProgressBar("close")
-!		coSession'UI'MessageBox$("SY_531APSUnable" , MSG("SY_531APSUnable", "APS EMV Client directory"))
-!		return retFAILURE
-!	}
-	ARCreditCard		= coBusiness'ARCreditCard
-
-	! Step 2 - Silent install..
-	ARCreditCard'FindURLs()
-	pt_found			= isFALSE
-	read (AR_PaymentTypeFH,key=PaymentType$,rec=PT$,dom=*next); pt_found = isTRUE
-	if not(pt_found) {
-		coSession'UI'MessageBox$("CI_Missing2" , MSG("CI_Missing2", "Payment Type", "Please select a valid EMV payment type"))
-		PREINPUT NEXT PaymentType.ctl
-		RETURN retFAILURE
+	retVal			= coBusiness'FIND(cTerminalCode$)
+	IF retVal {
+		! resets the current terminal for further edits.
+		coBusiness'GetValue("TerminalKey$",TerminalKey$)
+		_OBJ'PostReadRec()
 	}
-	
-!	retVal				= _obj'Step2()		! try to install the client software.
-!	if not(retVal) {
-!		coSession'UI'MessageBox$("SY_531APSUnable" , MSG("SY_531APSUnable", "APS EMV Client Software"))
-!	}
-	
-	! Step 3 - copy the root folders to the terminal folders.
 
-	coSession'UI'ProgressBar("update","APS Payments","Stopping Client EMV programs...",0,"force")
-	wait .1 ! force screen to update.
+	coRegister		= NEW("AR_531ApsCreditCardSubmit_ui",coSession)
+	retVal			= coRegister'GetRegistrationForm(ML_RegistrationCode$)
+	drop object coRegister
+	coRegister		= 0
 
-!	stopFile$			= "stop.bat"
-!	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV"
+	if not(retVal) {
+		RETURN retVal
+	}
 
-!	cSRCDirectory$		= wdx$+"..\ASI\EMV"
-!	cDSTDirectory$		= wdx$+"..\ASI\EMV\"
- 	
-!	retVal				= _obj'Step3()	! NCU
- 
-! 	retVal				= _obj'Step4()	! Step 4: Write the configuration files
+	! Do activation.
+
+	coEMV			= NEW("SY_531APSEmvRequest",coSession)
+	retVal			= coEMV'DeviceRegister(D531APSApiKey$,ML_RegistrationCode$,StandbyMessage$,DeviceLicense$,DeviceID$,RegistrationStatus$)
+	drop object coEMV
+	coEMV			= 0
+
+	if retVal {
+		tmpVal		= coBusiness'SetValue("DeviceLicense$",DeviceLicense$)
+		tmpVal		= coBusiness'SetValue("RegistrationStatus$",RegistrationStatus$)
+		retVal		= coBusiness'Write()
+		IF NOT(retVal) {
+			coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+			tmpRetVal	= _OBJ'SetFocusFailedID()
+			RETURN retVal
+		}
+	}
+
  
 	retVal			= coBusiness'FIND(TerminalCode$)
 	IF retVal {
@@ -260,12 +230,104 @@ RETURN retSUCCESS
 BT_CANCEL:
 	retVal			= retSUCCESS
 	! clear vars
-	
+	RegistrationStatus$	= isNULL$
 	retVal			= _OBJ'BT_Cancel(FROM "SY_MaintUI")
 	retVal			= _OBJ'SetControlState("Main.grp$",ctlDISABLE)
 
  
 RETURN retVal
+!
+
+BT_CANCEL_CLOSE:
+	
+	Arg_1$			= isNULL$
+	Cmd_Str$		= "End"
+	
+RETURN retSUCCESS
+!
+
+BT_DEACTIVATE:
+	! Save off the Terminal code and name in case a write occurs.
+	tmpTerminalCode$ = cTerminalCode$
+	! tmpTerminalName$ = TerminalName$
+
+	retVal			= coBusiness'CheckProcessingPaymentTypesExist()
+	if not(retVal) {
+		coSession'UI'MessageBox$("SY_531APSEmvPayTypeMustExist")
+		RETURN retFAILURE
+	}
+	! Determine if record needs to be saved.
+	! Don't want to use accept here, clears everything, need to retain data.
+	IF coBusiness'EditState = edtNEW {
+		! New Terminal record must be saved before activation can occur.
+		answer$		= coSession'UI'MessageBox$("SY_NewCompActivation.Y",MSG("SY_NewCompActivation.Y"))
+		IF answer$	= msgYES$ {
+			retVal	= coBusiness'Write()
+			IF NOT(retVal) {
+				coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+				tmpRetVal		= _OBJ'SetFocusFailedID()
+				RETURN retVal
+			}
+		} ELSE {
+			RETURN retSUCCESS
+		}
+	}
+	IF coBusiness'EditState		= edtEXISTS {
+		! Existing record must be saved in case Terminal Level changes.
+		IF coBusiness'RecordChanged {
+			answer$		= coSession'UI'MessageBox$("CI_SaveChanges.N")
+			IF answer$	= msgCANCEL$ {
+				RETURN retSUCCESS
+			}
+			IF answer$	= msgYES$ {
+				retVal	= coBusiness'Write()
+				IF NOT(retVal) {
+					coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+					tmpRetVal	= _OBJ'SetFocusFailedID()
+					RETURN retVal
+				}
+			}
+			IF answer$	= msgNO$ {
+				! Recall the original record and update the UI.
+				retVal	= _OBJ'KeyChange(tmpTerminalCode$,isTRUE)
+				PREINPUT NEXT BT_Activate.ctl
+				RETURN retSUCCESS
+			}
+		}
+	}
+	
+	retVal			= coBusiness'FIND(cTerminalCode$)
+	IF retVal {
+		! resets the current terminal for further edits.
+		coBusiness'GetValue("TerminalKey$",TerminalKey$)
+		_OBJ'PostReadRec()
+	}
+
+	! Do deactivation.
+	coEMV			= NEW("SY_531APSEmvRequest",coSession)
+	retVal			= coEMV'DeviceUnRegister(D531APSApiKey$,DeviceLicense$,DeviceID$,RegistrationStatus$)
+	drop object coEMV
+	coEMV			= 0
+
+	if retVal {
+		tmpVal		= coBusiness'SetValue("DeviceLicense$",isNULL$)
+		tmpVal		= coBusiness'SetValue("RegistrationStatus$",RegistrationStatus$)
+		retVal		= coBusiness'Write()
+		IF NOT(retVal) {
+			coSession'UI'MessageBox$(coBusiness'LastErrorNum$,coBusiness'LastErrorMsg$)
+			tmpRetVal	= _OBJ'SetFocusFailedID()
+			RETURN retVal
+		}
+	}
+
+ 
+	retVal			= coBusiness'FIND(TerminalCode$)
+	IF retVal {
+		! resets the current terminal for further edits.
+		coBusiness'GetValue("TerminalKey$",TerminalKey$)
+		_OBJ'PostReadRec()
+	}
+RETURN retSUCCESS
 !
 
 BT_GET_WORKSTATION_NAME:
@@ -313,6 +375,13 @@ BT_REMOVE:
 RETURN retSUCCESS
 !
 
+BT_SUBMIT_CLOSE:
+
+	Arg_1$			= ML_RegistrationCode$
+	Cmd_Str$		= "End"
+	
+RETURN retSUCCESS
+!
 
 CHANGE_PAYMENT_DEVICE:
 	
@@ -417,32 +486,17 @@ RETURN retSUCCESS
 
 CHECK_FOR_ENABLE:
 	
-! 	_OBJ'SetControlState("PROXY.grp$", ctlHIDE)
-! 	SWITCH ProxyServer$
-! 		CASE isYES$
-! 			_OBJ'SetControlState("PROXY.grp$", ctlSHOW)
-! 			_OBJ'SetControlState("PROXY.grp$", ctlENABLE)
-! 			SWITCH ProxyAuthRequired$
-! 				CASE isYES$
-! 					_OBJ'SetControlState("PROXYAUTH.grp$", ctlSHOW)
-! 					_OBJ'SetControlState("PROXYAUTH.grp$", ctlENABLE)
-! 					BREAK
-! 				DEFAULT
-! 					_OBJ'SetControlState("PROXYAUTH.grp$", ctlDISABLE)
-! 					_OBJ'SetControlState("PROXYAUTH.grp$", ctlHIDE)
-! 					BREAK
-! 			END SWITCH
-! 			BREAK
-! 		DEFAULT
-! 			_OBJ'SetControlState("PROXY.grp$", ctlDISABLE)
-! 			_OBJ'SetControlState("PROXY.grp$", ctlHIDE)
-! 			BREAK
-! 	END SWITCH
+	if nul(TerminalKey$) {
+		RegistrationStatus$	= isNULL$
+		refresh_flg			= isTRUE
+	}
+	IF UCS(SCREEN_ID$)	= "DREGISTER" {
+		! Append Company and Date to panel caption
+		Enable control ML_RegistrationCode.ctl
+	}
+
 	
-!	cUnencryptedProxyPassword$	= isNULL$
-!	_OBJ'DecryptPassword((ProxyPassword$),ML_ProxyPassword$)
-!	cUnencryptedProxyPassword$	= ML_ProxyPassword$
-	
+
 RETURN retSUCCESS
 !
 
@@ -459,6 +513,10 @@ RETURN retVal
 ! 
 
 POST_LOAD:
+	IF UCS(SCREEN_ID$)	= "DREGISTER" {
+		! Append Company and Date to panel caption
+		retVal			= _OBJ'AppendTitleBar()
+	}
 	_OBJ'PostLoad(FROM "sy_MaintUI")
 	_obj'CheckForEnable()
 RETURN retSUCCESS
@@ -503,347 +561,46 @@ POST_READ_REC:
 	if nul(ApplicationIdentifer$) {
 		coBusiness'SetValue("ApplicationIdentifer$",cAppIndentifier$)
 	}
+	if nul(DeviceLicense$) {
+		RegistrationStatus$	= "Deregistered"
+		coBusiness'SetValue("RegistrationStatus$",RegistrationStatus$)
+	} else {
+		RegistrationStatus$	= "Registered"
+		coBusiness'SetValue("RegistrationStatus$",RegistrationStatus$)
+	}
+
 	cOrigPaymentType$	= PaymentType$
 	cOrigPaymentDesc$	= PaymentDesc$
+	cTerminalKey$		= TerminalKey$
+	cTerminalCode$		= TerminalCode$
 	_obj'CheckForEnable()
 	
 RETURN retVal
 !
 PRE_LOAD:
+	IF UCS(SCREEN_ID$)	= "DREGISTER" {
+		ML_RegistrationCode$	= Arg_1$
+		! Append Company and Date to panel caption
+		retVal				= _OBJ'AppendTitleBar()
+	}
+
 RETURN retSUCCESS
 !
 
-STEP_2:
-	
-	! Step 2 - Silent install..
-	retVal				= retSUCCESS
-	isCS				= coSession'CS
-	isTS				= coSession'TerminalServer
-	cInstaller$			= "..\asi\ApsEmvClientInstaller.exe"
-	wdx$				= %sys_wdx$
-	silentInstall$		= "ApsEmvClientInstaller.exe /S ~c2p="+APSEasyPay$+" ~aps="+APSPrimary$+" ~emvPort="+Port$+" ~webPort="+EmvWebPort$
-	silentInstall$		+= " ~apsApiKey="+pt.D531APSApiKey$+" ~chipDnaPort="+ServerPort$+" /D=%~dp0/EMV\" ! +terminalCode$
-	silentInstallFile$	= "SilentInstall_"+terminalCode$+".bat"
-	
-	erase	wdx$+"..\asi\"+silentInstallFile$,err=*next
-	serial	wdx$+"..\asi\"+silentInstallFile$,err=*next
-	cSilentFH			= hfn
-	open purge (cSilentFH,err=*next)wdx$+"..\asi\"+silentInstallFile$
-	
-	print (cSilentFH)"@ECHO OFF"
-	print (cSilentFH)"REM Silent install file for EMV terminal "+TerminalCode$
-	print (cSilentFH)silentInstall$
-	print (cSilentFH)"EXIT"
-	close (cSilentFH,err=*next)
-	cSilentFH			= 0
-
-	! silent install of APSEMV installer to the root directory.
-	! don't continue until the installation is done.
-	cCycleCount			= 0
-	installStarted		= isFALSE
-	REPEAT
-		isInstalled			= isFALSE
-		tmpFH				= HFN
-		tmpFile$			= wdx$+"..\ASI\EMV\run.bat"
-		open input (tmpFH,err=*next)tmpFile$; isInstalled	= isTRUE
-		close (tmpFH,err=*next)
-		tmpFH				= 0
-		cCycleCount			++
-		if cCycleCount > 45 {
-			answer$			= coSession'UI'MessageBox$("","EMV Client Software Installation is still running!\Retry or Cancel installation?",	\
-															"Style=R,Title=APS EMV Client Software,Icon=?")
-			if answer$ 		= "CANCEL" {
-				retVal		= retFAILURE
-				BREAK
-			} ELSE {
-				cCycleCount	= 0
-			}
+GET_EMV_REGISTRATION:
+	oCreditCardSubmit	= NEW("AR_531APSCreditCardSubmit_ui",coSession)
+	if cUseEmvDevice$	= isYES$ {
+		retVal			= oCreditCardSubmit'GetEmvForm(response.URL$, UserAction$)
+	} ELSE {
+		if cFromCustMaint or not(Amount) {
+			retVal		= oCreditCardSubmit'GetVaultForm(response.URL$, UserAction$)
+		} else {
+			retVal		= oCreditCardSubmit'GetHostedForm(response.URL$, UserAction$)
 		}
-		if not(isInstalled) {
-			if not(installStarted) {
-				installStarted	= isTRUE
-				call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,silentInstallFile$,"..\ASI"
-				coSession'UI'ProgressBar("update","APS Payments","Installing Client EMV programs...",0,"force")
-				wait 5
-			}
-			wait 1
- 		}
-	UNTIL isInstalled
-
-RETURN retVal
-!
-
-STEP_3:	! not currently used.
-	
-	! Step 3 - copy the root folders to the terminal folders.
-
- 	cSRCDirectory$		= wdx$+"..\ASI\EMV"
- 	cDSTDirectory$		= wdx$+"..\ASI\EMV\"+TerminalCode$
- 	
- 	CopyData$			= "ChipDNA" + SEP + "engine" + SEP + "web" + SEP	! base directories
- 	tmpCopyData$		= CopyData$
- 	CopySrcDirData$		= isNULL$
- 	CopyDstDirData$		= isNULL$
- 	
- 	! build the subdirectory list
- 	REPEAT
- 		result$			= isNULL$
- 		openOK			= isTRUE
- 		retTmp			= _OBJ'ParseString(startScan, tmpCopyData$, result$, separator$)
- 		if not(nul(result$)) {
- 			moveSRCFilePath$	= cSRCDirectory$ + DLM + result$
- 			CopySrcDirData$		+= moveSrcFilePath$ + SEP
- 			openOK				= isFALSE
- 			tmpFH				= HFN
- 			OPEN(tmpfh, ERR=*NEXT) moveSRCFilePath$; openOK	= isTRUE
- 			close(tmpfh)
- 			tmpfh				= 0
- 			if openOK {
- 				Levels				= 0
- 				retVal				= coBusiness'GetDirectoryChain(moveSrcFilePath$,SubDirChain$,Levels)
- 				if retVal {
- 					CopySrcDirData$		+= subDirChain$
- 				}
- 				subDirChain$		= isNULL$
- 			}
- 		}
- 	UNTIL nul(result$)
- 	tmpCopyData$		= CopySrcDirData$
- 
- 	! copy files to the terminal directory
- 	REPEAT
- 		coSession'UI'ProgressBar("update","APS Payments","Copying Client EMV programs...",0,"force")
- 		wait .1 ! force screen to update.
- 
- 		result$			= isNULL$
- 		openOK			= isTRUE
- 		retTmp			= _OBJ'ParseString(startScan, tmpCopyData$, result$, separator$)
- 		IF NOT(NUL(result$)) {
- 			openFlg		= isFALSE
- 			moveSRCFilePath$	= result$
- 			moveDSTFilepath$	= wdx$ + result$(1,11) + TerminalCode$ + DLM + result$(12)
- 
- 			! check for existing sub directories in source directory
- 			IF POS("\"	= result$) {
- 				openOK	= isFALSE
- 				tmpFH	= HFN
- 				OPEN(tmpfh, ERR=*NEXT) moveSRCFilePath$; openOK	= isTRUE
- 				CLOSE(tmpfh, ERR=*NEXT)
- 			}
- 			IF openOK {
- 				DIRECTORY moveDSTFilePath$, ERR=*NEXT
- 				cEmvFH	= HFN
- 				OPEN(cEmvFH,ERR=*NEXT)moveSRCFilePath$; openFlg	= isTRUE
- 				IF openFlg {
- 					REPEAT
- 						srcFile$	= isNULL$
- 						READ(cEmvFH, ERR=*NEXT)srcFile$
- 						IF NOT(NUL(srcFile$))							\ 
- 							AND (srcFile$ <> "." OR srcFile$ <> "..")	\
- 							AND NOT(POS(LCS(srcfile$)=LCS(tmpCopyData$))) {
- 								moveEmvSRCFilePath$	= moveSRCFilePath$ + DLM + srcFile$
- 								moveEmvDSTFilePath$	= moveDSTFilepath$ + DLM + srcFile$
- 								IF POS(" "			= STP(moveEmvSRCFilePath$,2)) { moveEmvSRCFilePath$ = _OBJ'QUO$(moveEmvSRCFilePath$) }
- 								IF POS(" "			= STP(moveEmvDSTFilePath$,2)) { moveEmvDSTFilePath$ = _OBJ'QUO$(moveEmvDSTFilePath$) }
- 								retVal 				= coBusiness'CopyFile(moveEmvSRCFilePath$,moveEmvDSTFilePath$)
- 						}
- 					UNTIL NUL(srcFile$)
- 				}
- 				CLOSE(cEmvFH,ERR=*NEXT)
- 			}
- 		}
- 	UNTIL NUL(result$)
- 
- 	! copy the batch files
- 	moveEmvSrcFilePath$	= cSrcDirectory$	+ DLM + "run.bat"
- 	moveEmvDstFilePath$	= cDstDirectory$	+ DLM + "run.bat"
- 	retVal 				= coBusiness'CopyFile(moveEmvSrcFilePath$,moveEmvDstFilePath$)
- 	
- 	moveEmvSrcFilePath$	= cSrcDirectory$	+ DLM + "stop.bat"
- 	moveEmvDstFilePath$	= cDstDirectory$	+ DLM + "stop.bat"
-	retVal 				= coBusiness'CopyFile(moveEmvSrcFilePath$,moveEmvDstFilePath$)
-
-RETURN retVal
-!
-
-STEP_4:
-	
-	! Step 4: Write the configuration files
-	coSession'UI'ProgressBar("update","APS Payments","Writing configuration files...",0,"force")
-	wait .5 ! force screen to update.
-
-	! 4.1	ChipDNA.config.xml
-	! 4.2	appsettings.private.json
-	! 4.3	..\web\config\config.private.json
-
-
-	! Step 4.1: ChipDNA.config.xml
-	configFile$			= cDSTDirectory$ + DLM + "ChipDna" + DLM + "ChipDNA.config.xml"
-	posID$				= "posid="+quo+TerminalPosID$+quo
-	tms$				= "use="+quo+"tms"+quo
-	reg$				= "use="+quo+"registration"+quo
-	timeOut$			= str(Timeout*1000)
-	configFH			= HFN
-	request_str$		= isNULL$
-	version$			= "version="+quo+"1.0.0"+quo
-
-	erase configFile$,err=*next
-	serial configFile$,err=*next
-	open purge (configFH)configFile$
-	
-	MachineName$		= WorkstationID$
-	if nul(WorkstationID$) {
-		MachineName$	= "localhost"
 	}
-	MachineName$		= "localhost"
-	
-	DnaServer$			=  ARCreditCard'BuildElement$("MachineName", MachineName$,1)
-	DnaServer$			+= ARCreditCard'BuildElement$("ApplicationIdentifier", ApplicationIdentifer$,1)
-	DnaServer$			+= ARCreditCard'BuildElement$("Socket", Socket$+":"+ServerPort$,1)
-	if UseSSL$			=  isYES$ and not(nul(SSLHashKey$)) {
-		DnaServer$		+= ARCreditCard'BuildElement$("CertificateHash", SSLHashKey$,1)		! not yet in the screen  ****
-	}
+	DROP OBJECT oCreditCardSubmit
+	oCreditCardSubmit	= 0
 
-	if ProxyServer$		= isYES$ {
-		WebProxy$			=  ARCreditCard'BuildElement$("Connection", ProxyServerIP$+":"+ProxyServerPort$,2)
-		WebProxy$			+= ARCreditCard'BuildElement$("Username", ProxyUserName$,2)
-		WebProxy$			+= ARCreditCard'BuildElement$("Password", ProxyPassword$,2)
-		WebProxy$			=  ARCreditCard'BuildGroup$("WebProxy", isNULL$, WebProxy$,1)
-	} else {
-		WebProxy$		=  isNULL$
-	}
-	
-	PayDevice$			=  ARCreditCard'BuildElement$("Model", Model$,5)
-	PayDevice$			+= ARCreditCard'BuildElement$("Id", DeviceID$,5)
-	PayDevice$			+= ARCreditCard'BuildElement$("Protocol", Protocol$,5)
-	PayDevice$			+= ARCreditCard'BuildElement$("Port", Port$,5)
-	PayDevice$			+= ARCreditCard'BuildElement$("Baudrate", tbl(num(Baudrate$),"115200","9600","14400","19200","38400","57600","115200"),5)
-	PayDevice$			+= ARCreditCard'BuildElement$("Parity", tbl(pos(Parity$="NOEMS"),"none","none","odd","even","mark","space"),5)
-	PayDevice$			+= ARCreditCard'BuildElement$("Stopbits", tbl(pos(Stopbits$="123"),"1","1","1.5","2"),5)
-	PayDevice$			+= ARCreditCard'BuildElement$("Databits", Databits$,5)
-	PayDevice$			+= ARCreditCard'BuildElement$("StandbyMessage", StandbyMessage$,5)
-	
-	PayDevice$			=  ARCreditCard'BuildGroup$("PaymentDevice", isNULL$, PayDevice$,4)		! <PaymentDevice> level
-	PayDevice$			=  ARCreditCard'BuildGroup$("PaymentDevices", isNULL$, PayDevice$,3)	! <PaymentDevices> level
-	PayDevice$			=  ARCreditCard'BuildGroup$("Terminal", posID$, PayDevice$,2)			! <Terminal> level
-	PayDevice$			=  ARCreditCard'BuildGroup$("Terminals", isNULL$, PayDevice$,1)			! <Terminals> level
-
-	pTmsServer$			=  ARCreditCard'BuildElement$("Url", "https://tms.cardeasexml.com",4)
-	pTmsServer$			+= ARCreditCard'BuildElement$("Timeout", Timeout$,4)
-	pTmsServer$			=  ARCreditCard'BuildGroup$("Server", tms$, pTmsServer$,3)					! server tms level
-	
-	pRegServer$			=  ARCreditCard'BuildElement$("Url", "https://live.cardeasexml.com/gw.cex",4)
-	pRegServer$			+= ARCreditCard'BuildElement$("Timeout", Timeout$,4)
-	pRegServer$			=  ARCreditCard'BuildGroup$("Server", reg$, pRegServer$,3)					! server registration level
-			
-	tTmsServer$			=  ARCreditCard'BuildElement$("Url", "https://testtms.cardeasexml.com",4)
-	tTmsServer$			+= ARCreditCard'BuildElement$("Timeout", Timeout$,4)
-	tTmsServer$			=  ARCreditCard'BuildGroup$("Server", tms$, tTmsServer$,3)					! server tms level
-	
-	tRegServer$			=  ARCreditCard'BuildElement$("Url", "https://test.cardeasexml.com/gw.cex",4)
-	tRegServer$			+= ARCreditCard'BuildElement$("Timeout", Timeout$,4)
-	tRegServer$			=  ARCreditCard'BuildGroup$("Server", reg$, tRegServer$,3)					! server registration level
-		
-	SWITCH TmsType$
-	
-		CASE "P"	! production
-			tmpServer$	=  pTmsServer$ + pRegServer$
-			Servers$	=  ARCreditCard'BuildGroup$("Servers", isNULL$, tmpServer$,2)				! <servers> level
-			BREAK
-			
-		CASE "T"	! test - rarely used.
-
-			tmpServer$	=  tTmsServer$ + tRegServer$
-			Servers$	=  ARCreditCard'BuildGroup$("Servers", isNULL$, tmpServer$,2)				! <servers> level
-			BREAK
-			
-	END SWITCH		
-	
-	tms$				= ARCreditCard'BuildGroup$("Tms", isNULL$, Servers$,1)						! <Tms> level
-	
-	! build the configuration string
-	request_str$		=  "<?xml version="+quo+"1.0"+quo+" encoding="+quo+"utf-8"+quo+"?>" + CrLf$
-	tmsData$			=  DnaServer$ + WebProxy$ + PayDevice$ + tms$
-	request_str$		+= ARCreditCard'BuildGroup$("ChipDnaServer", version$, tmsData$,0)			! <Terminal> level
-	request_str$		=  mid(request_str$,1,pos(CrLf$=request_str$,-1)-1)							! remove ending crlf
-	
-	write record(configFH)request_str$
-	close(configFH,err=*next)
-	configFH			= 0
-	wait .1
-	
-	! build the client configuration for troubleshooting
-	request_str$		=  "<?xml version="+quo+"1.0"+quo+" encoding="+quo+"utf-8"+quo+"?>" + CrLf$
-	ClientServer$		=  ARCreditCard'BuildElement$("PosId", posID$,2)
-	ClientServer$		+= ARCreditCard'BuildElement$("ApiKey", pt.D531APSApiKey$,2)
-	ClientServer$		+= ARCreditCard'BuildElement$("Server", Socket$+":"+ServerPort$,2)
-	request_str$		+= ARCreditCard'BuildGroup$("ChipDnaClient", version$, ClientServer$,0)		! <Terminal> level
-	request_str$		=  mid(request_str$,1,pos(CrLf$=request_str$,-1)-1)							! remove ending crlf
-	
-	configFile$			= cDSTDirectory$ + DLM + "ChipDna" + DLM + "client.config.xml"
-	configFH			= HFN
-	erase configFile$,err=*next
-	serial configFile$,err=*next
-	open purge (configFH)configFile$
-	write record(configFH)request_str$
-	close(configFH,err=*next)
-	configFH			= 0
-	wait .1
-	
-	
-	! 4.2	appsettings.private.json
-	configFile$			= cDSTDirectory$ + DLM + "engine" + DLM + "appsettings.private.json"
-	configFH			= HFN
-	x					= pos("/EasyPay"=APSEasyPay$)
-	c2pEndpoint$		= mid(APSEasyPay$,1,x)
-	nodepoint$			= EnvEndpoint$
-	nodepoint$			= "http://localhost:"+EmvWebPort$+"/emv/"
-	!nodepoint$			= "http://"+WorkstationID$+":"+EmvWebPort$+"/emv/"
-	tickInterval$		= str(tickInterval)
-	logLevel$			= tbl(pos(LoggingLevel$="CEWDI"),"Error","Critical","Errors","Warnings","Debug","Info")
-
-	erase configFile$,err=*next
-	serial configFile$,err=*next
-	open purge (configFH)configFile$
-	
-	indent				=  2
-	request_str$		=  "{"+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("c2pServerEndpoint")+": "+_obj'quo$(c2pEndpoint$)+","+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("gatewayEndpoint")+": "+_obj'quo$(APSPrimary$)+","+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("emvDevicePort")+": "+_obj'quo$(Port$)+","+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("nodeJsFrontendEndpoint")+": "+_obj'quo$(nodepoint$)+","+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("tickIntervalMilliseconds")+": "+_obj'quo$(tickInterval$)+","+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("minLogLevel")+": "+_obj'quo$(logLevel$)+","+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("chipDnaPosId")+": "+_obj'quo$(TerminalPosID$)+","+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("chipDnaServerAddress")+": "+_obj'quo$(Socket$)+","+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("chipDnaServerPort")+": "+_obj'quo$(ServerPort$)+","+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("chipDnaApsApiKey")+": "+_obj'quo$(pt.D531APSApiKey$)+CrLf$
-	request_str$		+= "}"
-	
-	write Record(configFH)request_str$
-	close(configFH,err=*next)
-	configFH			= 0
-	wait .1
-	
-	! 4.3	..\web\config\config.private.json
-	configFile$			= cDSTDirectory$ + DLM + "web\config" + DLM + "config.private.json"
-	configFH			= HFN
-	erase configFile$,err=*next
-	serial configFile$,err=*next
-	open purge (configFH)configFile$
-	
-	indent				=  2
-	request_str$		=  "{"+CrLf$
-	request_str$		+= DIM(indent) + _obj'quo$("port")+": "+_obj'quo$(EmvWebPort$)+CrLf$	
-	request_str$		+= "}"
-	
-	write record(configFH)request_str$
-	close(configFH,err=*next)
-	configFH			= 0
-
-	coSession'UI'ProgressBar("update","APS Payments","Completed activation...",0,"force")
-	wait 1	! force screen to update.
-	coSession'UI'ProgressBar("close")
-	
 RETURN retSUCCESS
 !
+

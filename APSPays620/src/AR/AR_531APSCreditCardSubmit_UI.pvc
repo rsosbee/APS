@@ -1,14 +1,13 @@
 ! $Id: AR_531APSCreditCardSubmit_ui.pvc $
 ! APS ERP Credit Card Submit
-! $Copyright 2013-2019 Accounting Systems, Inc.  Columbia, SC
-! Irina Kouptsova, Bob Sosbee #235036
-! Revised to hosted form and EMV #236076 RCS
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
+! Revised to hosted form and EMV
 !
 DEF CLASS "AR_531APSCreditCardSubmit_ui" CREATE REQUIRED DELETE REQUIRED
 
 	! Inherits from the following class(es)
 	LIKE "SY_MaintSetUI"
-	LIKE "CI_ExpirationDateUI_val"
+!	LIKE "CI_ExpirationDateUI_val"
 
 	! Public Properties
 	PROPERTY cEndURL$
@@ -20,10 +19,7 @@ DEF CLASS "AR_531APSCreditCardSubmit_ui" CREATE REQUIRED DELETE REQUIRED
 	LOCAL UserAction$
 	LOCAL ML_TestURL$
 	LOCAL cAPSCreditCardLog$
-	LOCAL CR$		= $0D$		! RCS 2018-10-15 Ticket #236076
-	LOCAL CrLf$		= $0A0D$	! RCS 2018-10-15 Ticket #236076
-	LOCAL Tab$		= $09$	
-
+	LOCAL CrLf$		= $0A0D$
 
 	! objects
 	LOCAL coCompany				! RCS 2019-01-26 for APS company parms
@@ -32,24 +28,24 @@ DEF CLASS "AR_531APSCreditCardSubmit_ui" CREATE REQUIRED DELETE REQUIRED
 	LOCAL cAPSlogCH
 	
 	! Public Functions (Methods)
-	FUNCTION GetEmvForm(StepTwoUrl$, UserAction$)					GET_EMV_FORM			! #236076 - 2019-01-16 RCS
-	FUNCTION GetHostedForm(StepTwoUrl$, UserAction$)				GET_HOSTED_FORM			! PLW 2018-08-21 Ticket #236076
-	FUNCTION GetBrowser(StepTwoUrl$, UserAction$)					GET_BROWSER				! #236076 - 2019-01-09 RCS
-	FUNCTION GetUrlForTesting(TestUrl$, UserAction$)				GET_URL_FOR_TESTING		! #236076 - 2019-01-15 RCS
-	FUNCTION OnUrlChange()											ON_URL_CHANGE			! #236076 - 2019-01-16 RCS
-	FUNCTION GetVaultForm(StepTwoUrl$, UserAction$)					GET_VAULT_FORM			! #236076 - 2019-04-02 RCS
+	FUNCTION GetBrowser(StepTwoUrl$, UserAction$)					GET_BROWSER
+	FUNCTION GetEmvForm(StepTwoUrl$, UserAction$)					GET_EMV_FORM
+	FUNCTION GetHostedForm(StepTwoUrl$, UserAction$)				GET_HOSTED_FORM
+	FUNCTION GetRegistrationForm(ML_RegistrationCode$)				GET_REGISTRATION_FORM
+	FUNCTION GetUrlForTesting(TestUrl$, UserAction$)				GET_URL_FOR_TESTING
+	FUNCTION GetVaultForm(StepTwoUrl$, UserAction$)					GET_VAULT_FORM
+	FUNCTION OnUrlChange()											ON_URL_CHANGE
 	
 	! Local functions (Methods)
 
 	FUNCTION LOCAL BT_CancelClose() 								BT_CANCEL_CLOSE
 	FUNCTION LOCAL BT_OkClose() 									BT_OK_CLOSE
+	FUNCTION LOCAL ChangeML_RegistrationCode()						CHANGE_ML_REGISTRATIONCODE
 	FUNCTION LOCAL ChangeML_TestURL()								CHANGE_ML_TESTURL
-
 	FUNCTION LOCAL PERFORM CreateLog()								CREATE_LOG
 	FUNCTION LOCAL LogMask(tmpOpenRec$,tmpMaskRec$)					LOG_MASK
 	FUNCTION LOCAL OnExit() 										ON_EXIT
 	FUNCTION LOCAL PostLoad() 										POST_LOAD
-
 	FUNCTION LOCAL WriteLog(Type$,Message$)							WRITE_LOG
 	
 	! Elements Defined Elsewhere, but Referenced Locally
@@ -93,7 +89,7 @@ BT_CANCEL_CLOSE:
 RETURN retSUCCESS
 !
 
-BT_OK_CLOSE:				! #236076 - 2019-01-15 RCS **** for test URL.
+BT_OK_CLOSE:			! #236076 - 2019-01-15 RCS **** for test URL.
 	cResponce$			= "SUBMIT"
 	TestURL$			= ML_TestURL$
 	UserAction$			= cResponce$
@@ -101,6 +97,14 @@ BT_OK_CLOSE:				! #236076 - 2019-01-15 RCS **** for test URL.
 RETURN retSUCCESS
 !
 
+CHANGE_ML_REGISTRATIONCODE:
+
+	if len(ML_RegistrationCode$)<>6 {
+		retVal		= retFAILURE
+	}
+	
+RETURN retVal
+!
 
 CHANGE_ML_TESTURL:			! #236076 - 2019-01-15 RCS **** for test URL.
 RETURN retSUCCESS
@@ -139,7 +143,7 @@ ENTER HTTPStepTwoURL$, UserAction$
 RETURN retSuccess
 !
 
-GET_EMV_FORM:			! #236076 - 2019-01-15 RCS
+GET_EMV_FORM:
 ENTER HTTPStepTwoURL$, UserAction$
 	Screen_ID$			= "dEmvForm"
 	_OBJ'Process(HTTPStepTwoUrl$, UserAction$)
@@ -147,7 +151,7 @@ ENTER HTTPStepTwoURL$, UserAction$
 RETURN retSUCCESS
 !
 
-GET_HOSTED_FORM:		! PLW 2018-08-20 Ticket #236076
+GET_HOSTED_FORM:
 ENTER HTTPStepTwoURL$, UserAction$
 	Screen_ID$			= "dHostedForm"
 	_OBJ'Process(HTTPStepTwoUrl$, UserAction$)
@@ -155,14 +159,20 @@ ENTER HTTPStepTwoURL$, UserAction$
 RETURN retSUCCESS
 !
 
-GET_URL_FOR_TESTING:	! #236076 - 2019-01-15 RCS **** for test URL.
+GET_REGISTRATION_FORM:
+ENTER ML_RegistrationCode$
+	Screen_ID$			= "dRegister"
+	_OBJ'Process(ML_RegistrationCode$)
+RETURN retSUCCESS
+
+GET_URL_FOR_TESTING:
 ENTER TestURL$,UserAction$
 	Screen_ID$			= "dGetURL"
 	_obj'Process(TestURL$,UserAction$)
 RETURN retSUCCESS
 !
 
-GET_VAULT_FORM:		! PLW 2018-08-20 Ticket #236076
+GET_VAULT_FORM:
 ENTER HTTPStepTwoURL$, UserAction$
 	Screen_ID$			= "dVaultForm"
 	_OBJ'Process(HTTPStepTwoUrl$, UserAction$)
@@ -173,7 +183,7 @@ LOG_MASK:
 ENTER tmpOpen$,tmpMask$
 	tmpMask$			= tmpOpen$
 	
-	! lay out masked Direct Pay transactions so they are readable.  #236076 RCS
+	! lay out masked Direct Pay transactions so they are readable.
 	if pos("&" 			= tmpMask$) 	\
 		and not(pos("<" = tmpMask$))	\ 
 		and len(tmpMask$)  {
@@ -231,7 +241,8 @@ ON_EXIT:
 	 			ARG_2$	= "CANCELLED"
 	 		}
 			BREAK
-			
+		CASE "DREGISTER"
+			ARG_1$		= ML_RegistrationCode$
 		DEFAULT
 			BREAK
 			
@@ -240,7 +251,7 @@ ON_EXIT:
 RETURN retSUCCESS
 !
 
-ON_URL_CHANGE:			! #236076 - 2019-01-16 RCS
+ON_URL_CHANGE:
 
 	cEndUrl$			= SHELL_BROWSER.ctl'document'url$
 
@@ -280,7 +291,7 @@ RETURN retSUCCESS
 
 POST_LOAD:
 	cScreen$			= ucs(Screen_ID$)
-	if pos(cScreen$="DEMVFORM|DHOSTEDFORM|DVAULTFORM") {	! #236076 - 2019-04-03 RCS
+	if pos(cScreen$="DEMVFORM|DHOSTEDFORM|DVAULTFORM") {
 		SHELL_BROWSER.CTL'Navigate(ARG_1$)
 	}
 RETURN retSUCCESS

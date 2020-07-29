@@ -47,6 +47,7 @@ DEF CLASS "SY_531APSTerminal_bus" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION ValidateDeviceID(val$)									VALIDATE_DEVICEID
 	FUNCTION ValidateD531APSApiKey(val$)							VALIDATE_D531APSAPIKEY
 	FUNCTION ValidatePaymentDevice(val$)							VALIDATE_PAYMENTDEVICE
+	FUNCTION ValidateML_RegistrationCode$(val$)						VALIDATE_ML_REGISTRATIONCODE
 	FUNCTION ValidatePaymentType(value$,cPaymentTypeMethod$)		VALIDATE_PAYMENT_TYPE
 	FUNCTION ValidateTerminalCode(val$)								VALIDATE_TERMINAL_CODE
 	FUNCTION ValidateTerminalPosId(val$)							VALIDATE_TERMINAL_POS_ID
@@ -170,7 +171,6 @@ ENTER (key$)
 RETURN retVal
 !
 
-
 GET_ORIGINAL_VALUE:
 ENTER tmpcolumn$
 	tmpCurrentrcd$		= REC(IOL(cFH))
@@ -268,6 +268,18 @@ ENTER (value$)
 RETURN retVal
 !
 
+VALIDATE_ML_REGISTRATIONCODE:
+ENTER (value$)
+	retVal		= retSUCCESS
+	if len(value$)<>6 {
+		retVal	= retFAILURE
+		LastErrorNum$	= "CI_Invalid"
+		LastErrorMsg$	= MSG("CI_Invalid", "Invalid length of terminal registration code")
+
+	}
+
+RETURN retVal
+!
 
 VALIDATE_DEVICEID:
 ENTER val$
@@ -286,7 +298,6 @@ ENTER val$
 	retVal		= (not(nul(stp(D531APSApiKey$))))
 RETURN retVal
 !
-
 
 VALIDATE_PAYMENTDEVICE:
 	if nul(PaymentDevice$) {
@@ -412,6 +423,7 @@ WRITE:
 	}
 	tmpTerminalKey$		= TerminalKey$
 	tmpTerminalCode$	= TerminalCode$
+	
 	newTerminal			= (EditState = edtNEW)
 	retVal=_OBJ'Write(FROM "SY_Maint")
 	

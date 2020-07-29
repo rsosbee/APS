@@ -1468,7 +1468,7 @@ RETURN retVal
 
 CREATE_LOG:
 	cAPSlogCH			= HFN
-	log$=coSession'PathCompany$+"APS_TRAN"+dte(0:"%Yl%Mz")+".log" ! Breaks the logs into monthly chunks to reduce size. 2018-03-30 RCS
+	log$				= coSession'PathCompany$+"APS_TRAN"+dte(0:"%Yl%Mz")+".log" ! Breaks the logs into monthly chunks to reduce size. 2018-03-30 RCS
 	WHILE 1
 		OPEN LOCK (cAPSlogCH,ERR=*NEXT)log$; BREAK
 		IF ERR<>12 {

@@ -12,9 +12,6 @@ DEF CLASS "SY_531APSTerminal_Svc" CREATE REQUIRED DELETE REQUIRED
 	! Local/Private Properties
 	LOCAL cMainTable$				= "SY_531APSEmvTerminal"
 	LOCAL cIsSysDB					= isTRUE
-	LOCAL cAPSToolSource$			= "../SY/SY_531APSEmvCsTools.m4p"
-	LOCAL cAPSToolDest$				= %SYS_WDX$+"../SY/SY_531APSEmvCsTools.m4p"
-
 	LOCAL Wdx$
 	
 	! file handles
@@ -41,6 +38,9 @@ DEF CLASS "SY_531APSTerminal_Svc" CREATE REQUIRED DELETE REQUIRED
 	! ** @PARAM iol$ [output, string] SY_531APSEmvTerminal IOList
 	! ** @value retSUCCESS(1) Always returns success.
 	FUNCTION GetTerminalData(Termkey$,rec$,iol$)			GET_TERMINAL_DATA
+	! return terminal registration code
+	! ** @PARAM ML_RegistrationCode$ [output, string] Registration code returned for registering the terminal
+	FUNCTION GetEmvRegistration(ML_RegistrationCode$)		GET_EMV_REGISTRATION
 	! return terminal code from workstation ID
 	! ** @PARAM val$ [input, string] workstation name from coSession'WorkstationName$  If null will load from coSession
 	! ** @PARAM TerminalCode$ [output, string] returns the terminal code to read the terminal key for GetTerminalData()
@@ -71,18 +71,8 @@ ON_CREATE:
 	STATIC IOL				= IOL(cD531_APSTerminalFH)
 	cIOLIst$				+= SUB(MID(LST(IOL(cD531_APSTerminalFH)),8),",",SEP)+SEP
 	Wdx$					= coSession'Wdx$
-	! Insure tool is in the workstation folder
-	ToolFound						= isFalse
-	tmpFH							= HFN
-! 	OPEN (tmpFH,ERR=*NEXT)cAPSToolDest$; ToolFound = isTrue
-! 	IF NOT(ToolFound) {
-! 		tmpO						= NEW("*OBJ/pvx_utility")
-! 		tmpO'CopyFile(cAPSToolSource$,cAPSToolDest$,isFalse,ERR=*NEXT)
-! 		DROP OBJECT tmpO,ERR=*NEXT
-! 	} ELSE {
-! 		CLOSE(tmpFH)
-! 	}
 	_obj'ResetDotNet()		! activate the .NET assembly - this adds the URL encoding
+	
 RETURN 
 !
 
@@ -143,31 +133,14 @@ RETURN retVal
 
 CHECK_EMV_SERVICES_RUNNING:
 
-	retVal				= retFAILURE
-	tmpFH				= HFN
-	serviceCnt			= isFALSE
-	retVal				= _obj'GetWorkstationKey(val$,TerminalCode$)
-	retVal				= _obj'ReadRec(TerminalCode$)
-	if not(retVal) {
-		RETURN retVal
+	retVal			= retFAILURE
+	retVal			= _obj'GetWorkstationKey(val$,TerminalCode$)
+	retVal			= _obj'ReadRec(TerminalCode$)
+	
+	if retVal and RegistrationStatus$ <> "registered" {
+		retVal		= retFAILURE
 	}
 
-	! ChipDNA
-	openOK				= isFALSE
-	CALL coSession'Wdx$+"SY_531APSEmvCsTools.m4p;Find_Emv_Chan",Socket$,ServerPort$,OpenOK
-	serviceCnt			+= openOK
-	tmpFH				= HFN
-
-	! web server
-	openOK				= isFALSE
-	CALL coSession'Wdx$+"SY_531APSEmvCsTools.m4p;Find_Emv_Chan",Socket$,EmvWebPort$,OpenOK
-	serviceCnt			+= openOK
-	tmpFH				= 0
-	if serviceCnt		= 2 {
-		retVal			= retSUCCESS
-	} else {
-		retVal			= retFAILURE
-	}
 RETURN retVal
 !
 
@@ -179,7 +152,7 @@ CHECK_TERMINAL_ENABLED:
 	if retVal {
 		retVal		= _obj'ReadRec(TerminalCode$)						! get terminal data
 	}
-	
+
 RETURN retVal
 !
 
@@ -191,7 +164,7 @@ CHECK_TERMINAL_STATUS:
 	}
 	retVal			= _obj'CheckTerminalEnabled()						! is terminal enabled?
 	if retVal and not(ServiceActive) {
-		answer$		= coSession'UI'MessageBox$("","APS EMV Services are not running.\Start the services?","Style=N,Title=APS Payments,Icon=!")
+		answer$		= coSession'UI'MessageBox$("","APS EMV Terminal is not registered.\Register the terminal?","Style=N,Title=APS Payments,Icon=!")
 		SWITCH answer$
 			CASE "YES"
 				retVal	= _obj'GetWorkstationKey(cTermVal$, TerminalCode$)
@@ -224,6 +197,19 @@ CREATE_LOG:
 		cAPSlogCH		= 0
 		BREAK
 	WEND
+RETURN retSUCCESS
+!
+
+GET_EMV_REGISTRATION:
+ENTER ML_RegistrationCode$
+
+	oCreditCardSubmit	= NEW("AR_531APSCreditCardSubmit_ui",coSession)
+	
+	retVal				= oCreditCardSubmit'GetRegistrationForm(ML_RegistrationCode$)
+
+	DROP OBJECT oCreditCardSubmit
+	oCreditCardSubmit	= 0
+
 RETURN retSUCCESS
 !
 
@@ -263,90 +249,27 @@ RESTART_SERVICES:
 ENTER TerminalCode$
 	retVal			= retSUCCESS
 
-	coSession'UI'ProgressBar("init", "APS Payments", "Initializing EMV services...", 0)
+	coSession'UI'ProgressBar("init", "APS Payments", "Resetting EMV terminal...", 0)
 	wait .1 ! force screen to update.
-	_OBJ'WriteLog("EMV Initialization ",Dim(50,"="))
+	_OBJ'WriteLog("EMV Reset ",Dim(50,"="))
 
 	doStart				= isFALSE
 	ServiceActive	= _obj'CheckEmvServicesRunning()
 	if not(ServiceActive) {
-		_OBJ'WriteLog("EMV Initialization ","Services not running, restarting...")
+		_OBJ'WriteLog("EMV Initialization ","Terminal not registered...")
 		_obj'StopServices()
 		wait 1
-		_obj'StartServices()
-		doStart		= isTRUE
+		retVal		= _obj'StartServices()
+
 	}
 	
 	! Now we poll for results
-	tryCount			= 0
-	goodResponse		= isFALSE
-	response$			= isNULL$
-	result$				= isNULL$
-	cGetURL$			= "http://"+WorkstationID$+":"+EmvWebPort$+"/emv/open"
-
-	ServiceActive	= _obj'CheckEmvServicesRunning()
-	if ServiceActive and doStart {
-		_OBJ'WriteLog("EMV Initialization ","Services running, opening terminal...")
-		REPEAT
-			
-			coSession'UI'ProgressBar("update","APS Payments","Waiting for EMV device initalization response",0,"force")
-			wait .1
-			_OBJ'WriteLog("EMV Initialization ","Try count: "+str(tryCount) + " for EMV restart.")
-
-			response$		= coHTTP'DownloadString$(cGetURL$)
-			_OBJ'WriteLog("EMV Initialization response",Response$)
 	
-			tryCount		++
-			cResponse$		= Response$
-			result$			= Response$
-			IF NUL(Response$) {
-				wait 1
-				result$		= isNULL$
-			} else {
-				SWITCH lcs(result$)
-					CASE "pending"		! Pending EMV
-						goodResponse		= isFALSE	! pending - try again.
-						wait 1
-						BREAK
-					CASE "success" 		! Approved
-						goodResponse		= isTRUE	! approved
-						BREAK
-					CASE "failure"		! Warning/Error
-						goodResponse		= isTRUE	! warnings are considered errors - no point in continuing.
-						BREAK
-					DEFAULT			! null
-						goodResponse		= isFALSE	! no response - try again.
-						WAIT 1
-						BREAK
-				END SWITCH
-			}
-				
-		UNTIL goodResponse or tryCount>60
-		
-	}
-	
-	if NUL(result$) or lcs(result$) = "failure" {		! services failed to start.
+	if not(retVal) {			! terminal failed to register.
    		retVal					= retFAILURE
 		LastErrorNum$			= "CI_Report_Unable"
 		LastErrorMsg$			= MSG("CI_Report_Unable","to initialize the EMV device")
   	}
-
-	if retVal {
-		loopCnt					= 0
-		REPEAT
-			loopCnt				++
-			coSession'UI'ProgressBar("update","APS Payments","Waiting for terminal reboot...",0,"force")
-			wait 1
-		UNTIL loopCnt>30
-		
-		loopCnt					= 0
-		REPEAT
-			loopCnt				++
-			coSession'UI'ProgressBar("update","APS Payments","Waiting for terminal ready...",0,"force")
-			wait 1
-		UNTIL loopCnt>30
-
-	}
 
 	if retVal {
 		coSession'UI'ProgressBar("update","APS Payments","Completed activation...",0,"force")
@@ -430,17 +353,55 @@ RETURN retVal
 !
 
 START_SERVICES:
-	startFile$		= "run.bat"
-	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,startFile$,"..\ASI\EMV\" ! + TerminalCode$
-	wait 5
-RETURN retSUCCESS
+	
+	retVal			= _obj'GetWorkstationKey(val$, TermKey$)
+	retval			= _obj'ReadRec(TermKey$)
+	! Save off the Terminal code and name in case a write occurs.
+	cTerminalCode$	= TerminalCode$
+
+	coRegister		= NEW("AR_531ApsCreditCardSubmit_ui",coSession)
+	retVal			= coRegister'GetRegistrationForm(ML_RegistrationCode$)
+	drop object coRegister
+	coRegister		= 0
+
+	if not(retVal) {
+		RETURN retVal
+	}
+
+	! Do activation.
+
+	coEMV			= NEW("SY_531APSEmvRequest",coSession)
+	retVal			= coEMV'DeviceRegister(D531APSApiKey$,ML_RegistrationCode$,StandbyMessage$,DeviceLicense$,DeviceID$,RegistrationStatus$)
+	drop object coEMV
+	coEMV			= 0
+	if retVal {
+		retVal			= retFAILURE
+		WRITE (cD531_APSTerminalFH, ERR=*NEXT); retVal	= retSUCCESS
+	}
+
+RETURN retVal
 !
 
 STOP_SERVICES:
-	stopFile$		= "stop.bat"
-	call wdx$+"../soa/syzdll;Shell_Execute",tmpRetVal,stopFile$,"..\ASI\EMV\" ! + TerminalCode$
-	wait 1
-RETURN retSUCCESS
+	
+	retVal			= _obj'GetWorkstationKey(val$, TermKey$)
+	retval			= _obj'ReadRec(TermKey$)
+	! Save off the Terminal code and name in case a write occurs.
+	cTerminalCode$	= TerminalCode$
+
+	! Do deactivation.
+	coEMV			= NEW("SY_531APSEmvRequest",coSession)
+	retVal			= coEMV'DeviceUnRegister(D531APSApiKey$,DeviceLicense$,DeviceID$,RegistrationStatus$)
+	drop object coEMV
+	coEMV			= 0
+
+	if retVal {
+		DeviceLicense$	= isNULL$
+		retVal			= retFAILURE
+		WRITE (cD531_APSTerminalFH, ERR=*NEXT); retVal	= retSUCCESS
+	}
+	
+RETURN retVal
 !
 	
 TLS_DIRECT_CAST: ! Using SETERR because EVN() fails to return the error if the direct cast fails.

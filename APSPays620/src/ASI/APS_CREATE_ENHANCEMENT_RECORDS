@@ -13,7 +13,7 @@
 	enh.EnhancementCode$	= "ASIAPS"
 	enh.EnhancementLevel	= 6.2
 	enh.ConversionLevel		= 6.2
-	enh.Sublevel			= 8			! Tie to the build.
+	enh.Sublevel			= 10		! Tie to the build.
 	
 	! A/R
 	enh.ModuleCode$			= "A/R"
@@ -78,12 +78,12 @@ Update_All_Companies:
 	tmp	= coSession'CreateTable("SY_531APSTransactionLog","SYSTEM",err=*next)
 	
 	if not(tmp) { ! Check during migration from 4.50
-		MSGBOX "Error updating SY_TransactionLog. Please reinstall APSC2P after migrating!" ! *SC-OK*
+		MSGBOX "Error updating SY_TransactionLog. Please reinstall APS after migrating!" ! *SC-OK*
 		EXIT
 	}
 
 	! Create APS Company table
-	coSession'CreateTable("SY_531APSCompany","SYSTEM") ! company code file. #232007 - RCS
+	coSession'CreateTable("SY_531APSCompany","SYSTEM") ! company code file.
 	wait .5 ! Allow SQL/Windows to update
 
 	! Copy existing company data into the company file if present.
@@ -93,11 +93,11 @@ Update_All_Companies:
 	tmpSY_CompanyFH		= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
  	IF not(tmpSY_CompanyFH) { EXIT } ! sy_company not available
 		
-	IF POS("D531APS"	= UCS(LST(IOL(tmpSY_CompanyFH)))) { ! PLW 2017-12-11 changed to check for any D531APS column
+	IF POS("D531APS"	= UCS(LST(IOL(tmpSY_CompanyFH)))) {
 		! check for copy, remove data from SY_Company and write to SY_531APSCompany
-		cConvert_SyCompany	= 1 ! RCS 2017-12-13 Set conversion flag
+		cConvert_SyCompany	= 1
 		SELECT * from tmpSY_CompanyFH BEGIN $00$ END $FE$
-			READ DATA FROM REC(IOL(cSY_APSCompanyFH)), REC=c2p$ TO IOL=IOL(cSY_APSCompanyFH) ! PLW 2017-12-09 corrected d531_APSCompanyFH to cSY_APSCompanyFH
+			READ DATA FROM REC(IOL(cSY_APSCompanyFH)), REC=c2p$ TO IOL=IOL(cSY_APSCompanyFH)
 			cWrite			= 0
 			WRITE (cSY_APSCompanyFH, REC=c2p$,dom=*next); cWrite = 1 ! do not write if the record already exists
 			if cWrite { ! clear data from SY_Company

@@ -1,13 +1,12 @@
 ! $Id: SO_531APSInvoice_Bus.pvc $
-! Copyright 2018-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
-! #232007 - 2018-02-07 - RCS
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
+!
 !
 DEF CLASS "SO_531APSInvoice_bus" CREATE REQUIRED DELETE REQUIRED
 
 	! Inherits from the following class(es)
 
 	LIKE "SO_Invoice_Bus"
-!	LIKE "SY_531APSMultiCurrencyCommon" ! PLW 2019-02-11 Ticket #248049
 
 	! Public Properties
 

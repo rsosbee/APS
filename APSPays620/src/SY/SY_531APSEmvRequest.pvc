@@ -1,6 +1,6 @@
 ! $Id: SY_531APSEmvRequest.PVC $
-! Copyright 2017-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
-! #232007 - BSosbee (RCS)
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
+! HS-T47 - Bsosbee
 
 DEF CLASS "SY_531APSEmvRequest"
 ! Inherits from the following class(es)
@@ -47,7 +47,6 @@ DEF CLASS "SY_531APSEmvRequest"
 	LOCAL cSecure$					= ""
 	LOCAL cBlocksProcessed
 	LOCAL tlsChk
-!	LOCAL logFile$
 	LOCAL cLF$						= $0D0A$
 	LOCAL CR$						= $0D$
 	LOCAL CrLf$						= $0A0D$
@@ -76,12 +75,13 @@ DEF CLASS "SY_531APSEmvRequest"
 	FUNCTION CreateLog(logFile$,cAPSlogCH)												CREATE_LOG
 	FUNCTION CreateMemoryFile()															CREATE_MEMORY_FILE
 	FUNCTION CreateMemoryFile(memoryIOL$)												CREATE_MEMORY_FILE
-	
-	FUNCTION DisplayError(c2p.errorMessage$)											DISPLAY_ERROR		! #251756 - 2019-05-08 - RCS - refactor error display.
-	
 
+	FUNCTION DeviceRegister(MerchantAPIKey$,RegistrationCode$,nickName$,	\
+							DeviceLicense$,DevSerialNo$,RegStatus$)						DEVICE_REGISTER
+	FUNCTION DeviceUnRegister(MerchantAPIKey$,DeviceLicense$,DevSerialNo$,RegStatus$)	DEVICE_UNREGISTER
+	FUNCTION DisplayError(c2p.errorMessage$)											DISPLAY_ERROR
 
-	FUNCTION FormatErrorMsg$(c2p.errorMessage$,tmpErrMsg$)								FORMAT_ERROR_MSG	! #251756 - 2019-05-08 - RCS - fix wrapping issue in messageboxes.
+	FUNCTION FormatErrorMsg$(c2p.errorMessage$,tmpErrMsg$)								FORMAT_ERROR_MSG
 	FUNCTION FormatResponse(response$, memoryFH, memberTree$)							FORMAT_RESPONSE
 	
 	FUNCTION PERFORM LoadHeader()														LOAD_HEADER
@@ -89,10 +89,7 @@ DEF CLASS "SY_531APSEmvRequest"
 	FUNCTION PERFORM LoadResponse()														LOAD_RESPONSE
 	FUNCTION LogMask(tmpOpenRec$,tmpMaskRec$)											LOG_MASK
 	
-
-	
 	FUNCTION ParseData(response$, member$, value$) 										PARSE_DATA
-	
 	
 	FUNCTION QuoteEncode$(inVal$)														QUOTE_ENCODE			! RCS #239544 - 2018-10-04 
 	
@@ -136,13 +133,13 @@ ENTER coSession
 
 	c2pApiKey$			= cApiKey$	
 	c2p.ApiKey$			= cApiKey$
-	c2p.Enabled			= coCompany'C2PEnabled
-	c2p.Option			= coCompany'C2POption
+!	c2p.Enabled			= coCompany'C2PEnabled
+!	c2p.Option			= coCompany'C2POption
 	c2p.DataFormat$		= DataFormat$
 	c2p.Display			= emvDisplay ! #239836 2018-08-08 RCS
 	def.currency$		= c2p.Currency$
 
-	coDocument			= NEW ("SY_531APSDocument_SVC", coSession)
+!	coDocument			= NEW ("SY_531APSDocument_SVC", coSession)
 
 	cTransactionLogFH	= coSession'openTable("SY_531APSTransactionLog", pthSYSTEM$)
 	
@@ -209,7 +206,7 @@ RETURN
 CREATE_LOG:
 ENTER logFile$, cAPSlogCH
 	if nul(logFile$) {
-		logFile$		= "EMV_Error_"+dte(0:"%Yl%Mz")+".log" ! Breaks the logs into monthly chunks to reduce size.
+		logFile$		= "APS_TRAN"+dte(0:"%Yl%Mz")+".log" ! Breaks the logs into monthly chunks to reduce size.
 	}
 	cAPSlogCH			= HFN
 	log$				= coSession'PathCompany$+logFile$
@@ -268,12 +265,12 @@ CREATE_TRANSLATION:
 RETURN translationFH
 !
 
-
 DEVICE_REGISTER:
-
 ENTER (MerchantAPIKey$),(RegistrationCode$),(nickName$),DeviceLicense$,DevSerialNo$,RegStatus$
 
-preinput -1301; escape
+	if nul(nickName$) {
+		nickName$				= "APS Paments"
+	}
 
 	retVal						= retFAILURE
 	tlsChk						= _obj'ResetDotNet()	! Enable .NET https and check TLS level.
@@ -285,29 +282,14 @@ preinput -1301; escape
  		RETURN retVAL
  	}
 
-	Domain$				= "https://secure.apspaymentgateway.com/api/v2/devices/register"
-!	Request$			= "{registrationCode:"+RegistrationCode$+",deviceNickName:"+nickName$+"}"
-	request$			= "{"
-	member$				= "registrationCode"
-	value$				= RegistrationCode$
-	request$			+= QUO + SUB(member$, "$", isNULL$) + QUO + ":" + _obj'QuoteEncode$(value$) + ","
-	member$				= "deviceNickName"
-	value$				= nickName$
-	request$			= MID(request$, 1, LEN(request$)-1)
-	request$			+= "}"
+	Domain$				= "https://secure.apspaymentgateway.com/api/v2/devices/register&registrationCode="+RegistrationCode$+"&deviceNickname="+nickName$
+	request$			= isNULL$
 	
-
-	! clean up data, removing SEP and changing line feed
-	Request$			= SUB(Request$, SEP, lf$)
-	TRANSLATE Request$, $0D00$+$0A020D0A$
-
 	cMethod$			= "POST"
 	APIUrl$				= Domain$
 	coHttp.BaseAddress$	= Domain$
-	coHTTP'Headers'Add("Authorization:","Bearer "+MerchantAPIKey$)
+	coHTTP'Headers'Add("Authorization","Bearer "+MerchantAPIKey$)
 	coHTTP'Headers'Add("Content-Type","application/json")
-!	coHTTP'Headers'Add("MediaType","text/json")
-!	coHTTP'Headers'Add("Accept","text/json")
 	coHTTP'Headers'Add("ContentLength",STR(LEN(Request$)))
 	coHTTP'Headers'Add("UserAgent","Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0; GTB6; SLCC1; .NET CLR 2.0.50727; Media Center PC 5.0; .NET CLR 1.1.4322; .NET CLR 3.5.30729; .NET CLR 3.0.30618)")
 
@@ -318,33 +300,35 @@ preinput -1301; escape
   		LastErrorNum$			= "SY_531APC2PFailedConnection"
 		LastErrorMsg$			= MSG("SY_531APC2PFailedConnection")
   		coSession'LastErrorMsg$	= msg(-1)
+  		ErrorMessage$			= msg(-1)
 		! log bad transaction
-		_obj'WriteLog("Failed Connection",c2p.ErrorMessage$+cLF$+"URL: "+APIUrl$+cLF$+"Method: "+cMethod$+cLF$+"Request: "+c2p.Request$+cLF$,logFile$) ! #238741 RCS 2018-07-06
+		_obj'WriteLog("Failed Terminal Registration","Term: "+DevSerialNo$+CR$+ErrorMessage$+CR$+"URL: "+APIUrl$+CR$+"Method: "+cMethod$+CR$+"Request: "+Request$,logFile$)
+	} else {
+		retVal			= retSUCCESS
 	}
 
-	ESCAPE
 	if retVal {
 		member$			= "deviceLicense"
 		tmpVal			= _obj'ParseData(response$, member$, DeviceLicense$) 
 		member$			= "registrationStatus"
 		tmpVal			= _obj'ParseData(response$, member$, RegStatus$) 
 		member$			= "serialNumber"
-		tmpVal			= _obj'ParseData(response$, member$, DevSerialNo$) 
+		tmpVal			= _obj'ParseData(response$, member$, DevSerialNo$)
+		! log registration transaction
+		displayText$	= response$
+		_obj'formatDisplay(displayText$)
+		_obj'WriteLog("Registered Terminal","Term: "+DevSerialNo$+CR$+"URL: "+APIUrl$+CR$+"Method: "+cMethod$+CR$+"Response: "+displayText$,logFile$)
 	}
-
 	
 RETURN retVal
 !
 
 DEVICE_UNREGISTER:
 
-ENTER (MerchantAPIKey$),DeviceLicense$,RegStatus$
+ENTER (MerchantAPIKey$),DeviceLicense$,DevSerialNo$,RegStatus$
 
-preinput -1301; escape
-
-	retVal						= retFAILURE
-	tlsChk						= _obj'ResetDotNet()	! Enable .NET https and check TLS level.
-
+	retVal				= retFAILURE
+	tlsChk				= _obj'ResetDotNet()	! Enable .NET https and check TLS level.
 
  	IF NOT(tlsChk) {
    		retVal					= retFAILURE
@@ -355,36 +339,38 @@ preinput -1301; escape
  	}
 
 	Domain$				= "https://secure.apspaymentgateway.com/api/v2/devices/deregister/"+DeviceLicense$
-	Request$			= ""
+	Request$			= isNULL$
 
-	WHILE 1
+	cMethod$			= "DELETE"
+	APIUrl$				= Domain$
+	coHttp.BaseAddress$	= Domain$
+	coHTTP'Headers'Add("Authorization","Bearer "+MerchantAPIKey$)
+	coHTTP'Headers'Add("Content-Type","application/json")
+	coHTTP'Headers'Add("ContentLength",STR(LEN(Request$)))
+	coHTTP'Headers'Add("UserAgent","Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0; GTB6; SLCC1; .NET CLR 2.0.50727; Media Center PC 5.0; .NET CLR 1.1.4322; .NET CLR 3.5.30729; .NET CLR 3.0.30618)")
 
-		cMethod$			= "DELETE"
-		APIUrl$				= Domain$
-		coHttp.BaseAddress$	= Domain$
-		coHTTP'Headers'Add("Authorization:","Bearer "+apsapikey$)
-		coHTTP'Headers'Add("Content-Type","application/json")
-!		coHTTP'Headers'Add("MediaType","text/json")
-!		coHTTP'Headers'Add("Accept","text/json")
-		coHTTP'Headers'Add("ContentLength",STR(LEN(Request$)))
-		coHTTP'Headers'Add("UserAgent","Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 6.0; GTB6; SLCC1; .NET CLR 2.0.50727; Media Center PC 5.0; .NET CLR 1.1.4322; .NET CLR 3.5.30729; .NET CLR 3.0.30618)")
+	response$			= "bad"
+	response$			= coHTTP'UploadString$(APIUrl$,cMethod$,Request$,ERR=*NEXT)
+	IF response$		= "bad" {
+  		retVal					= retFAILURE
+  		LastErrorNum$			= "SY_531APC2PFailedConnection"
+		LastErrorMsg$			= MSG("SY_531APC2PFailedConnection")
+  		coSession'LastErrorMsg$	= msg(-1)
+  		ErrorMessage$			= msg(-1)
+		! log bad transaction
+		_obj'WriteLog("Failed De-Registration","Term: "+DevSerialNo$+CR$+ErrorMessage$+CR$+"URL: "+APIUrl$+cLF$+"Method: "+cMethod$+CR$+"Request: "+c2p.Request$,logFile$)
+	} ELSE {
+		retVal			= retSUCCESS
+	}
 
-		response$					= "bad"
-		response$					= coHTTP'UploadString$(APIUrl$,cMethod$,Request$,ERR=*NEXT)
-		IF response$				= "bad" {
-	  		retVal					= retFAILURE
-	  		LastErrorNum$			= "SY_531APC2PFailedConnection"
-			LastErrorMsg$			= MSG("SY_531APC2PFailedConnection")
-	  		coSession'LastErrorMsg$	= msg(-1)
-			! log bad transaction
-			_obj'WriteLog("Failed Connection",c2p.ErrorMessage$+cLF$+"URL: "+APIUrl$+cLF$+"Method: "+cMethod$+cLF$+"Request: "+c2p.Request$+cLF$,logFile$) ! #238741 RCS 2018-07-06
-		}
-
-	WEND
-	ESCAPE
 	if retVal {
 		member$			= "registrationStatus"
-		tmpVal			= _obj'ParseData(response$, member$, RegStatus$) 
+		tmpVal			= _obj'ParseData(response$, member$, RegStatus$)
+		! log registration transaction
+		displayText$	= response$
+		_obj'formatDisplay(displayText$)
+		_obj'WriteLog("De-Registered Terminal","Term: "+DevSerialNo$+CR$+"URL: "+APIUrl$+CR$+"Method: "+cMethod$+CR$+"Response: "+displayText$,logFile$)
+
 	}
 
 RETURN retVal
@@ -431,8 +417,6 @@ ENTER displayText$, title$, ERR=*NEXT
 	PRINT 'POP',
 RETURN retVal
 !
-
-
 
 FORMAT_DISPLAY:
 ENTER displayText$
@@ -617,7 +601,7 @@ RETURN request$
 
 FORMAT_RESPONSE:
 ENTER (response$), memoryFH, memberTree$
-	cTmpResponse$ 			= response$ ! #240918 - 2018-08-20
+	cTmpResponse$ 			= response$
 	! remove the beginning and ending braces
 	response$				= MID(response$, 2, LEN(response$)-2)
 
@@ -653,12 +637,12 @@ ENTER (response$), memoryFH, memberTree$
 					arrayLength	= i
 					IF MID(response$,i,1)="[" {
 						internalArray		++
-						internalArrayStart	= i + 1 ! #240918 - 2018-08-20
+						internalArrayStart	= i + 1
 					}
 					IF MID(response$,i,1)="]" {
 						IF internalArray {
 							internalArray	--
-							internalArrayLen	= i - internalArrayStart ! #240918 - 2018-08-20
+							internalArrayLen	= i - internalArrayStart
 							response$(internalArrayStart,internalArrayLen)	= SUB(mid(response$,internalArrayStart,internalArrayLen), "},{", "}|{") ! preserve tertiary sub array. #240918 - 2018-08-20
 						}	ELSE {
 							BREAK
@@ -1102,7 +1086,7 @@ RETURN retVal
 
 SEND_REQUEST:
 ENTER (documentCode$), (documentPath$), memoryFH, ERR=*NEXT
-preinput -1301; escape
+
 	cDocumentCode$				= documentCode$
 	coDocument'FIND(documentCode$)
 	coDocument'GetValue("displayTransaction$", displayTransaction$)
@@ -1464,7 +1448,7 @@ ENTER LogType$, LogMessage$, logFile$
 		date$					= dte(0:"%Mz/%Dz/%Yz")
 		stamp$					= "APS EMV Log - Date: "+date$+" Time: "+time$+" Mode: "+LogType$+" User: "+coSession'UserCode$
 		MaskedRequestLog$		= LogMessage$
-		PRINT (cAPSlogCH)CrLf$+stamp$
+		PRINT (cAPSlogCH)CR$+stamp$
 		PRINT (cAPSlogCH)MaskedRequestLog$+CrLf$
 		CLOSE(cAPSlogCH)
 		cAPSlogCH 				= 0
