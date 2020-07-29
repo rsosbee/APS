@@ -35,6 +35,7 @@ DEF CLASS "AR_531APSCreditCardCommon" CREATE REQUIRED DELETE REQUIRED
 	LOCAL tmpFaxNo$
 	LOCAL tmpPhoneNo$
 	LOCAL tmpShipping
+	LOCAL cEmvEnabled
 	
 
 	! File handles
@@ -48,6 +49,7 @@ DEF CLASS "AR_531APSCreditCardCommon" CREATE REQUIRED DELETE REQUIRED
 
 	! Object handles
 	LOCAL coCompany
+	LOCAL coTerminalSvc
 
 	! Public Functions (Methods)
 	! ** Use AR_CreditCard'ProcessAPSVault to Create or Update card data in APS Vault
@@ -118,6 +120,12 @@ ON_CREATE:
 	coCompany'GetValue("D531_APSCreditCardLog$", cAPSCreditCardLog$)
 	c2p.Enabled			= coCompany'C2PEnabled ! #232007 - RCS - 2018-02-28
 	cAR_TransactionPaymentHistoryCh		= _OBJ'OpenTable("AR_TransactionPaymentHistory", pthCOMPANY$)
+	
+	coTerminalSvc		= new("SY_531APSTerminal_Svc",coSession)
+	
+	! check for EMV activation
+	cEmvEnabled			= isFALSE
+	cEmvEnabled			= coTerminalSvc'CheckProcessingPaymentTypesExist()
 
 RETURN
 !
@@ -130,7 +138,8 @@ ON_DELETE:
 	CLOSE (cSourceHeaderFH,ERR=*PROCEED);	cSourceHeaderFH	= 0
 	CLOSE (cAR_InvoiceHistoryDetailFH,ERR=*PROCEED);		cAR_InvoiceHistoryDetailFH		= 0
 	CLOSE (cAR_TransactionPaymentHistoryCh,ERR=*PROCEED);	cAR_TransactionPaymentHistoryCh	= 0
-	DROP OBJECT coCompany,err=*proceed;		coCompany=0
+	DROP OBJECT coCompany,err=*proceed;		coCompany		= 0
+	DROP OBJECT coTerminalSvc,err=*proceed;	coTerminalSvc	= 0
 	%APSRequireCVV$		= isNULL$ ! #236603 - 2018-05-15 RCS
 	%APSRetailAcct$		= isNULL$ ! #236603 - 2018-05-15 RCS
 	%PaymentType$		= isNULL$ ! #236603 - 2018-05-15 RCS
@@ -1613,6 +1622,18 @@ ENTER APSvoid,APStype$,APSkey$,ERR=*NEXT
 			RETURN retVal
 		} 
 	}
+	if cEmvEnabled and UseEmvDevice$ = isYES$ {
+		cTermVal$		= coSession'WorkstationName$
+		tmpVal			= coTerminalSvc'GetDeviceLicense(cTermVal$,DeviceLicense$,RegistrationStatus$)
+		if not(tmpVal) or nul(DeviceLicense$) {
+ 			LastErrorNum$	= "CI_CannotProcessCC"
+			LastErrorMsg$	= MSG( "CI_CannotProcessCC", "EMV Terminal is not Registered" )
+			RETURN retFAILURE
+		} else {
+			cDeviceLicense$		= DeviceLicense$
+			ProcessHostedForm	= isFALSE
+		}
+	}
 
 	! Now we can process the transaction...
 	!
@@ -1800,23 +1821,31 @@ ENTER APSvoid,APStype$,APSkey$,ERR=*NEXT
 		defaultRec$		= REC(defaultIOL$)						! RCS 2018-10-23 #236076
 		cBillingData$	= isNULL$
 
-		IF POS(MID(TransactionType$,2,1)="127") { ! sale, pre-auth, or credit  #260849 - 2019-12-04 - RCS changed to always show hosted form per Zac.
-			SWITCH TransactionType$
-				CASE "11","12","17"
-					! hosted form.
-					ArCreditCard'isXML				= isTRUE
-					ArCreditCard'ProcessHostedForm	= isTRUE
-					ArCreditCard'AddBillingData(cBillingData$,defaultRec$,defaultIOL$)
-					BREAK
-					
-				DEFAULT
-					! No user interface (direct post).
-					ArCreditCard'isXML				= isFALSE
-					ArCreditCard'ProcessHostedForm	= isFALSE
-					ArCreditCard'AddBillingUrlData(cBillingData$,defaultRec$,defaultIOL$)
-					BREAK
-					
-			END SWITCH
+		IF POS(MID(TransactionType$,2,1)="127") { ! sale, pre-auth, or credit  2019-12-04 - RCS changed to always show hosted form per Zac.
+			if cEmvEnabled and UseEmvDevice$ = isYES$ and cDeviceLicense$ > isNULL$ and MID(TransactionType$,2,1)="1" {	! EMV, Sale Only.
+				! No user interface (direct post) for EMV
+				ArCreditCard'isXML				= isFALSE
+				ArCreditCard'ProcessHostedForm	= isFALSE
+				ArCreditCard'AddBillingUrlData(cBillingData$,defaultRec$,defaultIOL$)
+			
+			} else {
+				SWITCH TransactionType$
+					CASE "11","12","17"
+						! hosted form.
+						ArCreditCard'isXML				= isTRUE
+						ArCreditCard'ProcessHostedForm	= isTRUE
+						ArCreditCard'AddBillingData(cBillingData$,defaultRec$,defaultIOL$)
+						BREAK
+						
+					DEFAULT
+						! No user interface (direct post).
+						ArCreditCard'isXML				= isFALSE
+						ArCreditCard'ProcessHostedForm	= isFALSE
+						ArCreditCard'AddBillingUrlData(cBillingData$,defaultRec$,defaultIOL$)
+						BREAK
+						
+				END SWITCH
+			}
 		}
 	
 		IF cVoidSkip		= isTRUE or APSTransactionType$	= "void" {	! #255414 - 2019-08-26 - RCS
@@ -1874,10 +1903,18 @@ ENTER APSvoid,APStype$,APSkey$,ERR=*NEXT
 		! SET REQUEST
 		! required fields
 		RequestString$		= MainRequestString$ + "&type=" + APSTransactionType$				! 2018-08-29 RCS set action first.
+		if cEmvEnabled							\
+			and UseEmvDevice$	= isYES$		\
+			and cDeviceLicense$	> isNULL$		\
+			and MID(TransactionType$,2,1) = "1"	\
+			and Amount 			>= 0			\
+			and APSTransactionType$ <> "void" {
+			RequestString$	+= "&poi_device_id=" + cDeviceLicense$								! EMV device license
+		}
+
 		if APSTransactionType$ <> "void" {
 			RequestString$	+= CustomerVaultRequestString$
 		}
-
 		IF APSTransactionType$	= "sale" OR		\ 
 			APSTransactionType$	= "auth" OR		\
 			APSTransactionType$	= "credit" OR	\

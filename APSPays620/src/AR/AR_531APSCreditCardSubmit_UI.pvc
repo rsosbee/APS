@@ -243,6 +243,9 @@ ON_EXIT:
 			BREAK
 		CASE "DREGISTER"
 			ARG_1$		= ML_RegistrationCode$
+			if cResponce$	= "CANCEL" {
+				ARG_1$	= cResponce$
+			}
 		DEFAULT
 			BREAK
 			

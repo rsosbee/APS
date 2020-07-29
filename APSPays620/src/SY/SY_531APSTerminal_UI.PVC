@@ -194,6 +194,10 @@ BT_ACTIVATE:
 	retVal			= coRegister'GetRegistrationForm(ML_RegistrationCode$)
 	drop object coRegister
 	coRegister		= 0
+	IF ML_RegistrationCode$ = "CANCEL" {
+		ML_RegistrationCode$	= isNULL$
+		retVal		= retFAILURE
+	}
 
 	if not(retVal) {
 		RETURN retVal

@@ -1,21 +1,19 @@
 ! $Id: SY_531APSEmvStatus_ui.pvc $
-! Copyright 2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 ! ** @Author Bsosbee
 ! ** @Date 2019.03.22 12 at 03:14:57 PM EDT
-! #236076 - 2019-03-22 RCS
 ! 
 DEF CLASS "SY_531APSEmvStatus_ui" CREATE REQUIRED DELETE REQUIRED
 	! Inherits from the following class(es)
 	LIKE "SY_CommonUI"
 	LIKE "SY_Constant"
 	
-	
 	! Public Properties
 	
 	! Local/Private Properties
 	LOCAL cEmvEnabled
 	LOCAL cAPSActivated
-	LOCAL cTermIOL$	= cpl("IOLIST TerminalKey$, TerminalCode$, WorkstationID$, WorkstationDesc$, *,*,*, TerminalPosID$")
+	LOCAL cTermIOL$		= cpl("IOLIST TerminalKey$, TerminalCode$, WorkstationID$, WorkstationDesc$, *,*,*, TerminalPosID$")
 	LOCAL EmvEnabled
 	LOCAL iol$
 	LOCAL isRunning
@@ -99,7 +97,7 @@ ON_DELETE:
 	! objects
 	if coTerminalSvc {
 		DROP OBJECT coTerminalSvc,ERR=*NEXT
-		coTerminalSvc		= 0
+		coTerminalSvc	= 0
 	}
 	
 RETURN 
@@ -111,14 +109,14 @@ RETURN retSUCCESS
 !
 
 BT_CANCEL:
-	CMD_STR$		= "End"
+	CMD_STR$			= "End"
 RETURN retSUCCESS
 !
 
 BT_ENABLE:
 	_OBJ'SetControlState("BUTTON.GRP$",	ctlDISABLE)
-	isRunning	= _obj'GetStatus()
-	refresh_flg = isTRUE
+	isRunning			= _obj'GetStatus()
+	refresh_flg			= isTRUE
 	SWITCH isRunning
 		CASE isTRUE
 			_OBJ'SetControlState("STOP.GRP$",	ctlENABLE)
@@ -133,42 +131,42 @@ RETURN retSUCCESS
 !
 
 BT_START:
-	cTermVal$		= coSession'WorkstationName$
-	retVal			= coTerminalSvc'GetWorkstationKey(cTermVal$, TerminalCode$)	! find by workstation ID
-	retVal			= coTerminalSvc'RestartServices(TerminalCode$)
+	cTermVal$			= coSession'WorkstationName$
+	retVal				= coTerminalSvc'GetWorkstationKey(cTermVal$, TerminalCode$)	! find by workstation ID
+	retVal				= coTerminalSvc'RestartServices(TerminalCode$)
 	_obj'BT_Enable()
 	
 RETURN retVal
 !
 
 BT_STOP:
-	retVal			= coTerminalSvc'StopServices()
+	retVal				= coTerminalSvc'StopServices()
 	_obj'BT_Enable()
 RETURN retVal
 !
 
 GET_STATUS:
-	isRunning		= isFALSE
+	isRunning			= isFALSE
 	if cEmvEnabled {
-		isRunning	= coTerminalSvc'CheckEmvServicesRunning()
-		EmvEnabled	= isRunning
-		ML_Status$	= tbl(isRunning,"Not Running...","Running...")
-		refresh_flg = isTRUE
-		retVal		= isRunning
+		isRunning		= coTerminalSvc'CheckEmvServicesRunning()
+		EmvEnabled		= isRunning
+		ML_Status$		= tbl(isRunning,"Not Running...","Running...")
+		refresh_flg 	= isTRUE
+		retVal			= isRunning
 	}
 	
 RETURN retVal
 !
 
 PRE_LOAD:
-	retVal			= _obj'GetStatus()
+	retVal				= _obj'GetStatus()
 RETURN retVal
 !
 
 POST_LOAD:
 	
-	refresh_flg = isTRUE
-	tmp = _OBJ'AppendTitleBar(FROM "SY_CommonUI")
+	refresh_flg			= isTRUE
+	tmp					= _OBJ'AppendTitleBar(FROM "SY_CommonUI")
 	_obj'BT_Enable()
 
 RETURN retSUCCESS

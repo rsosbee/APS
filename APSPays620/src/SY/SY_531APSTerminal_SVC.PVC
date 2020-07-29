@@ -34,6 +34,13 @@ DEF CLASS "SY_531APSTerminal_Svc" CREATE REQUIRED DELETE REQUIRED
 	! ** Check AR_PaymentType records for Credit Card with valid EMV connections
 	! ** @returns retSUCCESS if there are any payment methods with valid EMV connections
 	FUNCTION CheckProcessingPaymentTypesExist()				CHECK_PROCESSING_PAYMENT_TYPES_EXIST
+	! ** Returns the device license and the registration status for EMV processing
+	! ** @returns retSUCCESS if valid terminal and is registered to process
+	! ** @PARAM val$ [input, string] workstation name from coSession'WorkstationName$  If null will load from coSession
+	! ** @PARAM DeviceLicense$ [output, string] returns the device license
+	! ** @PARAM RegistrationStatus$ [output, string] returns the device registration status.
+	FUNCTION GetDeviceLicense(val$,DeviceLicense$,			\
+								RegistrationStatus$)		GET_DEVICE_LICENSE
 	! ** @PARAM rec$ [output, string] SY_531APSEmvTerminal record
 	! ** @PARAM iol$ [output, string] SY_531APSEmvTerminal IOList
 	! ** @value retSUCCESS(1) Always returns success.
@@ -137,7 +144,7 @@ CHECK_EMV_SERVICES_RUNNING:
 	retVal			= _obj'GetWorkstationKey(val$,TerminalCode$)
 	retVal			= _obj'ReadRec(TerminalCode$)
 	
-	if retVal and RegistrationStatus$ <> "registered" {
+	if retVal and LCS(RegistrationStatus$) <> "registered" {
 		retVal		= retFAILURE
 	}
 
@@ -200,6 +207,20 @@ CREATE_LOG:
 RETURN retSUCCESS
 !
 
+GET_DEVICE_LICENSE:
+ENTER (val$),DeviceLicense$,RegistrationStatus$
+
+	
+	retVal			= _obj'GetWorkstationKey(val$, TermKey$)
+	retval			= _obj'ReadRec(TermKey$)
+	
+	if nul(DeviceLicense$) {
+		retVal		= retFAILURE
+	}
+	
+RETURN retVal
+!
+
 GET_EMV_REGISTRATION:
 ENTER ML_RegistrationCode$
 
@@ -209,6 +230,11 @@ ENTER ML_RegistrationCode$
 
 	DROP OBJECT oCreditCardSubmit
 	oCreditCardSubmit	= 0
+	
+	if ML_RegistrationCode$ = "CANCEL" {
+		ML_RegistrationCode$	= isNULL$
+		RETURN retFAILURE
+	}
 
 RETURN retSUCCESS
 !
@@ -363,6 +389,10 @@ START_SERVICES:
 	retVal			= coRegister'GetRegistrationForm(ML_RegistrationCode$)
 	drop object coRegister
 	coRegister		= 0
+	IF ML_RegistrationCode$ = "CANCEL" {
+		ML_RegistrationCode$	= isNULL$
+		retVal		= retFAILURE
+	}
 
 	if not(retVal) {
 		RETURN retVal

@@ -49,7 +49,7 @@ END DEF
 
 ON_CREATE:
 	! check for activation
-	coAPSActivation=NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
+	coAPSActivation				= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
 	IF coAPSActivation {
 		cAPSActivated			= coAPSActivation'CheckAPSActivation()
 		DROP OBJECT coAPSActivation
@@ -104,8 +104,8 @@ BT_CREDITCARD:
 	cUpdateAPSCard				= isFALSE
 	vaultIOL$          			= CPL("IOLIST CreditCardGUID$, ExpirationDateYear$, ExpirationDateMonth$, CardType$, "	\
 	                    		+ "Last4UnencryptedCreditCardNos$, Last4BankRoutingNos$, Last4BankAccountNos$, BankAccountType$, CardholderName$")
-	if nul(defaultRec$) {		! #237076 - 2018-11-20
-		! clean the data #252088 - 2019-06-06 RCS
+	if nul(defaultRec$) {
+		! clean the data
 		CardHolderName$		= _obj'APSCleanData$(CardHolderName$)
 		AVSAddressLine1$	= _obj'APSCleanData$(AVSAddressLine1$)
 		AVSAddressLine2$	= _obj'APSCleanData$(AVSAddressLine2$)
@@ -119,7 +119,7 @@ BT_CREDITCARD:
 	fromBTCC					= isTRUE
 	%creditMemo					= (InvoiceType$ = "CM")
 	cTestAmt					= TransactionAmt + ML_TransactionAmt_Dep + CreditCard_PostingAmt
-	
+
 	if %cEmvDevice$ = isYES$ and %EmvEnabled = isTRUE and cTestAmt <= 0 {
 		LastErrorNum$			= "SY_531APSEmvAmount"
 		LastErrorMsg$			= MSG("SY_531APSEmvAmount")
@@ -146,9 +146,9 @@ BT_CREDITCARD:
 		coSession'UI'MessageBox$(cCreditCardBusObject'LastErrorNum$, errMessage$)
 	} ELSE {
 		oldExpDate$				= ExpirationDateYear$ + ExpirationDateMonth$
-		oldValidated$			= D531APSValidated$			! #236076 - 2019-02-06 RCS
-		oldMaskedCard$			= D531APSMaskedCard$		! #236076 - 2019-02-06 RCS
-		oldAchAccountType$		= D531APSAchAccountType$	! #236076 - 2019-02-06 RCS
+		oldValidated$			= D531APSValidated$	
+		oldMaskedCard$			= D531APSMaskedCard$
+		oldAchAccountType$		= D531APSAchAccountType$
 
 		IF NOT(cARCustCreditCardFH) {
 			cARCustCreditCardFH	= _OBJ'OpenTable("AR_CustomerCreditCard", pthCOMPANY$)
@@ -215,9 +215,9 @@ BT_CREDITCARD:
 
 ! *******
 
-				vTmpIOL$		= CPL ("IOLIST PaymentType$,CreditCardGUID$,Last4UnencryptedCreditCardNos$,ExpirationDateYear$,ExpirationDateMonth$,CardType$,Last4BankRoutingNos$,Last4BankAccountNos$,BankAccountType$,accountName$,CustomerName$,CustomerID$,CardID$")
+				vTmpIOL$		= CPL("IOLIST PaymentType$,CreditCardGUID$,Last4UnencryptedCreditCardNos$,ExpirationDateYear$,ExpirationDateMonth$,CardType$,Last4BankRoutingNos$,Last4BankAccountNos$,BankAccountType$,accountName$,CustomerName$,CustomerID$,CardID$")
 				vTmpRec$		= rec(vTmpIOL$)
-				cVaultIOL$		= cCreditCardBusObject'vaultIOL$
+				cVaultIOL$		= cCreditCardBusObject'ArCreditCard'vaultIOL$
 				
 				retVal			= cCreditCardBusObject'ProcessAPSVault(vaultOp$,vTmpRec$,cVaultIOL$,defaultRec$,defaultIOL$)
 				
@@ -241,19 +241,19 @@ BT_CREDITCARD:
 ! 									defaultIOL$)  								! PLW 2018-08-17 Ticket #236076
 				%SaveCard$		= $$
 			}
-			! *** check to verify that if not ACH that the ACH fields are null.  #226341 - 2017-09-20 RCS
-			if retVal and not(cCreditCardBusObject'PaymentTypeMethod$ = "A") {	! #233534 RCS 2018-01-10
+			! *** check to verify that if not ACH that the ACH fields are null.
+			if retVal and not(cCreditCardBusObject'PaymentTypeMethod$ = "A") {
 				Last4BankRoutingNos$	= $$
 				Last4BankAccountNos$	= $$
 			}
 
 			IF retVal = retFAILURE AND cCreditCardBusObject'LastErrorNum$ = "AR_PaymentType_05" {
 				IF UCS(_OBJ'_Class$)	= "AR_CASHRECEIPTS_UI" {
-					tmp1$				= TBL(cCreditCardBusObject'PaymentTypeMethod$ = "A", "ACH", "credit card") ! #233534 RCS 2018-01-10
+					tmp1$				= TBL(cCreditCardBusObject'PaymentTypeMethod$ = "A", "ACH", "credit card")
 					coSession'UI'MessageBox$("AR_PaymentType_06", MSG("AR_PaymentType_06", TBL(tmp1$="ACH", "a ", "an ")+tmp1$, tmp1$, "ontop"))
 					CreditCardGUID$		= $$
 				} ELSE {
-					IF cCreditCardBusObject'PaymentTypeMethod$ = "A" AND NOT(coSession'CheckSecurityEvent( "SE_ARAllowAddEditCreditCards" )) { ! #233534 RCS 2018-01-10
+					IF cCreditCardBusObject'PaymentTypeMethod$ = "A" AND NOT(coSession'CheckSecurityEvent( "SE_ARAllowAddEditCreditCards" )) {
 						cSkipMsgBox		= isTRUE
 						coSession'UI'MessageBox$("CI_Rights", MSG("CI_Rights", "add", "credit card record"), "ontop")
 					} ELSE {
@@ -267,7 +267,7 @@ BT_CREDITCARD:
 								CreditCardGUID$	= cCreditCardBusObject'ARCreditCard'SwitchVaultRecord$(from_m_id$, from_m_key$, to_m_id$, to_m_key$, \
 													CreditCardGUID$, PaymentType$, coSession'CompanyCode$)
 							}
-							CardHolderName$	= _obj'APSCleanData$(CardHolderName$)	! #252088 - 2019-06-06 RCS
+							CardHolderName$	= _obj'APSCleanData$(CardHolderName$)
 							vaultRec$		= REC(vaultIOL$)
 							ID				= PaymentType.ctl
 							ID$				= "PaymentType"
@@ -382,7 +382,7 @@ BT_CREDITCARD:
 				}
 				
 				if cUpdateAPSCard {
-					_obj'UpdateApsCardOnFile()					! #260849 - 2019-12-05 RCS
+					_obj'UpdateApsCardOnFile()
 				}
 				
 
@@ -458,7 +458,7 @@ CHANGE_CREDIT_CARD_TRANSACTION_ID:
 RETURN retVal
 !
 
-CREDIT_CARD_PRE_DELETE: ! #232007 for C2P. RCS 2018-02-28 - does NOT call back to base.
+CREDIT_CARD_PRE_DELETE: ! for C2P. RCS 2018-02-28 - does NOT call back to base.
 
 	coBusiness'GetValue("D531_C2PPaymentId$",D531_C2PPaymentId$)
 
@@ -507,7 +507,7 @@ CHANGE_PAYMENT_TYPE:
 	retVal					= _OBJ'ChangePaymentType(FROM "AR_531APSCreditCardCommonEntry_ui_BASE")
 	
 RETURN retVal
-
+!
 
 UPDATE_APS_CARD_ON_FILE:
 

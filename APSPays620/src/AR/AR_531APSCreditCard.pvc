@@ -17,6 +17,7 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	PROPERTY ItemCommodityCode$
 	PROPERTY ShipFromPostal$
 	PROPERTY vaultIOL$
+	PROPERTY EmvEnabled
 
 	! Local/Private Properties
 	LOCAL cAPSActivated
@@ -53,6 +54,7 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	LOCAL cFromCustMaint
 	LOCAL cUseEmvDevice$
 	LOCAL cEmvEnabled
+	LOCAL cDeviceLicense$
 	LOCAL token_id$
 	LOCAL cSourceRef$
 	LOCAL isNULL$
@@ -331,9 +333,17 @@ ENTER coSession
 	_obj'ResetDotNet()			! activate the .NET assembly - this adds the URL encoding
 	
 	_OBJ'FindURLs()				! #236076 - 2019-02-04 RCS
-	
 
-	vaultIOL$			= CPL ("IOLIST PaymentType$,CreditCardGUID$,Last4UnencryptedCreditCardNos$,ExpirationDateYear$,ExpirationDateMonth$,CardType$,Last4BankRoutingNos$,Last4BankAccountNos$,BankAccountType$,accountName$,CustomerName$,CustomerID$,CardID$")
+	coTerminalSvc		= new("SY_531APSTerminal_Svc",coSession)
+	
+	! check for EMV activation
+	EmvEnabled			= isFALSE
+	EmvEnabled			= coTerminalSvc'CheckProcessingPaymentTypesExist()
+	drop object coTerminalSvc
+	coTerminalSvc		= 0
+	%EmvEnabled			= EmvEnabled
+
+	vaultIOL$			= CPL("IOLIST PaymentType$,CreditCardGUID$,Last4UnencryptedCreditCardNos$,ExpirationDateYear$,ExpirationDateMonth$,CardType$,Last4BankRoutingNos$,Last4BankAccountNos$,BankAccountType$,accountName$,CustomerName$,CustomerID$,CardID$")
 	
 RETURN
 !
@@ -2507,11 +2517,26 @@ ENTER RequestString$, APSProcRec$, APSProcIOL$, defaultRec$, defaultIOL$
 		LastErrorMsg$	= MSG( "CI_CannotProcessCC", "Amount cannot be zero or negative for EMV" )
 		RETURN retFAILURE
  	}
-
-	IF coSession'UI AND NOT(coSession'WebEngine) {
-		coSession'UI'ProgressBar("init","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")	! #247203 - 2019-02-28 RCS
-		wait .1 ! #231342 - force screen to update.
+	if cEmvEnabled and cUseEmvDevice$ = isYES$ {
+		coTerminalSvc	= new("SY_531APSTerminal_Svc",coSession)
+		cTermVal$		= coSession'WorkstationName$
+		tmpVal			= coTerminalSvc'GetDeviceLicense(cTermVal$,DeviceLicense$,RegistrationStatus$)
+		if not(tmpVal) or nul(DeviceLicense$) {
+ 			LastErrorNum$	= "CI_CannotProcessCC"
+			LastErrorMsg$	= MSG( "CI_CannotProcessCC", "EMV Terminal is not Registered" )
+		RETURN retFAILURE
+		} else {
+			cDeviceLicense$		= DeviceLicense$
+			ProcessHostedForm	= isFALSE
+		}
+		drop object coTerminalSvc
+		coTerminalSvc	= 0
 	}
+	IF coSession'UI AND NOT(coSession'WebEngine) {
+		coSession'UI'ProgressBar("init","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")
+		wait .1 ! force screen to update.
+	}
+	
 			
 	if %creditmemo {
 		cUseEmvDevice$	= isNO$	! do not process credit memos on EMV.
@@ -2529,21 +2554,21 @@ ENTER RequestString$, APSProcRec$, APSProcIOL$, defaultRec$, defaultIOL$
 		ccExpiration$	= tbl(len(ccExp$)=6,ccExp$,mid(ccExp$,1,2)+mid(ccExp$,-2,2))
 		cSourceRef$		= sourceRef$
 
-		ThreeStepFlag 	= ProcessHostedForm				! PLW 2018-08-21 Ticket #236076, changed to ProcessHostedForm, was nul(VaultID$) RCS 2018-11-02.
-		IF NOT(ThreeStepFlag) { 						! PLW 2018-08-21 Ticket #236076
+		ThreeStepFlag 	= ProcessHostedForm
+		IF NOT(ThreeStepFlag) {
 			retVAL 		= _obj'ProcessSecureHttp()
-		} ELSE { ! PLW 2018-08-21 Ticket #236076
-			retVal 		= _obj'ProcessThreeStepApi()	! PLW 2018-08-21 Ticket #236076
-		} ! PLW 2018-08-21 Ticket #236076
+		} ELSE {
+			retVal 		= _obj'ProcessThreeStepApi()
+		}
 		IF retVAL {
 			UCSResponse$		= UCS(Response$)
 			AVSSVVResponse$		= UCS(Response$)
 			IF ThreeStepFlag {
 				APSStatus$		= response.result_text$
 				ResponseCode$	= response.result_code$
-				IF ResponseCode$ = "100" { ! PLW 2019-11-05 Ticket #259440 If card not being saved status comes back as "Approved"
-					APSStatus$ 	= "SUCCESS" ! PLW 2019-11-05 Ticket #259440 If card not being saved status comes back as "Approved"
-				} ! PLW 2019-11-05 Ticket #259440 If card not being saved status comes back as "Approved"
+				IF ResponseCode$ = "100" { 
+					APSStatus$ 	= "SUCCESS"
+				}
 				ResponseText$	= response.result_text$
 				authCode$		= response.authorization_code$
 				transID$		= response.transaction_id$
@@ -2856,10 +2881,10 @@ PROCESS_SECURE_HTTP:
 	! This is where we need the TOKEN ID and we can use this to send step 3 and receive the response with the vault ID, transaction ID, etc.
 
 	retVal = retSUCCESS
-	IF NUL(cHttpQueryHost$) OR NUL(cHttpHost$) OR NUL(cHttpStepOneUrl$) {  ! PLW 2018-08-17 Ticket #236076
+	IF NUL(cHttpQueryHost$) OR NUL(cHttpHost$) OR NUL(cHttpStepOneUrl$) {
 		_OBJ'FindURLs()
 	}
-	IF UCS(Action$) = "QUERY" {
+	IF UCS(Action$) 	= "QUERY" {
 		hostString$		= cHttpQueryType$+"://"+cHttpQueryHost$+cHttpQueryFile$+"?"+RequestString$
 	} ELSE {
 		hostString$		= cHttpType$+"://"+cHttpHost$+cHttpFile$+"?"+RequestString$
@@ -2899,7 +2924,8 @@ PROCESS_SECURE_HTTP:
  		RETURN retFAILURE
  	}
 
-	WriteFailed			= isTRUE, response$ = coHTTP'DownloadString$(hostString$,ERR=*NEXT); WriteFailed	= isFALSE
+	WriteFailed			= isTRUE
+	response$			= coHTTP'DownloadString$(hostString$,ERR=*NEXT); WriteFailed	= isFALSE
 	
 	if nul(Response$) { 
 		_OBJ'WriteLog("APS Response"+Action$,"Connection failed: "+msg(-1)+CrLf$+"Response: "+Response$) 
