@@ -143,7 +143,13 @@ CHECK_EMV_SERVICES_RUNNING:
 	retVal			= retFAILURE
 	retVal			= _obj'GetWorkstationKey(val$,TerminalCode$)
 	retVal			= _obj'ReadRec(TerminalCode$)
-	
+
+	! Do list check.
+	coEMV			= NEW("SY_531APSEmvRequest",coSession)
+	DevLicense$		= DeviceLicense$
+	retVal			= coEMV'DeviceStatus(D531APSApiKey$,DevLicense$,DevID$,RegistrationStatus$)
+	drop object coEMV
+
 	if retVal and LCS(RegistrationStatus$) <> "registered" {
 		retVal		= retFAILURE
 	}

@@ -1,8 +1,8 @@
 ! $Id: AR_531APSCreditCard.pvc $
 ! AR Credit Card Class - Process Credit Card transactions using SPS Exchange
-! Accounting Systems, Inc. 2013-2018. PLWhirley
-! #229341 - 2017-09-20 RCS
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 !
+
 DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 
 	! Inherits from the following class(es)
@@ -67,14 +67,14 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	LOCAL cAPSlogCH
 	LOCAL cHostCH
 	LOCAL cServiceOrderPaymentFH
-	LOCAL cSY_CompanyFH			! PLW 2015-06-02
-	LOCAL ConvertFH				! PLW 2018-08-20 Ticket #236076 memory file used for transaction conversion
-	LOCAL cSY_TokenFH			! #236076 - 2019-02-01 RCS - token management
+	LOCAL cSY_CompanyFH
+	LOCAL ConvertFH				! memory file used for transaction conversion
+	LOCAL cSY_TokenFH			! 2019-02-01 RCS - token management
 	
 	! objects
-	LOCAL coHTTP				! PLW 2015-09-22 use SECUREHTTP DLL.
-	LOCAL coNET					! PLW 2017-07-03 use .NET assembly
-	LOCAL coSPM					! RCS 2018-01-11 use .NET assembly
+	LOCAL coHTTP
+	LOCAL coNET
+	LOCAL coSPM
 	LOCAL coCompany				! RCS 2018-01-26 for APS company parms
 	LOCAL coPaymentTypeSvc
 
@@ -109,15 +109,15 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	! ** @returns [boolean] Success unless parameters are not passed-in correctly.
 	FUNCTION APSSwitchVaults(fromID$, fromKey$, toID$, toKey$, payType$)												APS_SWITCH_VAULTS
 	FUNCTION APSSwitchVaults(fromID$, fromKey$, toID$, toKey$, payType$, companyCode$)									APS_SWITCH_VAULTS
-	FUNCTION APSSwitchVaults(fromID$, fromKey$, toID$, toKey$, payType$, companyCode$, copyFlag, cAPSApiKey$)			APS_SWITCH_VAULTS
+	FUNCTION APSSwitchVaults(fromID$, fromKey$, toID$, toKey$, payType$, companyCode$, copyFlag, APSApiKey$)			APS_SWITCH_VAULTS
 	FUNCTION APSURLEncoding$(EntVal$)																					APS_URL_ENCODING
-	FUNCTION APSXMLEncoding$(EntVal$)																					APS_XML_ENCODING	! #263758 - 2020-02-24 - RCS
+	FUNCTION APSXMLEncoding$(EntVal$)																					APS_XML_ENCODING
 	
-	FUNCTION BalanceForwardCheck(ARDivisionNo$, CustomerNo$, BalanceForward)											BALANCE_FORWARD_CHECK		! #251492 - 2019-05-02 - RCS
-	FUNCTION BuildElement$(tag$, value$, indent)																		BUILD_ELEMENT		! PLW 2018-08-20 Ticket #236076
-	FUNCTION BuildElement$(tag$, value$)																				BUILD_ELEMENT		! PLW 2018-08-20 Ticket #236076
-	FUNCTION BuildGroup$(tag$, tagValue$, value$, indent)																BUILD_GROUP			! RCS 2018-10-11 Ticket #236076
-	FUNCTION BuildNullElement$(tag$, indent)																			BUILD_NULL_ELEMENT	! RCS 2018-10-12 Ticket #236076
+	FUNCTION BalanceForwardCheck(ARDivisionNo$, CustomerNo$, BalanceForward)											BALANCE_FORWARD_CHECK
+	FUNCTION BuildElement$(tag$, value$, indent)																		BUILD_ELEMENT
+	FUNCTION BuildElement$(tag$, value$)																				BUILD_ELEMENT
+	FUNCTION BuildGroup$(tag$, tagValue$, value$, indent)																BUILD_GROUP
+	FUNCTION BuildNullElement$(tag$, indent)																			BUILD_NULL_ELEMENT
 
 	FUNCTION CheckPaymentTypeDoesNotHaveTransactions(PayType$)															CHECK_AR_PAYMENT_TYPE_DOES_NOT_HAVE_TRANSACTIONS
 	FUNCTION CloseLogFile()																								CLOSE_LOG_FILE
@@ -143,7 +143,7 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION CreateRequestStrings(APSMerchantID$,Password$,MainRequestStr$,QueryRequestStr$)							CREATE_REQUEST_STRINGS
 	FUNCTION CredCheck(input$,output$)																					CRED_CHECK
 	FUNCTION CredSwitch$(APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, \
-						APSpayType$, APScompanyCode$, APScopyFlag, APSAccountName$,cAPSApiKey$)							SWITCH_VAULT_RECORD
+						APSpayType$, APScompanyCode$, APScopyFlag, APSAccountName$, APSApiKey$)							SWITCH_VAULT_RECORD
 	! ** Method to delete a particular GUID from the vault.
 	! ** @param guid$ [string] GUID value to be deleted from the vault.
 	! ** @param payType$ [string] Payment Type (required for MerchantID$ and D531APSPassword$ values)
@@ -159,21 +159,22 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION FindNames(Name$,FirstName$,LastName$)																		FIND_NAMES
 	FUNCTION PERFORM FindURLs()																							FIND_URLS
 
-	FUNCTION GeneralParser(tmpString$,tmpRecord$,tmpIOL$,tmpDelimiter$)													GENERAL_PARSER			! PLW 2016-02-22
+	FUNCTION GeneralParser(tmpString$,tmpRecord$,tmpIOL$,tmpDelimiter$)													GENERAL_PARSER
 	
 	! ** @param payType$ [input, string] payment type.  Optional. If null, method will use SY_Company.
 	! ** @param APSMerchantID$ [output, string] merchant ID.
 	! ** @param APSMerchantPassword$ [output, string] merchant password
+	! ** @param APSApiKey$ [output, string] merchant API key
 	! ** method sets cAPSMerchantID and cAPSMerchantPassword.  This is used later by VerifyGUID$().
-	FUNCTION GetAPSMerchantCredentials(payType$,APSMerchantID$,APSMerchantPassword$)									GET_APS_MERCHANT_CREDENTIALS	! PLW 2015-06-01 Ticket #143591
-	FUNCTION GetAPSMerchantCredentials()																				GET_APS_MERCHANT_CREDENTIALS	! PLW 2015-09-15 Ticket #146808
+	FUNCTION GetAPSMerchantCredentials(payType$,APSMerchantID$,APSMerchantPassword$,APSApiKey$)							GET_APS_MERCHANT_CREDENTIALS
+	FUNCTION GetAPSMerchantCredentials()																				GET_APS_MERCHANT_CREDENTIALS
 	FUNCTION GetAVSandCVVresponses(Response$,AVSResponse$,CVVResponse$)													GET_AVS_AND_CVV_RESPONSE
 	! ** @param paymentType$ [input, string] payment type. Gets merchant ID, password from this. (required)
 	! ** @param TROUTD$ [input, string] credit card transaction id (required)
 	! ** @param APSStatus$ [output, string] status of the transaction in the APS portal
 	! ** @param cMaskedCard$ [output, string] masked card returned from the portal
 	! ** @param cVaultID$ [output, string] customer vault ID
-	FUNCTION GetCardData(PaymentType$, TROUTD$, APSStatus$, cMaskedCard$, cVaultID$)									GET_CARD_DATA					! #246720 - 2019-07-02 RCS
+	FUNCTION GetCardData(PaymentType$, TROUTD$, APSStatus$, cMaskedCard$, cVaultID$, cExpDate$)							GET_CARD_DATA
 	FUNCTION GetMaskedCard(ARDivisionNo$, CustomerNo$, CreditCardID$, cMaskedCard$, cValidatedCard$)					GET_MASKED_CARD
 	FUNCTION ParseCreditCardInfo(Tracks$,Track1$,Track2$,Track3$,Number$,ExpDate$)										PARSE_CREDIT_CARD_INFO
 	
@@ -208,8 +209,8 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	
 	FUNCTION SetCreditCardType$(CreditCardNo$) 																			SET_CREDIT_CARD_TYPE
 	
-	FUNCTION TestAPSCredentials(APSMerchantID$,Password$)																TEST_APS_CREDENTIALS	! RCS 2018-09-30 Ticket #236076
-	FUNCTION TestAPSCredentials(APSMerchantID$,Password$,cAPSApiKey$)													TEST_APS_CREDENTIALS	! RCS 2018-09-30 Ticket #236076
+	FUNCTION TestAPSCredentials(APSMerchantID$,Password$)																TEST_APS_CREDENTIALS
+	FUNCTION TestAPSCredentials(APSMerchantID$,Password$,cAPSApiKey$)													TEST_APS_CREDENTIALS
 	FUNCTION TranslateError(APSReturnCode$,ErrorText$)																	TRANSLATE_ERROR
 	
 	FUNCTION UpdateCardOnFile(ARDivisionNo$,CustomerNo$,CreditCardID$,PaymentType$,vaultID$,defaultRec$,defaultIOL$)	UPDATE_CARD_ON_FILE
@@ -228,17 +229,17 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	!  This allows us to know the payment type to retrieve credentials and set cAPSMerchantID$ prior to validating GUID
 	FUNCTION VerifyGUID_2$(APSm_id$, APSm_key$, APSguid$)																VERIFY_GUID_2
 	FUNCTION VerifyGUID_2$(APSm_id$, APSm_key$, APSguid$, APSdllError$)													VERIFY_GUID_2
-	FUNCTION VoidPreAuth(PaymentType$,CreditCardTransactionID$,APSStatus$)												VOID_PRE_AUTH	! #231968 - 2018-08-28 RCS
+	FUNCTION VoidPreAuth(PaymentType$,CreditCardTransactionID$,APSStatus$)												VOID_PRE_AUTH
 	FUNCTION WriteLog(Type$,Message$)																					WRITE_LOG
 
 	! Local Functions (Methods)
 	FUNCTION LOCAL AddTagToIOLIST(IOLIST$,Tag$)																			ADD_TAG_TO_IOLIST
 	FUNCTION LOCAL APSGetPaymentTypeData(payType$, APSm_id$, APSm_pswd$) 												APS_GET_PAYMENT_TYPE_DATA
 	FUNCTION LOCAL APSGetPaymentTypeData(payType$, APSm_id$, APSm_pswd$, APSpayMethod$) 								APS_GET_PAYMENT_TYPE_DATA
-	FUNCTION LOCAL APSGetPaymentTypeData(payType$, APSm_id$, APSm_pswd$, APSpayMethod$, cAPSApiKey$) 					APS_GET_PAYMENT_TYPE_DATA
+	FUNCTION LOCAL APSGetPaymentTypeData(payType$, APSm_id$, APSm_pswd$, APSpayMethod$, APSApiKey$) 					APS_GET_PAYMENT_TYPE_DATA
 
 	FUNCTION LOCAL ConvertStep1Request$(requestBody$, CustomerName$, CustomerID$,	\
-										CardID$, cRequireCVV$, cPaymentMethod$)											CONVERT_STEP_1_REQUEST	! PLW 2018-08-17 Ticket #236076
+										CardID$, cRequireCVV$, cPaymentMethod$)											CONVERT_STEP_1_REQUEST
 	FUNCTION LOCAL PERFORM CreateLog()																					CREATE_LOG
 	
 	! ** Create and return a Request_v1 object
@@ -268,7 +269,7 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION LOCAL GetPostText$(RequestString$)																			GET_POST_TEXT
 	FUNCTION LOCAL GetQueryPostText$(RequestString$)																	GET_QUERY_POST_TEXT
 
-	FUNCTION LOCAL PERFORM MerchantDefinedElements$()																	MERCHANT_DEFINED_ELEMENTS ! PLW 2018-08-20 Ticket #236076
+	FUNCTION LOCAL PERFORM MerchantDefinedElements$()																	MERCHANT_DEFINED_ELEMENTS
 	
 	FUNCTION LOCAL ParseIt(XMLBody$,fldPrefix$,fldIOLIST$,fldRecord$)													PARSE_IT
 	FUNCTION LOCAL PERFORM ProcessSecureHttp()																			PROCESS_SECURE_HTTP
@@ -314,11 +315,11 @@ ENTER coSession
 	coAPSActivation		= NEW("SY_531APSActivation_bus",coSession,ERR=*NEXT)
 	IF coAPSActivation {
 		cAPSActivated	= coAPSActivation'CheckAPSActivation ()
-		tmpRetVal		= coAPSActivation'RetrieveVersionInfo(APSVersion$,APSAdditional$) ! #227159 - RCS - 2017-09-14
+		tmpRetVal		= coAPSActivation'RetrieveVersionInfo(APSVersion$,APSAdditional$)
 		DROP OBJECT coAPSActivation
 		coSession'GetParameter("SYS","Version$",LMversionNo$)
 	}
-	IF NOT(cAPSActivated) AND %APSPreConversion { ! PLW 2016-05-12 allow for card conversion before activation
+	IF NOT(cAPSActivated) AND %APSPreConversion { ! allow for card conversion before activation
 		cAPSActivated	= isTRUE
 	}
 
@@ -332,7 +333,7 @@ ENTER coSession
 	
 	_obj'ResetDotNet()			! activate the .NET assembly - this adds the URL encoding
 	
-	_OBJ'FindURLs()				! #236076 - 2019-02-04 RCS
+	_OBJ'FindURLs()
 
 	coTerminalSvc		= new("SY_531APSTerminal_Svc",coSession)
 	
@@ -359,15 +360,15 @@ ON_DELETE:
 		coCompany			= 0
 	}
 	IF coSPM {
-		DELETE OBJECT coSPM, ERR=*NEXT ! #230282 - 2017-11-13 RCS
+		DELETE OBJECT coSPM, ERR=*NEXT
 		coSPM				= 0
 	}
 	IF coHTTP {
-		DELETE OBJECT coHTTP, ERR=*NEXT  ! PLW 2015-09-22 Ticket #149035
+		DELETE OBJECT coHTTP, ERR=*NEXT
 		coHTTP				= 0
 	}
 	IF coNET {
-		DELETE OBJECT coNET, ERR=*NEXT ! PLW 2017-06-13
+		DELETE OBJECT coNET, ERR=*NEXT
 		coNET				= 0
 	}
 
@@ -382,9 +383,9 @@ ON_DELETE:
 	IF cSY_TokenFH {						CLOSE (cSY_TokenFH);						cSY_TokenFH						= 0 }
 
 	! Globals
-	%APSRequireCVV$			= $$ ! #236603 - 2018-05-15 RCS
-	%APSRetailAcct$			= $$ ! #236603 - 2018-05-15 RCS
-	%PaymentType$			= $$ ! #236603 - 2018-05-15 RCS
+	%APSRequireCVV$			= $$
+	%APSRetailAcct$			= $$
+	%PaymentType$			= $$
 
 RETURN
 !
@@ -422,7 +423,7 @@ ENTER (APSMerchantID$), (MerchantPassword$), (CCnumber$), (expdate$), (APSroutin
 					CustomerVaultRequestString$	+= "&firstname="	+ _OBJ'APSURLEncoding$(ReturnFirstName$)
 					CustomerVaultRequestString$	+= "&lastname="		+ _OBJ'APSURLEncoding$(ReturnLastName$)
 					
-					IF ARPaymentType.D531APSRetailAccount$ <> "Y" { ! #236603 - 2018-05-15 RCS
+					IF ARPaymentType.D531APSRetailAccount$ <> "Y" {
 						CustomerVaultRequestString$	+= "&stored_credential_indicator=stored"
 						CustomerVaultRequestString$	+= "&initiated_by=merchant"
 					}
@@ -432,14 +433,14 @@ ENTER (APSMerchantID$), (MerchantPassword$), (CCnumber$), (expdate$), (APSroutin
 					CustomerVaultRequestString$	+= "&checkaccount="+APSacctNo$
 					CustomerVaultRequestString$	+= "&account_type="+TBL(UCS(APSacctType$)="S","checking","savings")
 	
-					CustomerVaultRequestString$	+= "&checkname="+_OBJ'APSURLEncoding$(APSAcctName$)	! 243530 - 2018-11-18 RCS - pass customer name.
+					CustomerVaultRequestString$	+= "&checkname="+_OBJ'APSURLEncoding$(APSAcctName$)	! 2018-11-18 RCS - pass customer name.
 	
 					BREAK
 			END SWITCH
 
 			! process transaction request here
 			PostText$		= _OBJ'GetPostText$(CustomerVaultRequestString$)
-			Action$			= "ADD_CUSTOMER" ! PLW 2015-12-01 Ticket #157347 changed from "QUERY".
+			Action$			= "ADD_CUSTOMER" ! changed from "QUERY".
 			RequestString$	= CustomerVaultRequestString$
 			retVAL			= _obj'ProcessSecureHttp()
 			APSguid$		= guid$
@@ -448,7 +449,7 @@ ENTER (APSMerchantID$), (MerchantPassword$), (CCnumber$), (expdate$), (APSroutin
 RETURN APSguid$
 !
 
-ADD_BILLING_DATA: ! #236076 - 2018-10-17 RCS - used for the billing info in the XML - not URL encoded.
+ADD_BILLING_DATA:	! used for the billing info in the XML - not URL encoded.
 ENTER RequestString$,defaultRec$,defaultIOL$
 !	defaultIOL$		= CPL("IOLIST CardHolderName$, Address1$, Address2$, Zip$, City$, State$, Country$, EMailAddress$, D531APSValidated$, D531APSMaskedCard$")
 
@@ -461,13 +462,12 @@ ENTER RequestString$,defaultRec$,defaultIOL$
 
 	! strip &
 	tCardName$		= SUB(CardholderName$,"&","and")
-!	CardholderName$	= SUB(CardholderName$,"&","and")
 	tAddress1$		= SUB(Address1$,"&","and")
 	tAddress2$		= SUB(Address2$,"&","and")
 	tCity$			= SUB(City$,"&","and")
 	
 	_obj'FindNames(tCardName$,ReturnFirstName$,ReturnLastName$)	! was CardHolderName$
-	RequestString$	+= "&company="		+tCardName$ ! CardholderName$ 
+	RequestString$	+= "&company="		+tCardName$ 
 	RequestString$	+= "&firstname="	+ReturnFirstName$ 
 	RequestString$	+= "&lastname="		+ReturnLastName$ 
 	RequestString$	+= "&address1="		+tAddress1$ 
@@ -480,7 +480,7 @@ ENTER RequestString$,defaultRec$,defaultIOL$
 RETURN retVal
 !
 
-ADD_BILLING_URL_DATA: ! #236076 - 2018-10-17 RCS - used to pass as parameters for hosted form.  Note URL encoding.
+ADD_BILLING_URL_DATA: ! used to pass as parameters for hosted form.  Note URL encoding.
 ENTER RequestString$,defaultRec$,defaultIOL$
 !	defaultIOL$		= CPL("IOLIST CardHolderName$, Address1$, Address2$, Zip$, City$, State$, Country$, EMailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")
 
@@ -618,7 +618,6 @@ ENTER (APSpmtType$), (APScc$), (APSexpYr$), (APSexpMo$), APSguid$, (APSroutingNo
 				LastErrorMsg$	= MSG( "CI_Report_Unable", "add the credit card submitted to the credit card vault" )
 			}
 		}
-
 	}
 
 RETURN retVal
@@ -637,7 +636,7 @@ RETURN retSUCCESS
 !
 
 APS_GET_PAYMENT_TYPE_DATA:
-ENTER (payType$), APSm_id$, APSm_pswd$, APSpayMethod$, cAPSApiKey$, ERR=*NEXT
+ENTER (payType$), APSm_id$, APSm_pswd$, APSpayMethod$, APSApiKey$, ERR=*NEXT
 
 	retVal				= retSUCCESS
 
@@ -663,12 +662,13 @@ ENTER (payType$), APSm_id$, APSm_pswd$, APSpayMethod$, cAPSApiKey$, ERR=*NEXT
 			IF pmt.CreditCardSetupTested$ = isYES$ {
 				APSm_id$ 	= pmt.D531APSMerchantID$
 				APSm_pswd$ 	= pmt.D531APSPassword$
+				APSApiKey$	= pmt.D531APSApiKey$
 			}
 			APSpayMethod$ 	= pmt.PaymentMethod$ 
 			cPaymentMethod$	= pmt.PaymentMethod$
-			cAPSApiKey$ 	= pmt.D531APSApiKey$
+			APSApiKey$ 		= pmt.D531APSApiKey$
 
-			IF NUL(APSm_id$) OR NUL(APSm_pswd$) {
+			IF nul(APSApiKey$) {
 				retVal        = retFAILURE
 				LastErrorNum$ = "CI_Invalid"
 				LastErrorMsg$ = MSG("CI_Invalid", "APS credentials")
@@ -719,7 +719,7 @@ ENTER fromID$, fromKey$, (APSMerchantID$), (Password$),(PayType$), (companyCode$
 	IF retVal {
 
 		IF coSession'UI AND NOT(ProgressBarInit) {
-			coSession'UI'ProgressBar("init", "APS Payments", "Transferring credit card data", 0)	! #247203 - 2019-02-28 RCS
+			coSession'UI'ProgressBar("init", "APS Payments", "Transferring credit card data", 0)
 			wait .1 ! #231342 - force screen to update.
 		}
 
@@ -758,7 +758,7 @@ ENTER fromID$, fromKey$, (APSMerchantID$), (Password$),(PayType$), (companyCode$
 			oldKey$				= KEC(cAR_CustomerCreditCardFH)
 			oldKeyPrimary$		= KEC(cAR_CustomerCreditCardFH, KNO="kPRIMARY")
 			oldGUID$			= cc.CreditCardGUID$
-			cPaymentMethod$		= "R" ! default to CC #229341 - 2017-09-20 RCS
+			cPaymentMethod$		= "R" ! default to CC
 			cPtRead				= isFALSE
 			read (cAR_PaymentTypeFH,rec=PT$,key=cc.PaymentType$,dom=*next); cPtRead = isTRUE
 			if cPtRead {
@@ -771,14 +771,14 @@ ENTER fromID$, fromKey$, (APSMerchantID$), (Password$),(PayType$), (companyCode$
 				REMOVE (cAR_CustomerCreditCardFH, KEY=oldKeyPrimary$)
 				READ (cAR_CustomerCreditCardFH, KEY = oldKey$, KNO="kPAYMENT", DOM=*NEXT)
 
-				if cPaymentMethod$="R" { ! #229341 - 2017-09-20 RCS
+				if cPaymentMethod$="R" {
 					cc.BankAccountType$					= $$
 					cc.BankName$						= $$
 					cc.Last4BankRoutingNos$				= $$
 					cc.Last4BankAccountNos$				= $$
 				}
 
-				if cPaymentMethod$="A" { ! #229341 - 2017-09-20 RCS
+				if cPaymentMethod$="A" {
 					cc.ExpirationDateYear$				= $$
 					cc.ExpirationDateMonth$				= $$
 					cc.CardType$						= $$
@@ -798,10 +798,10 @@ ENTER fromID$, fromKey$, (APSMerchantID$), (Password$),(PayType$), (companyCode$
 				}
 
 				! check default credit card in AR_Customer
-				FoundCustomer				= isFALSE ! PLW 2015-09-29 Ticket #151274
-				EXTRACT(cAR_CustomerFH, REC=cust$, KEY = cc.ARDivisionNo$:cc.CustomerNo$,DOM=*NEXT); FoundCustomer = isTRUE! PLW 2015-09-29 Ticket #151274
+				FoundCustomer				= isFALSE
+				EXTRACT(cAR_CustomerFH, REC=cust$, KEY = cc.ARDivisionNo$:cc.CustomerNo$,DOM=*NEXT); FoundCustomer = isTRUE
 
-				IF FoundCustomer and cust.CreditCardGUID$ = oldGUID$ {! PLW 2015-09-29 Ticket #151274
+				IF FoundCustomer and cust.CreditCardGUID$ = oldGUID$ {
 					cust.CreditCardGUID$	= cc.CreditCardGUID$
 					WRITE (cAR_CustomerFH, REC=cust$)
 				}
@@ -840,7 +840,7 @@ APS_URL_ENCODING:
 ENTER inVal$
 
 	retVal$						= $$
-	inVal$						= cvs(inVal$,19) ! #233539 RCS - remove leading and trailing control characters and non printables. 2018-01-11
+	inVal$						= cvs(inVal$,19) ! remove leading and trailing control characters and non printables. 2018-01-11
 	entVar$						= inVal$
 	
 	! strip &
@@ -848,12 +848,12 @@ ENTER inVal$
 		Inval$					= SUB(Inval$,"&","and")
 	}
 	
-	SWITCH isXML	! #236076 RCS 2018-10-31
-		CASE isTRUE ! Using hosted form, do not encode, but do strip certain characters for JSON and XML #236076 - 2019-02-21 RCS
+	SWITCH isXML
+		CASE isTRUE ! Using hosted form, do not encode, but do strip certain characters for JSON and XML
 			!inVal$				= _obj'APSXMLEncoding$(entVar$)
 			if len(InVal$) {
 				Inval$			= SUB(Inval$,quo," ")
-				Inval$			= SUB(Inval$,"\"," ")	! #248866 - 2019-02-27 RCS
+				Inval$			= SUB(Inval$,"\"," ")
 				Inval$			= SUB(Inval$,"[","(")
 				Inval$			= SUB(Inval$,"]",")")
 				Inval$			= SUB(Inval$,"{","(")
@@ -864,7 +864,7 @@ ENTER inVal$
 		DEFAULT		! Direct post using URL
 			IF LEN(inVal$) {
 		 		FOR x=1 TO LEN(inVal$)
-		 			! #233539 RCS include asterisk 2018-01-11, added ampersand (&) 2018-10-04.
+		 			! RCS include asterisk 2018-01-11, added ampersand (&) 2018-10-04.
 		 			IF ASC(inVal$(x,1))<=41 OR ASC(inVal$(x,1))>=123 OR POS(inVal$(x,1)="*+,/:;<=>?&@[\]^`") {
 						retVal$	+= "%"+HTA(inVal$(x,1))
 		  			} ELSE {
@@ -878,13 +878,13 @@ ENTER inVal$
 RETURN retVal$
 !
 
-APS_XML_ENCODING:	! #263758 - 2020-02-24 - RCS
+APS_XML_ENCODING:
 	
 ENTER inVal$
 
 	retVal$						= $$
 	chkVal$						= "&<>"+quo+"'"
-	inVal$						= cvs(inVal$,19) ! #233539 RCS - remove leading and trailing control characters and non printables. 2018-01-11
+	inVal$						= cvs(inVal$,19) !remove leading and trailing control characters and non printables. 2018-01-11
 	IF LEN(inVal$) {
  		FOR x=1 TO LEN(inVal$)
  			P					= POS(InVal$(x,1) = chkVal$) 
@@ -901,7 +901,7 @@ ENTER inVal$
 RETURN retVal$
 !
 
-BALANCE_FORWARD_CHECK:			! #251492 - 2019-05-02 - RCS
+BALANCE_FORWARD_CHECK:
 ENTER (ARDivisionNo$), (CustomerNo$),BalanceForward
 	IF NOT(cAR_CustomerFH) {
 		cAR_CustomerFH	= _OBJ'OpenTable("AR_Customer", "COMPANY")
@@ -1179,7 +1179,7 @@ ENTER oldRequest$, CustomerName$, CustomerID$, CardID$, (cRequireCVV$), (cPaymen
 	}
 
 	EXECUTE tmpRequest$,err=*next; cConv	= isTRUE ! This sets variables with all the direct post request values
-	! if simple conversion didn't work (which will happen with DSD MC), do it by field.  #248049 - 2019-05-31 - RCS
+	! if simple conversion didn't work (which will happen with DSD MC), do it by field.
 	if not(cConv) {
 		tmpMask$		= oldRequest$
 		while 1
@@ -1221,13 +1221,13 @@ ENTER oldRequest$, CustomerName$, CustomerID$, CardID$, (cRequireCVV$), (cPaymen
 			transaction$	+= _obj'BuildElement$("sec-code", sec_code$,1)
 		}
 		if processor_id$	> isNULL$ {
-			transaction$	+= _obj'BuildElement$("processor-id", processor_id$,1)	! only add if Multicurrency is turned on. #248049 - 2019-05-31 - RCS
+			transaction$	+= _obj'BuildElement$("processor-id", processor_id$,1)	! only add if Multicurrency is turned on.
 		
-			if currency$	= isNULL$ {												! #248049 - 2019-05-31 - RCS
+			if currency$	= isNULL$ {
 				currency$	= "USD"
 			}
-			transaction$	+= _obj'BuildElement$("currency", currency$,1)			! was forced to USD. #248049 - 2019-05-31 - RCS
-		}																			! #264679 - 2020-02-25 - RCS
+			transaction$	+= _obj'BuildElement$("currency", currency$,1)			! was forced to USD. 2019-05-31 - RCS
+		}
 		
 		transaction$	+= _obj'BuildElement$("order-description", order_description$,1)
 		! customer ID 				- see billing block
@@ -1389,13 +1389,12 @@ ENTER RequestString$,TROUTD$,TransactionOut$,cVaultID$,err=*next
 				BREAK
 			CASE "canceled"
 				! This transaction has been voided
-				TransactionOut$	= "canceled"	! #236076 - 2019-02-04 RCS
+				TransactionOut$	= "canceled"
 				BREAK
 			CASE "complete"
 				! This transaction has settled
 				! I have to use Refund instead of Void
 				TransactionOut$	= "refund"
-				! TROUTD$			= isNULL$
 				BREAK
 			CASE "unknown"
 				! An unknown error was encountered while processing this transaction
@@ -1403,7 +1402,7 @@ ENTER RequestString$,TROUTD$,TransactionOut$,cVaultID$,err=*next
 				BREAK
 			DEFAULT
 				! still process void
-				TransactionOut$	= "credit" ! PLW 2015-03-02 Did not find the transaction and cannot void or refund.
+				TransactionOut$	= "credit" ! Did not find the transaction and cannot void or refund.
 				TROUTD$			= isNULL$
 				BREAK
 		END SWITCH
@@ -1413,7 +1412,7 @@ RETURN retVal
 !
 
 COPY_APS_VAULT_TO_CC_PAYMENT_TYPES:
-ENTER comp$, id$, password$, APIkey$, err=*next	! RCS #236076 - 2018-12-11
+ENTER comp$, id$, password$, APIkey$, err=*next
 
 	IF NUL(comp$) {
 		LastErrorNum$	= "CI_Required"
@@ -1461,7 +1460,7 @@ ENTER comp$, id$, password$, APIkey$, err=*next	! RCS #236076 - 2018-12-11
 					! we have to reset Merchant ID and password in all payment type records
 					pay.D531APSMerchantID$	= id$
 					pay.D531APSPassword$	= password$
-					pay.D531APSApiKey$		= APIkey$		! RCS #236076 - 2018-12-11
+					pay.D531APSApiKey$		= APIkey$
 				}
 				pay.CreditCardSetupTested$	= isYES$
 				pay.AddCorporateCardLevel3$	= isNO$ ! APS does not use this variable, it must to set to NO to hide MAS Level3 controls
@@ -1607,7 +1606,7 @@ ENTER APSguid$,APSpayType$,(APScompanyCode$),(SagefromID$),(SagefromKey$),ERR=*N
 
 					RequestString$	= CustomerVaultRequestString$
 					Action$			= "DELETE_CUSTOMER"
-					retVAL			= retSUCCESS ! retVAL = _obj'ProcessSecureHttp()  ! PLW 2018-08-01 Ticket #240173 we never want to remove the vault ID
+					retVAL			= retSUCCESS ! retVAL = _obj'ProcessSecureHttp()  ! we never want to remove the vault ID
 				}
   			}
 		}
@@ -1656,17 +1655,17 @@ ENTER (companyCode$)
 	SELECT *,REC=pay$ FROM cAR_PaymentTypeFH BEGIN $$ WHERE POS(pay.PaymentMethod$="RA") AND NOT(NUL(pay.D531APSMerchantID$)) AND NOT(NUL(pay.D531APSPassword$))
 		pay.CreditCardSetupTested$	= isYES$
 		pay.DisplayAVSCVVResponse$	= isNO$
-		if nul(Pay.D531APSSendEmail$) { 	Pay.D531APSSendEmail$		= "N" } ! #231618 changed to N by default per Zac 2018-03-27
-		if nul(Pay.D531APSRequireCVV$) { 	Pay.D531APSRequireCVV$		= "Y" } ! RCS #237825 - 2018-05-23, changed to Y by default per Zac
-		if nul(Pay.D531APSRetailAccount$) { Pay.D531APSRetailAccount$	= "N" } ! RCS #237825 - 2018-05-23
-		IF not(Pay.PaymentMethod$="R") {	Pay.D531APSRequireCVV$ 		= "N" } ! RCS #237825 - 2018-05-23 for non cRedit card payment types.
+		if nul(Pay.D531APSSendEmail$) { 	Pay.D531APSSendEmail$		= "N" } ! changed to N by default per Zac 2018-03-27
+		if nul(Pay.D531APSRequireCVV$) { 	Pay.D531APSRequireCVV$		= "Y" } ! changed to Y by default per Zac
+		if nul(Pay.D531APSRetailAccount$) { Pay.D531APSRetailAccount$	= "N" }
+		IF not(Pay.PaymentMethod$="R") {	Pay.D531APSRequireCVV$ 		= "N" } ! for non cRedit card payment types.
 		WRITE (cAR_PaymentTypeFH,REC=pay$)
 	NEXT RECORD
 
 RETURN retVal
 !
 
-FIND_NAMES:  ! // See also sy_531APSRequest.pvc #232007 - 2018-02-24 RCS
+FIND_NAMES:  ! // See also sy_531APSRequest.pvc
 ENTER Name$,FirstName$,LastName$
 
 	Name$					= STP(Name$)
@@ -1675,7 +1674,7 @@ ENTER Name$,FirstName$,LastName$
 	StripString$			= "|JR|SR|II|III|IV|V|ESQ|MD|JD|DO|DC|PHD|MBA|CPA|PHARMD|DP|DDS|DD|LLDS|"
 
 	StripLastChar			= isTRUE
-	WHILE StripLastChar and LEN(Name$) ! PLW 2018-03-13 added LEN(Name$) to avoid error 41 if null name. RCS #246425 - 2018-12-31 merge in fix.
+	WHILE StripLastChar and LEN(Name$) ! 2018-03-13 added LEN(Name$) to avoid error 41 if null name. RCS 2018-12-31 merge in fix.
 		NameLen				= LEN(Name$)
 		LastChar$			= MID(Name$,NameLen)
 		IF LastChar$		= "." {
@@ -1724,11 +1723,11 @@ FIND_URLS:		! See also Sy_531APSCompany_svc.pvc
 
 		APSURL.URL$			= $$
 		READ (urlMaintFH,REC= APSURL$,KEY="APS C2P EASYPAY",DOM=*NEXT)
-		APSEasyPay$			= APSURL.URL$								! #236076 2018-09-07 RCS
+		APSEasyPay$			= APSURL.URL$
 
 		APSURL.URL$			= $$
 		READ (urlMaintFH,REC= APSURL$,KEY="APS C2P EMV",DOM=*NEXT)
-		APSEMVPay$			= APSURL.URL$								! #236076 2018-12-26 RCS
+		APSEMVPay$			= APSURL.URL$
 
 		! C2P URLs
 		C2PURL.URL$			= $$
@@ -1774,10 +1773,10 @@ FIND_URLS:		! See also Sy_531APSCompany_svc.pvc
  	}
 
 ! 	APSEasyPay$			= "http://dev.portal.apsclicktopay.com/EasyPay"	! ***** for dev testing.
- 	cHttpStepOneUrl$	= APSEasyPay$	+ "/PollStep1"				! #236076 2018-09-07 RCS
- 	cHttpStepTwoUrl$	= APSEMVPay$	+ "?transactionId="			! #236076 2018-12-26 RCS - for EMV device access
- 	cHttpStepThreeUrl$	= APSEasyPay$	+ "/Poll?pollToken="		! #236076 2018-09-07 RCS
-  	cHttpStep3EmvUrl$	= APSEasyPay$	+ "/ErpPoll?pollToken="		! #236076 2018-12-26 RCS
+ 	cHttpStepOneUrl$	= APSEasyPay$	+ "/PollStep1"
+ 	cHttpStepTwoUrl$	= APSEMVPay$	+ "?transactionId="			! for EMV device access
+ 	cHttpStepThreeUrl$	= APSEasyPay$	+ "/Poll?pollToken="
+  	cHttpStep3EmvUrl$	= APSEasyPay$	+ "/ErpPoll?pollToken="
  	
 RETURN retVal
 !
@@ -1824,28 +1823,28 @@ ENTER (payType$), APSm_id$, APSm_pswd$, cAPSApiKey$, ERR=*NEXT
 	cAPSMerchantID$			= $$
 	cAPSMerchantPassword$	= $$
 	cAPSApiKey$				= $$
-	CompanyCode$			= coSession'CompanyCode$	! #250003 - 2019-03-29 - RCS
-	CompanyKey$				= coSession'CompanyKey$		! #250003 - 2019-03-29 - RCS
+	CompanyCode$			= coSession'CompanyCode$
+	CompanyKey$				= coSession'CompanyKey$
 
 	retVal 					= retSUCCESS
 
 	IF NOT(NUL(payType$)) {
 		retVal				= _obj'APSGetPaymentTypeData(paytype$, APSm_id$, APSm_pswd$, APSpayMethod$, cAPSApiKey$)
-	} ELSE {	! #236956 - 2018-12-18 RCS  added company override check.
+	} ELSE {	! 2018-12-18 RCS  added company override check.
 		IF NOT(cSY_CompanyFH) {
-			cSY_CompanyFH	= _OBJ'OpenTable("SY_531APSCompany", pthSYSTEM$) ! was sy_company RCS 2018-12-07 Ticket #236076
+			cSY_CompanyFH	= _OBJ'OpenTable("SY_531APSCompany", pthSYSTEM$) ! was sy_company RCS 2018-12-07
 		}
 
 		IF NUL(CompanyKey$) {
-			CompanyKey$		= coSession'CompanyKey$							! #250003 - 2019-03-29 - RCS  Was CompanyCode$
+			CompanyKey$		= coSession'CompanyKey$							! Was CompanyCode$
 		}
 
 		recFound			= isFALSE
-		READ (cSY_CompanyFH, REC = comp$, KEY = CompanyKey$, DOM=*NEXT); recFound = isTRUE	! #250003 - 2019-03-29 - RCS  Was KNO="kCOMPANYCODE",
+		READ (cSY_CompanyFH, REC = comp$, KEY = CompanyKey$, DOM=*NEXT); recFound = isTRUE
 		IF recFound {
-			APSm_id$		= comp.D531APSMerchantID$	! PLW 2015-09-15 Ticket #146808
-			APSm_pswd$ 		= comp.D531APSPassword$		! PLW 2015-09-15 Ticket #146808
-			cAPSApiKey$		= comp.D531APSApiKey$		! RCS 2018-12-07 Ticket #236076
+			APSm_id$		= comp.D531APSMerchantID$
+			APSm_pswd$ 		= comp.D531APSPassword$
+			cAPSApiKey$		= comp.D531APSApiKey$
 		} ELSE {
 			retVal			= retFAILURE
 			LastErrorNum$	= "CI_Invalid"
@@ -1862,81 +1861,99 @@ GET_AVS_AND_CVV_RESPONSE:
 
 ENTER SearchResponse$,AVSResponse$,CVVResponse$
 
-	AVSResponse$=$$
-	CVVResponse$=$$
+	AVSResponse$			= $$
+	CVVResponse$			= $$
 
 	! find AVSRESULT$
-	P=POS("&AVSRESPONSE="=SearchResponse$)
+	P						= POS("&AVSRESPONSE="=SearchResponse$)
 	IF P {
 		PartResponse$=MID(SearchResponse$,P+LEN("&AVSRESPONSE="))
 		P=POS("&"=PartResponse$)
 		IF P {
-			AVSRESULT$=MID(PartResponse$,1,(P-1))
+			AVSRESULT$		= MID(PartResponse$,1,(P-1))
 		} ELSE {
-			AVSRESULT$=STP(PartResponse$)
+			AVSRESULT$		= STP(PartResponse$)
 		}
-		IF AVSRESULT$="L" { AVSRESULT$="P" }
-		IF AVSRESULT$="O" { AVSRESULT$="0" }
+		IF AVSRESULT$="L" { 
+			AVSRESULT$		= "P" 
+		}
+		IF AVSRESULT$="O" { 
+			AVSRESULT$		= "0" 
+		}
 
-		IF NOT(NUL(AVSRESULT$)) { _OBJ'TranslateAVS(AVSRESULT$,AVSResponse$) }
+		IF NOT(NUL(AVSRESULT$)) { 
+			_OBJ'TranslateAVS(AVSRESULT$,AVSResponse$)
+		}
 	}
 
 	! find CVVRESULT$
-	P=POS("&CVVRESPONSE="=SearchResponse$)
+	P						= POS("&CVVRESPONSE="=SearchResponse$)
 	IF P {
-		PartResponse$=MID(SearchResponse$,P+LEN("&CVVRESPONSE="))
-		P=POS("&"=PartResponse$)
+		PartResponse$		= MID(SearchResponse$,P+LEN("&CVVRESPONSE="))
+		P					= POS("&"=PartResponse$)
 		IF P {
-			CVVRESULT$=MID(PartResponse$,1,(P-1))
+			CVVRESULT$		= MID(PartResponse$,1,(P-1))
 		} ELSE {
-			CVVRESULT$=STP(PartResponse$)
+			CVVRESULT$		= STP(PartResponse$)
 		}
 
-		IF NOT(NUL(CVVRESULT$)) { _OBJ'TranslateCVV2(CVVRESULT$,CVVResponse$) }
+		IF NOT(NUL(CVVRESULT$)) { 
+			_OBJ'TranslateCVV2(CVVRESULT$,CVVResponse$)
+		}
 	}
 RETURN retSUCCESS
 !
 
-GET_CARD_DATA:											! #246720 - 2019-07-02 RCS - used to retrieve vault id, masked CC, and status.
-ENTER PaymentType$, TROUTD$, APSStatus$, cMaskedCard$, cVaultID$
+GET_CARD_DATA:		! used to retrieve vault id, masked CC,status and expiration date.
+ENTER PaymentType$, TROUTD$, APSStatus$, cMaskedCard$, cVaultID$, cExpDate$
 	
 	payType$		= PaymentType$
 
-	retval			= _obj'APSGetPaymentTypeData(payType$, APSm_id$, APSm_pswd$, APSpayMethod$)
+	retval			= _obj'APSGetPaymentTypeData(payType$, APSm_id$, APSm_pswd$, APSpayMethod$, tmpAPSApiKey$)
 	
 	if not(retVal) {
 		APSStatus$	= "INVALID PAYMENT TYPE"
 		RETURN retval
 	}
 
-	retVal			= _obj'CreateRequestStrings(APSm_id$,APSm_pswd$,MainRequestStr$,QueryRequestStr$)
+	retVal			= _obj'CreateApiRequestStrings(tmpAPSApiKey$,MainRequestStr$,QueryRequestStr$)
+	RequestString$	= QueryRequestStr$
 
 	! process query transaction request here
-	RequestString$			+= "&transaction_id=" + TROUTD$
-	QueryPostText$			= _OBJ'GetQueryPostText$(RequestString$)
-	Action$ 				= "QUERY"
-	retVAL 					= _obj'ProcessSecureHttp()
-	IF retVal {
-		rawQueryResponse$	= QueryResponse$
-		cVaultID$			= _obj'GetFieldValueXml$(QueryResponse$,"customerid")
-		TROUTD$				= _obj'GetFieldValueXml$(QueryResponse$,"transaction_id")
-		cMaskedCard$		= _obj'GetFieldValueXml$(QueryResponse$,"cc_number")
-		cBinRange$			= _obj'GetFieldValueXml$(QueryResponse$,"cc_bin")
-		cMaskedCard$(1,6)	= cBinRange$
-		Condition$			= _obj'GetFieldValueXml$(QueryResponse$,"condition")
-		Condition$			= lcs(Condition$)
-		APSStatus$			= Condition$
-		_OBJ'WriteLog("Card query status",Condition$)
+	RequestString$	+= "&transaction_id=" + TROUTD$
+	QueryPostText$	= _OBJ'GetQueryPostText$(RequestString$)
+	Action$ 		= "QUERY"
+	retVAL 			= _obj'ProcessSecureHttp()
+	if not(retVal) {
+		APSStatus$	= "INVALID TRANSACTION"
+		RETURN retval
 	}
+
+	rawQueryResponse$	= QueryResponse$
+	cVaultID$			= _obj'GetFieldValueXml$(QueryResponse$,"customerid")
+	TROUTD$				= _obj'GetFieldValueXml$(QueryResponse$,"transaction_id")
+	cMaskedCard$		= _obj'GetFieldValueXml$(QueryResponse$,"cc_number")
+	cExpDate$			= _obj'GetFieldValueXml$(QueryResponse$,"cc_exp")
+	cBinRange$			= _obj'GetFieldValueXml$(QueryResponse$,"cc_bin")
+	cMaskedCard$(1,6)	= cBinRange$
+	Condition$			= _obj'GetFieldValueXml$(QueryResponse$,"condition")
+	Condition$			= lcs(Condition$)
+	APSStatus$			= Condition$
+	_OBJ'WriteLog("Card query status",Condition$)
+	Century$			= dte(0:"%Yl")
+	if len(cExpDate$)	= 4 {
+		cExpDate$		= cExpDate$(1,2)+Century$(1,2)+cExpDate$(3)		! pad to MMYYYY, revisit in 80 years
+	}
+
 
 RETURN retVal
 !
 
 GET_FIELD_VALUE:
 ENTER SearchString$,fKey$
-	fValue$				= isNULL$
+	fValue$			= isNULL$
 	! find field code
-	P			= POS("&"+fKey$+"="=SearchString$)
+	P				= POS("&"+fKey$+"="=SearchString$)
 	IF P {
 		PartString$	= MID(SearchString$,P+LEN("&"+fKey$+"="))
 		P				= POS("&"=PartString$)
@@ -2029,7 +2046,7 @@ ENTER XML$,TAG$,DATA$
 	DATA$			= isNULL$
 	StartTag		= POS("<"=XML$); EndTag=POS(">"=XML$)
 	IF NOT(StartTag) OR NOT(EndTag) OR EndTag<StartTag {
-		XML$		= isNULL$ ! PLW 2015-06-02 if we have not < or > we cannot process this XML any more
+		XML$		= isNULL$ ! if we have not < or > we cannot process this XML any more
 		RETURN 0
 	}
 	TAG$			= UCS(XML$(StartTag,EndTag-StartTag))+" "
@@ -2068,7 +2085,7 @@ ENTER XML$,TAG$,DATA$
 RETURN retSUCCESS
 !
 
-! GET_PAYMENT_TYPE_DATA: ! Not used.  Removed 2018-06-20 #232007
+! GET_PAYMENT_TYPE_DATA: ! Not used.  Removed 2018-06-20
 !
 
 LOG_MASK:
@@ -2110,7 +2127,7 @@ ENTER tmpOpen$,tmpMask$
 			SecondPart$	= MID(SecondPart$,P)
 			M			= len(tCard$)-6
 			If M>0 {
-				tCard$(3,M)	= dim(M,"X") ! Masking per standards.  RCS 2018-03-18
+				tCard$(3,M)	= dim(M,"X") ! Masking per standards.
 			}
 		}
 		tmpMask$	= FirstPart$+tCard$+SecondPart$
@@ -2168,12 +2185,12 @@ ENTER tmpOpen$,tmpMask$
 		tmpMask$	= FirstPart$+"XXXXXXXX"+SecondPart$
 	}
 	
-	! lay out masked Direct Pay transactions so they are readable.  #236076 RCS
+	! lay out masked Direct Pay transactions so they are readable.
 	if pos("&" = tmpMask$) and not(pos("<" = tmpMask$)) and len(tmpMask$)  {
 		wTask$		= $$
 		for nLoop	= 1 to len(tmpMask$)
 			if tmpMask$(nLoop,1) = "&" {
-				wTask$	+= CrLf$ + tmpMask$(nLoop,1)
+				wTask$	+= CR$ + tmpMask$(nLoop,1)! was crLF$
 			} else {
 				wTask$	+= tmpMask$(nLoop,1)
 			}
@@ -2304,7 +2321,7 @@ ENTER XMLBody$,fldPrefix$,fldIOLIST$,fldRecord$
 					}
 				} ELSE {
 					TAG$			= fldPrefix$+Tag$
-					TAG$			= SUB(TAG$,"-","_") ! PLW 2018-08-21 Ticket #236076 can't handle dashes.
+					TAG$			= SUB(TAG$,"-","_") ! can't handle dashes.
 					_OBJ'AddTagToIOLIST(tmpIOLtxt$,TAG$)
 					DATA$			= SUB(DATA$,"&#xD;&#xD;",$0A$)
 					DATA$			= SUB(DATA$,"&#xD;",$0A$)
@@ -2354,7 +2371,7 @@ ENTER Service$,SearchResponse$,APS_STATUS$,RESPONSE_CODE$,RESPONSE_TEXT$,AUTH_CO
 			}
 		}
 
-		IF POS(APS_STATUS_NUM$="123") { ! #238741 - 2018-08-29 RCS Send out response text for logging.
+		IF POS(APS_STATUS_NUM$="123") { ! 2018-08-29 RCS Send out response text for logging.
 			! find response text
 			P						= POS("&RESPONSETEXT="=SearchResponse$)
 			IF P {
@@ -2473,9 +2490,9 @@ PARSE_XML:
 
 			IF POS("RESULT_TEXT" = UCS(tmpIOLTxt$)) { ! per the EasyPay design doc. 2018-09-28
 				LastErrorMsg$		= Response.Result_Text$ ! errorDescription$
-				Response.Status$	= "FAILED" ! PLW 2018-08-21 Ticket #236076
+				Response.Status$	= "FAILED"
 			}
-			if NOT(NUL(Response.Status$)) { ! PLW 2018-08-21 Ticket #236076
+			if NOT(NUL(Response.Status$)) {
 				status$		= Response.Status$ ! Status will return "FAILED" unless we get one back in SOAP response
 			}
 			retVal=1
@@ -2582,7 +2599,7 @@ ENTER RequestString$, APSProcRec$, APSProcIOL$, defaultRec$, defaultIOL$
 					tmpRespText$	= ", "+tmpRespText$
 				}
 				if ResponseCode$="100" {
-					ResponseText$	= $$				! #238741 - 2018-08-29 RCS Send out response text for logging.
+					ResponseText$	= $$				!2018-08-29 RCS Send out response text for logging.
 				}
 				_OBJ'WriteLog("APS Progress","Parsing the response "+STR(TryAgain)+"-"+apsStatus$+tmpRespText$)		! 2018-03-29 RCS changed to more usable logging. 
 				_OBJ'GetAVSandCVVresponses(AVSSVVResponse$,AVSR$,CVVR$)
@@ -2605,23 +2622,7 @@ ENTER RequestString$, APSProcRec$, APSProcIOL$, defaultRec$, defaultIOL$
 RETURN retVal
 !
 
-PROCESS_APS_VAULT:						! PLW 2018-08-17 Ticket #236076, updated 2018-10-16 RCS to add defaultRec$, defaultIOL$
-! ENTER service$,
-!				(payType$),			\
-! 				guid$,				\
-! 				last4Nos$,			\
-! 				expYear$,			\
-! 				expMonth$,			\
-! 				cardType$, 			\
-! 				last4RoutingNo$, 	\
-! 				last4AcctNo$, 		\
-! 				acctType$, 			\
-! 				accountName$, 		\
-! 				CustomerName$, 		\
-! 				CustomerID$, 		\
-! 				CardID$, 			\
-! 				defaultRec$, 		\
-! 				defaultIOL$, ERR=*NEXT
+PROCESS_APS_VAULT:
 				
 ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 	
@@ -2672,7 +2673,7 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 	}
 
 	IF retVal {
-	!	retVal			= _OBJ'CreateRequestStrings(ARPaymentType.D531APSMerchantID$,ARPaymentType.D531APSPassword$,CustomerVaultRequestString$,tmp$)
+
 		retVal			= _obj'CreateApiRequestStrings(cAPSApiKey$,CustomerVaultRequestString$,tmp$)
 		IF retVal {
 			! get credit card number, CVV cardholder info
@@ -2681,39 +2682,39 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 			CCnumber$			= $$
 			CCexp$				= $$
 			CVV$				= $$
-			APSRoutingNo$ 		= $$ ! PLW 2017-03-18
-			APSAcctNo$ 			= $$ ! PLW 2017-03-18
-			APSAcctType$ 		= $$ ! PLW 2017-03-18
-			APSaccountName$		= $$ ! #229341 - 2017-09-20 RCS
+			APSRoutingNo$ 		= $$
+			APSAcctNo$ 			= $$
+			APSAcctType$ 		= $$
+			APSaccountName$		= $$
 			%APSRequireCVV$		= ARPaymentType.D531APSRequireCVV$
 			%APSRetailAcct$		= ARPaymentType.D531APSRetailAccount$
 			%PaymentType$		= ARPaymentType.PaymentType$
 
 			IF service$ = "UPDATE" or service$ = "RETRIEVE" {
-				SWITCH cPaymentMethod$ ! #229341 - 2017-09-20 RCS, #230568 - RCS.
+				SWITCH cPaymentMethod$
 					CASE "R" ! Credit card
-						IF NOT(NUL(Last4UnencryptedCreditCardNos$)) AND NOT(Last4UnencryptedCreditCardNos$="****") { ! PLW 2017-07-03 added check for filler (asterisk) so they are not saved as numbers.
+						IF NOT(NUL(Last4UnencryptedCreditCardNos$)) AND NOT(Last4UnencryptedCreditCardNos$="****") { ! added check for filler (asterisk) so they are not saved as numbers.
 							CCnumber$		= "************"+Last4UnencryptedCreditCardNos$
 							CCexp$			= ExpirationDateMonth$+mid(ExpirationDateYear$,-2)
 							OLD.CCexp$		= CCexp$
-							Last4BankRoutingNos$	= $$ ! #229341 - 2017-09-20 RCS
-							Last4BankAccountNos$	= $$ ! #229341 - 2017-09-20 RCS
-						} ELSE { ! #229341 - 2017-09-20 RCS
-							Last4UnencryptedCreditCardNos$		= $$ ! #229341 - 2017-09-20 RCS
+							Last4BankRoutingNos$	= $$
+							Last4BankAccountNos$	= $$
+						} ELSE {
+							Last4UnencryptedCreditCardNos$		= $$
 						}
 						BREAK
 					CASE "A" ! ACH
-						IF NOT(NUL(Last4BankRoutingNos$)) AND NOT(Last4BankRoutingNos$ = "****") { ! PLW 2017-07-03 added check for filler (asterisk) so they are not saved as numbers.
+						IF NOT(NUL(Last4BankRoutingNos$)) AND NOT(Last4BankRoutingNos$ = "****") { ! added check for filler (asterisk) so they are not saved as numbers.
 							APSRoutingNo$	= "*****"+Last4BankRoutingNos$
 							APSAcctNo$		= "*****"+Last4BankAccountNos$
 							APSAcctType$ 	= BankAccountType$
 							APSAccountName$	= accountName$
 							APSSecType$		= D531APSAchAccountType$
-						} ELSE { ! #229341 - 2017-09-20 RCS
-							APSRoutingNo$	= $$ ! #229341 - 2017-09-20 RCS
-							APSAcctNo$		= $$ ! #229341 - 2017-09-20 RCS
-							Last4BankRoutingNos$	= $$ ! #229341 - 2017-09-20 RCS
-							Last4BankAccountNos$	= $$ ! #229341 - 2017-09-20 RCS
+						} ELSE {
+							APSRoutingNo$	= $$
+							APSAcctNo$		= $$
+							Last4BankRoutingNos$	= $$
+							Last4BankAccountNos$	= $$
 						}
 						BREAK
 					DEFAULT
@@ -2721,23 +2722,23 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 				END SWITCH
 			}
 
-			IF cPaymentMethod$ = "R" { ! #230568 - RCS
+			IF cPaymentMethod$ = "R" {
 				!
-				APSRoutingNo$		= $$ ! #229341 - 2017-09-20 RCS
-				APSAcctNo$			= $$ ! #229341 - 2017-09-20 RCS
-				Last4BankRoutingNos$		= $$ ! #229341 - 2017-09-20 RCS
-				Last4BankAccountNos$		= $$ ! #229341 - 2017-09-20 RCS
+				APSRoutingNo$		= $$
+				APSAcctNo$			= $$
+				Last4BankRoutingNos$		= $$
+				Last4BankAccountNos$		= $$
 			} ELSE {
 				!
-				CCnumber$			= $$ ! #229341 - 2017-09-20 RCS
-				CCexp$				= $$ ! #229341 - 2017-09-20 RCS
-				Last4UnencryptedCreditCardNos$			= $$ ! #229341 - 2017-09-20 RCS
+				CCnumber$			= $$
+				CCexp$				= $$
+				Last4UnencryptedCreditCardNos$			= $$
 			}
 
-			IF Responce$="SUBMIT" OR pos(cPaymentMethod$ = "RA") { ! PLW 2018-08-17 Ticket #236076 if it's credit card we skip the entry
+			IF Responce$="SUBMIT" OR pos(cPaymentMethod$ = "RA") { ! if it's credit card we skip the entry
 
 				IF coSession'UI AND NOT(coSession'WebEngine) {
-					needToCloseProgressBar	= TBL(coSession'UI'ProgressActive,isTRUE,isFALSE) ! PLW 2016-03-15 if we are creating the progress bar we need to kill it.
+					needToCloseProgressBar	= TBL(coSession'UI'ProgressActive,isTRUE,isFALSE) ! if we are creating the progress bar we need to kill it.
 					coSession'UI'ProgressBar("init","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")
 					wait .1 ! #231342 - force screen to update.
 				}
@@ -2757,14 +2758,14 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 								CustomerVaultRequestString$	+= "&account_holder_type="+TBL(UCS(APSSecType$)="B","personal","business")
 								CustomerVaultRequestString$	+= "&sec_code="+TBL(UCS(APSSecType$)="B","PPD","CCD")
 								BREAK
-							CASE "R" ! Credit Card - removed track logic #236076 - 2019-02-05 RCS
-								CustomerVaultRequestString$	+= "&payment=creditcard" ! RCS 2018-03-14  #235036
-								CustomerVaultRequestString$		+= "&ccnumber="+CCnumber$
-								CustomerVaultRequestString$		+= "&ccexp="+CCexp$
-								ccExpiration$					= CCexp$
+							CASE "R" ! Credit Card - removed track logic
+								CustomerVaultRequestString$	+= "&payment=creditcard"
+								CustomerVaultRequestString$	+= "&ccnumber="+CCnumber$
+								CustomerVaultRequestString$	+= "&ccexp="+CCexp$
+								ccExpiration$				= CCexp$
 
 								! RCS #235036 - 2018-03-08
-								IF ARPaymentType.D531APSRetailAccount$ <> "Y" { ! #236603 - 2018-05-15 RCS
+								IF ARPaymentType.D531APSRetailAccount$ <> "Y" {
 									CustomerVaultRequestString$		+= "&amount=0.00" ! validate
 									CustomerVaultRequestString$		+= "&type=validate"
 									CustomerVaultRequestString$		+= "&stored_credential_indicator=stored"
@@ -2788,10 +2789,10 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 								CustomerVaultRequestString$		+= "&account_holder_type="+TBL(UCS(APSSecType$)="B","personal","business")
 								CustomerVaultRequestString$		+= "&sec_code="+TBL(UCS(APSSecType$)="B","PPD","CCD")
 								IF cFromCustMaint {
-									_obj'AddBillingData(CustomerVaultRequestString$, defaultRec$, defaultIOL$)	! RCS #236076 - 2018-10-23
+									_obj'AddBillingData(CustomerVaultRequestString$, defaultRec$, defaultIOL$)
 									CustomerVaultRequestString$		+= "&email=" + cEmail$
 								} ELSE {
-									_obj'AddBillingURLData(CustomerVaultRequestString$, defaultRec$, defaultIOL$)	! RCS #236076 - 2018-10-23
+									_obj'AddBillingURLData(CustomerVaultRequestString$, defaultRec$, defaultIOL$)
 									CustomerVaultRequestString$		+= "&email=" + _OBJ'APSURLEncoding$(cEmail$)
 								}
 								BREAK
@@ -2825,17 +2826,17 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 
 					SWITCH cPaymentMethod$
 						CASE "A" ! ACH
-							IF NUL(guid$) and service$ = "CREATE" {					! RCS 2018-11-29 - for ACH force form for any new entry.
+							IF NUL(guid$) and service$ = "CREATE" {					! for ACH force form for any new entry.
 								ProcessHostedForm	= isTRUE
-								retVal				= _obj'ProcessThreeStepApi()	! PLW 2018-08-17 Ticket #236076 if we don't have a vault ID we use three-step
+								retVal				= _obj'ProcessThreeStepApi()	! if we don't have a vault ID we use three-step
 							} ELSE {
-								IF NOT(NUL(CreditCardGUID$)) AND service$="UPDATE" AND NOT(cFromCustMaint) {  ! PLW 2018-08-20 Ticket #236076 if we have a vault ID we use direct post
+								IF NOT(NUL(CreditCardGUID$)) AND service$="UPDATE" AND NOT(cFromCustMaint) {  ! if we have a vault ID we use direct post
 									ProcessHostedForm	= isFALSE
 									retVAL				= _obj'ProcessSecureHttp()
 								} ELSE {
 									IF cFromCustMaint {
 										ProcessHostedForm	= isTRUE
-										retVal				= _obj'ProcessThreeStepApi() ! PLW 2018-08-17 Ticket #236076 if we don't have a vault ID we use three-step
+										retVal				= _obj'ProcessThreeStepApi() ! if we don't have a vault ID we use three-step
 									} else {
 										retVal				= retSUCCESS
 									}
@@ -2844,12 +2845,12 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 							BREAK						
 						
 						CASE "R" ! CC
-							IF NOT(NUL(CreditCardGUID$)) AND NOT(service$="UPDATE") {  ! PLW 2018-08-20 Ticket #236076 if we have a vault ID we use direct post
+							IF NOT(NUL(CreditCardGUID$)) AND NOT(service$="UPDATE") {  ! if we have a vault ID we use direct post
 								ProcessHostedForm	= isFALSE
 								retVAL				= _obj'ProcessSecureHttp()
 							} ELSE {
 								ProcessHostedForm	= isTRUE
-								retVal				= _obj'ProcessThreeStepApi() ! PLW 2018-08-17 Ticket #236076 if we don't have a vault ID we use three-step
+								retVal				= _obj'ProcessThreeStepApi() ! if we don't have a vault ID we use three-step
 							}
 							BREAK
 					END SWITCH
@@ -2857,7 +2858,7 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 					retVAL 					= retSUCCESS
 				}
 				IF coSession'UI AND NOT(coSession'WebEngine) {
-					IF needToCloseProgressBar and coSession'UI'ProgressActive { ! PLW 2016-03-15 if we are creating the progress bar we need to kill it.
+					IF needToCloseProgressBar and coSession'UI'ProgressActive { ! if we are creating the progress bar we need to kill it.
 						coSession'UI'ProgressBar("close")
 					}
 					needToCloseProgressBar	= isFalse
@@ -2879,8 +2880,9 @@ PROCESS_SECURE_HTTP:
 	! Action$ = "ADD_CUSTOMER", "DELETE_CUSTOMER", "TRANSACTION", TEST_CREDENTIALS"
 	! RequestString$ = comes from the caller
 	! This is where we need the TOKEN ID and we can use this to send step 3 and receive the response with the vault ID, transaction ID, etc.
+	! EMV functions added 2020-07-29 RCS
 
-	retVal = retSUCCESS
+	retVal				= retSUCCESS
 	IF NUL(cHttpQueryHost$) OR NUL(cHttpHost$) OR NUL(cHttpStepOneUrl$) {
 		_OBJ'FindURLs()
 	}
@@ -2892,17 +2894,17 @@ PROCESS_SECURE_HTTP:
 	writeTryCounter		= 0
 	pBarCaption$		= TBL(cPaymentMethod$="A","Credit Card","ACH")
 	
-	_OBJ'WriteLog("APS Direct Request "+Action$,RequestString$) ! PLW 2017-07-03 moved to happen before request
+	_OBJ'WriteLog("APS Direct Request "+Action$,RequestString$) ! moved to happen before request
 
-	! ***** PLW 2017-06-13 Changed to use .NET to avoid apparently memory errors
+	! ***** Changed to use .NET to avoid apparently memory errors
 	IF coSession'UI AND NOT(coSession'WebEngine) {
 		coSession'UI'ProgressBar("update","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")
-		wait .1 ! #231342 - force screen to update.
+		wait .1 ! force screen to update.
  	}
 
-	tlsChk				= _obj'ResetDotNet() ! #230282 - 2018-01-17 RCS
+	tlsChk				= _obj'ResetDotNet()
 
- 	if tlsChk = retSUCCESS { _obj'WriteLog("APS Progress","Connecting at TLS 1.2") } ! #230282 - 2018-01-17 RCS
+ 	if tlsChk = retSUCCESS { _obj'WriteLog("APS Progress","Connecting at TLS 1.2") }
 
 	if tlsChk = retWARNING {
 		if not(coSession'Updating) {
@@ -2912,7 +2914,7 @@ PROCESS_SECURE_HTTP:
 										"with TLS 1.2 enabled in the registry.  Please consult the APS Manual.\"+ \
 										"Please note that on and after March 31st, 2018, you will not be able to process\"+ \
 										"unsecure transactions with the APS payment gateway.", \
-										"Style=OK,Title=Insecure Connection to APS Payments,Icon=S") ! #230282 RCS 2018-01-17 - date change per Zac.
+										"Style=OK,Title=Insecure Connection to APS Payments,Icon=S") ! RCS 2018-01-17 - date change per Zac.
 		}
 		_obj'WriteLog("APS Progress","** Unable to set TLS level - connection will not be secure! **")
 
@@ -2920,7 +2922,7 @@ PROCESS_SECURE_HTTP:
 
 	if NOT(tlsChk) {
 		coSession'LastErrorMsg$	= msg(-1)
- 		_obj'WriteLog("APS Progress","Unable to instantiate .NET communications. "+MSG(-1)) ! #230282 - 2018-01-17 RCS
+ 		_obj'WriteLog("APS Progress","Unable to instantiate .NET communications. "+MSG(-1))
  		RETURN retFAILURE
  	}
 
@@ -2929,20 +2931,20 @@ PROCESS_SECURE_HTTP:
 	
 	if nul(Response$) { 
 		_OBJ'WriteLog("APS Response"+Action$,"Connection failed: "+msg(-1)+CrLf$+"Response: "+Response$) 
-	}	! #230282 - 2017-11-13 RCS, 2018-12-19
+	}
 
 	IF NOT(WriteFailed) {
 	 	IF coSession'UI AND NOT(coSession'WebEngine) {
-			coSession'UI'ProgressBar("update","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")	! #247203 - 2019-02-28 RCS
-			wait .1 ! #231342 - force screen to update.
+			coSession'UI'ProgressBar("update","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")
+			wait .1 ! force screen to update.
  		}
 	 	_OBJ'WriteLog("APS Response "+Action$,Response$)
 
 		UCSResponse$	= UCS(response$)
 		! Action "ADD_CUSTOMER", "DELETE_CUSTOMER", "TRANSACTION", "QUERY", "TEST_CREDENTIALS"
 		IF NOT(UCS(Action$) = "QUERY") {
-	 		tmpAction$	= Action$
-	 		IF Action$	= "TEST_CREDENTIALS" {
+	 		tmpAction$		= Action$
+	 		IF Action$		= "TEST_CREDENTIALS" {
 	 			tmpAction$	= "ADD_CUSTOMER"
 	 		}
 	 		_OBJ'ParseResponse(tmpAction$,UCSResponse$,APSStatus$,ResponseCode$,ResponseText$,authCode$,transID$,vaultID$)
@@ -2952,7 +2954,7 @@ PROCESS_SECURE_HTTP:
 	 	}
 
 		IF UCS(APSStatus$) <> "SUCCESS" AND NOT(Action$ = "TEST_CREDENTIALS") {
-			retVal=retFAILURE
+			retVal			= retFAILURE
 			_OBJ'TranslateError(ResponseCode$,ErrorText$)
 			LastErrorNum$	= "CI_Error"
 			errMsg1$		= ResponseText$
@@ -2963,7 +2965,7 @@ PROCESS_SECURE_HTTP:
 				CASE "ADD_CUSTOMER"
 					guid$						= vaultID$
 					CCnumber$					= STP(CCnumber$)
-					IF CCnumber$>isNULL$ {								! #229341 - 2017-09-20 RCS - it is either a credit card or ACH, but not both.
+					IF CCnumber$>isNULL$ {								! it is either a credit card or ACH, but not both.
 						last4Nos$				= MID(CCnumber$,-4)
 						expDate$				= CCexp$
 						expMonth$				= MID(expDate$,1,2)
@@ -3013,40 +3015,38 @@ PROCESS_SECURE_HTTP:
 RETURN retVal
 !
 
-PROCESS_STEP_ONE_API: ! #236076 - 2018-10-03 RCS
+PROCESS_STEP_ONE_API:
 	! Similar to PROCESS_SECURE_HTTP except for Three Step Redirect
 	! inputs must be set before calling this routine.
 	! Action$ = "ADD_CUSTOMER", "DELETE_CUSTOMER", "TRANSACTION", "TEST_CREDENTIALS"
 	! RequestString$ = comes from the caller
 	! For 3 step redirect RequestString will be converted to XML
-	! 
+	! EMV removed from this section 2020-07-29 RCS
+	!
 	retVal 				= retSUCCESS
 	IF NUL(cHttpStepOneUrl$) or nul(cHttpStepTwoUrl$) {
 		_OBJ'FindURLs()
 	}
 
 	hostString$			= cHttpStepOneUrl$
-	if cUseEmvDevice$	= isYES$ and cPaymentMethod$ = "R" and %EmvEnabled {
-		hostString$		+= "?relayStep1Immediately=false" ! RCS #236076 - 2018-12-24
-	}
 
 	! We've got the direct post request and we have to convert to Three Step Redirect step 1
 
 	hCustomerName$		= CustomerName$
 	RequestBody$		= _obj'ConvertStep1Request$(RequestString$, CustomerName$, CustomerID$, CardID$, cRequireCVV$, cPaymentMethod$)
 	writeTryCounter		= 0
-	_OBJ'WriteLog("Step 1 Request - "+Action$,hostString$ + CrLf$ + RequestBody$) ! PLW 2017-07-03 moved to happen before request
+	_OBJ'WriteLog("Step 1 Request - "+Action$,hostString$ + CrLf$ + RequestBody$) ! moved to happen before request
 	pBarCaption$		= TBL(cPaymentMethod$="A","Credit Card","ACH")
 	
-	! ***** PLW 2017-06-13 Changed to use .NET to avoid apparently memory errors
+
 	IF coSession'UI AND NOT(coSession'WebEngine) {
 		coSession'UI'ProgressBar("update","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")
-		wait .1 ! #231342 - force screen to update.
+		wait .1 ! force screen to update.
  	}
 
-	tlsChk 				= _obj'ResetDotNet() ! #230282 - 2018-01-17 RCS
+	tlsChk 				= _obj'ResetDotNet()
 
- 	if tlsChk			= retSUCCESS { _obj'WriteLog("APS Progress","Connecting at TLS 1.2") } ! #230282 - 2018-01-17 RCS
+ 	if tlsChk			= retSUCCESS { _obj'WriteLog("APS Progress","Connecting at TLS 1.2") }
 
 	if tlsChk=retWARNING {
 		if not(coSession'Updating) {
@@ -3064,12 +3064,12 @@ PROCESS_STEP_ONE_API: ! #236076 - 2018-10-03 RCS
 
 	if NOT(tlsChk) {
 		coSession'LastErrorMsg$ = msg(-1)
- 		_obj'WriteLog("APS Progress","Unable to instantiate .NET communications. "+MSG(-1)) ! #230282 - 2018-01-17 RCS
+ 		_obj'WriteLog("APS Progress","Unable to instantiate .NET communications. "+MSG(-1))
  		RETURN retFAILURE
  	}
 	rtnVal				= coHTTP'Headers'Add("Content-Type","text/xml")
 	response.URL$		= isNULL$
-	response.Token$		= isNULL$ ! PLW need to make sure we're not carrying over from last one
+	response.Token$		= isNULL$ ! need to make sure we're not carrying over from last one
 	responseOK			= isFALSE
 	response$			= coHTTP'UploadString$(hostString$,"POST",RequestBody$,err=*next); responseOK	= isTRUE
 	
@@ -3104,47 +3104,33 @@ PROCESS_THREE_STEP_API:
 	! RequestString$ = comes from the caller
 	! For 3 step redirect RequestString will be converted to XML
 	! This is where we need the TOKEN ID and we can use this to send step 3 and receive the response with the vault ID, transaction ID, etc.
+	! EMV removed from this section 2020-07-29 RCS
 
 	UserAction$			= isNULL$
 	cSourceRef$			= sourceRef$
 	
-	IF NUL(cHttpQueryHost$) OR NUL(cHttpHost$) OR NUL(cHttpStepOneUrl$) {  ! PLW 2018-08-17 Ticket #236076
+	IF NUL(cHttpQueryHost$) OR NUL(cHttpHost$) OR NUL(cHttpStepOneUrl$) {
 		_OBJ'FindURLs()
 	}
 	
-	TokenFound			= _obj'TokenCheck(cSourceRef$,fromEMV$,Workstation$,Token$) ! sets Token_id$ if found.
-	if TokenFound and fromEMV$ <> isYES$ {
-		_obj'TokenRemove(cSourceRef$)							! remove non EMV token.
-		Token$			= $$
-		Token_id$		= $$
-		TokenFound		= isFALSE
-	}
-	if not(TokenFound) {
-		retVal 				= retSUCCESS
-		isXML				= isTRUE
-		retVAL				= _obj'ProcessStepOneApi() ! RCS 2018-10-03 Ticket #236076
-		isXML				= isFALSE
-		
-		if not(retVal) { ! RCS 2018-10-03 Ticket #236076
-			retVal			= retFAILURE 
-			LastErrorNum$	= "CI_Error" 
-			LastErrorMsg$	= MSG(LastErrorNum$,"APS API Key authentication failed")
-			RETURN retVal
-		}
+	retVal 				= retSUCCESS
+	isXML				= isTRUE
+	retVAL				= _obj'ProcessStepOneApi()
+	isXML				= isFALSE
 	
-		token_id$			= response.Token$
-		tmpVal				= _obj'TokenAdd(cSourceRef$,cUseEmvDevice$,token_id$)
-		TokenFound			= isFALSE
-	} else {
-		_OBJ'WriteLog("Step 1 Token found!","From: "+Workstation$+CrLf$+"Token: "+Token$+CrLf$+"EMV: "+fromEMV$)
-		cUseEmvDevice$		= fromEMV$
+	if not(retVal) {
+		retVal			= retFAILURE 
+		LastErrorNum$	= "CI_Error" 
+		LastErrorMsg$	= MSG(LastErrorNum$,"APS API Key authentication failed")
+		RETURN retVal
 	}
+	
 	! Now we've sent Step 1.  If it's a vault transaction we will use the hosted form.
 
-	! STEP 2 - send the EMV/hosted form URL and wait for completion	
+	! STEP 2 - send the hosted form URL and wait for completion	
 
 	pBarCaption$		= TBL(cPaymentMethod$="A","Credit Card","ACH")
-	uService$			= lcs(cService$) ! Create/Update
+	uService$			= lcs(cService$)				! Create/Update
 	uTransaction$		= tbl(Action$="TRANSACTION","false","true")
 	if nul(ccNumber$) {
 		CCnumber$		= "************"+last4Nos$
@@ -3153,147 +3139,127 @@ PROCESS_THREE_STEP_API:
 		cMaskedCard$	= ccNumber$
 	}
 
-	If cPaymentMethod$	= "A" {
-		cUseEmvDevice$	= isNO$ ! ACH doen't process on EMV.
+	! hosted form, needs other switches.
+	! add parameters to the URL
+	uPaymentType$		= tbl(cPaymentMethod$="A","cc","ach")
+	uCVVRequired$		= tbl(cRequireCVV$="Y","false","true")
+	if uService$ 		= "update" or cPaymentMethod$ = "A" {
+		uCVVRequired$	= "false" ! not required when updating for ACH
 	}
+	uZipRequired$		= tbl(cRetailAccount$="Y","false","true")
+	uTransaction$		= tbl(Action$="TRANSACTION","false","true")
+	uCardSwipe$			= tbl(cRetailAccount$="Y","false","true")	! activates cardswipe in the browser.
 
-	SWITCH cUseEmvDevice$		! EMV or hosted form
+	! theme? (NCU)
+ 	response.URL$		+= "&paymentType="			+ uPaymentType$
+ 	response.URL$		+= "&cvvRequired="			+ uCVVRequired$
+ 	response.URL$		+= "&postalCodeRequired="	+ uZipRequired$
+ 	response.URL$		+= "&service="				+ uService$
+ 	response.URL$		+= "&transaction="			+ uTransaction$	! displays amounts.
+ 	response.URL$		+= "&cardSwipe="			+ uCardSwipe$	! activates cardswipe in the browser.
+ 	
+	READ DATA FROM defaultRec$,rec=tmp$ to IOL = defaultIOL$
+	CardHolderName$		= tmp.CardholderName$
+	if nul(cMaskedCard$) {
+		cMaskedCard$	= ccNumber$
+	}
 	
-		CASE isYES$				! EMV - just token only.
-			response.URL$		= cHttpStepTwoUrl$ + response.Token$
-			BREAK
-			
-		DEFAULT					! hosted form, needs other switches.
-			! add parameters to the URL
-			uPaymentType$		= tbl(cPaymentMethod$="A","cc","ach")
-			uCVVRequired$		= tbl(cRequireCVV$="Y","false","true")
-			if uService$ 		= "update" or cPaymentMethod$ = "A" {
-				uCVVRequired$	= "false" ! not required when updating for ACH
-			}
-			uZipRequired$		= tbl(cRetailAccount$="Y","false","true")
-			uTransaction$		= tbl(Action$="TRANSACTION","false","true")
-			uCardSwipe$			= tbl(cRetailAccount$="Y","false","true")	! activates cardswipe in the browser. #263962
-		
-			! theme? (NCU)
-		 	response.URL$		+= "&paymentType="			+ uPaymentType$
-		 	response.URL$		+= "&cvvRequired="			+ uCVVRequired$
-		 	response.URL$		+= "&postalCodeRequired="	+ uZipRequired$
-		 	response.URL$		+= "&service="				+ uService$
-		 	response.URL$		+= "&transaction="			+ uTransaction$	! displays amounts.
-		 	response.URL$		+= "&cardSwipe="			+ uCardSwipe$	! activates cardswipe in the browser. #263962
-		 	
-			READ DATA FROM defaultRec$,rec=tmp$ to IOL = defaultIOL$
-			CardHolderName$		= tmp.CardholderName$
-			if nul(cMaskedCard$) {
-				cMaskedCard$	= ccNumber$
-			}
-			
-			! for display on create
-			if uService$ = "create" and cPaymentMethod$	= "A" {
-				! load defaults
+	! for display on create
+	if uService$ = "create" and cPaymentMethod$	= "A" {
+		! load defaults
+ 		response.URL$	+= "&accountName="			+ _OBJ'APSURLEncoding$(CardholderName$)
+ 		response.URL$	+= "&accountType="			+ TBL(UCS(APSacctType$)	= "S","checking","savings")
+ 		response.URL$	+= "&entityType="			+ TBL(UCS(APSSecType$)	= "P","business","personal")
+	}
+	
+ 	! for display on update
+ 	if uService$ = "update" {
+ 		SWITCH cPaymentMethod$
+ 			CASE "A"
 		 		response.URL$	+= "&accountName="			+ _OBJ'APSURLEncoding$(CardholderName$)
 		 		response.URL$	+= "&accountType="			+ TBL(UCS(APSacctType$)	= "S","checking","savings")
 		 		response.URL$	+= "&entityType="			+ TBL(UCS(APSSecType$)	= "P","business","personal")
-			}
-			
-		 	! for display on update
-		 	if uService$ = "update" {
-		 		SWITCH cPaymentMethod$
-		 			CASE "A"
-				 		response.URL$	+= "&accountName="			+ _OBJ'APSURLEncoding$(CardholderName$)
-				 		response.URL$	+= "&accountType="			+ TBL(UCS(APSacctType$)	= "S","checking","savings")
-				 		response.URL$	+= "&entityType="			+ TBL(UCS(APSSecType$)	= "P","business","personal")
-				 		response.URL$	+= "&maskedRoutingNumber="	+ "*****" + APSRoutingNo$
-				 		response.URL$	+= "&maskedAccountNumber="	+ dim(14,"*") + APSRoutingNo$
-				 		BREAK
-		 			CASE "R"
-				 		response.URL$	+= "&maskedCardNumber="	+ cMaskedCard$
-				 		response.URL$	+= "&ccExpiration="		+ ccExpiration$
-				 		BREAK
-				 END SWITCH
-		 	}
-		 	! address data
-		 	cRequestString$		= isNULL$
-		 	_obj'AddBillingUrlData(cRequestString$, defaultRec$, defaultIOL$)
-		 	response.URL$		+= cRequestString$
-		 	response.URL$		+= "&email="+_OBJ'APSURLEncoding$(EmailAddress$)
-		
-		 	! Amount
-		 	if amount {
-		 		response.URL$	+= "&amount="+stp(str(amount:"#####0.00-"),2)
-		 	}
-		 	! tax amount and shipping amount remarked per APS request.
-		 	! taxAmount
-			if taxAmount {
-			!	response.URL$	+= "&taxAmount="+stp(str(taxAmount:"#####0.00-"),2)	
-			}
-		 	! ShippingAmount
-		 	if tmpShipping {
-		 	!	response.URL$	+= "&ShippingAmount="+stp(str(tmpShipping:"#####0.00-"),2)
-		 	}
-		 	
-			response.URL$		+= "&flags=[compatibility_css][placeholder_polyfill]"	! #236076 - 2019-02-12 RCS for formatting.
-			if cRequireCVV$		= isYES$ {
-				response.url$	+= "[legacy_validation]"								! #236076 - 2019-03-07 RCS update for CVV checking.
-			}
-			
-		 	BREAK
-	END SWITCH
+		 		response.URL$	+= "&maskedRoutingNumber="	+ "*****" + APSRoutingNo$
+		 		response.URL$	+= "&maskedAccountNumber="	+ dim(14,"*") + APSRoutingNo$
+		 		BREAK
+ 			CASE "R"
+		 		response.URL$	+= "&maskedCardNumber="	+ cMaskedCard$
+		 		response.URL$	+= "&ccExpiration="		+ ccExpiration$
+		 		BREAK
+		 END SWITCH
+ 	}
+ 	! address data
+ 	cRequestString$		= isNULL$
+ 	_obj'AddBillingUrlData(cRequestString$, defaultRec$, defaultIOL$)
+ 	response.URL$		+= cRequestString$
+ 	response.URL$		+= "&email="+_OBJ'APSURLEncoding$(EmailAddress$)
 
-	if TokenFound {
-		_OBJ'WriteLog("Attempting to recover found token:","From: "+Workstation$+CrLf$+"Token: "+Token$+CrLf$+"EMV: "+fromEMV$)
-		response.token$		= token_id$
-		
-	} else {
-		
-		_OBJ'WriteLog("Step 2 Portal Request",response.URL$)
-		
-		oCreditCardSubmit	= NEW("AR_531APSCreditCardSubmit_ui",coSession)
-		if cUseEmvDevice$	= isYES$ {
-			retVal			= oCreditCardSubmit'GetEmvForm(response.URL$, UserAction$)
-		} ELSE {
-			if cFromCustMaint or not(Amount) {
-				retVal		= oCreditCardSubmit'GetVaultForm(response.URL$, UserAction$)
-			} else {
-				retVal		= oCreditCardSubmit'GetHostedForm(response.URL$, UserAction$)
-			}
-		}
-		DROP OBJECT oCreditCardSubmit
-		oCreditCardSubmit	= 0
-		
-		_OBJ'WriteLog("Step 2 Portal Response",UserAction$)
-		
-		! We've submitted the form and will now poll
-		IF NOT(UCS(UserAction$)="SUBMITTED") {
-			if POS("CANCEL" = ucs(UserAction$)) {
-				! cancel pressed
-				APSStatus$			= "CANCEL"
-				_obj'TokenRemove(cSourceRef$)		! token is cancelled.
-				SWITCH uTransaction$
-					CASE "true"
-						LastErrorNum$ 			= isNULL$
-						LastErrorMsg$ 			= "New APS Card Transaction Cancelled." 
-						coSession'LastErrorMsg$	= LastErrorMsg$
-						BREAK
-					DEFAULT
-						LastErrorNum$ 			= "AR_531APSSubmissionCancelled"
-						LastErrorMsg$ 			= MSG("AR_531APSSubmissionCancelled")
-						coSession'LastErrorMsg$	= LastErrorMsg$
-						BREAK
-				END SWITCH
-			} else {								! Declined (from EMV)
-				LastErrorNum$ 					= isNULL$
-				LastErrorMsg$ 					= "APS Card Transaction Declined." 
-				coSession'LastErrorMsg$			= LastErrorMsg$
-				APSStatus$						= "DECLINED"
-				_obj'TokenRemove(cSourceRef$)
-			}
-			_obj'WriteLog("APS Progress",coSession'LastErrorMsg$)
-			RETURN retFAILURE
-		}
+ 	! Amount
+ 	if amount {
+ 		response.URL$	+= "&amount="+stp(str(amount:"#####0.00-"),2)
+ 	}
+ 	! tax amount and shipping amount remarked per APS request.
+ 	! taxAmount
+	if taxAmount {
+	!	response.URL$	+= "&taxAmount="+stp(str(taxAmount:"#####0.00-"),2)	
 	}
+ 	! ShippingAmount
+ 	if tmpShipping {
+ 	!	response.URL$	+= "&ShippingAmount="+stp(str(tmpShipping:"#####0.00-"),2)
+ 	}
+ 	
+	response.URL$		+= "&flags=[compatibility_css][placeholder_polyfill]"	! 2019-02-12 RCS for formatting.
+	if cRequireCVV$		= isYES$ {
+		response.url$	+= "[legacy_validation]"								! 2019-03-07 RCS update for CVV checking.
+	}
+			
+		
+	_OBJ'WriteLog("Step 2 Portal Request",response.URL$)
+	
+	oCreditCardSubmit	= NEW("AR_531APSCreditCardSubmit_ui",coSession)
+	
+	if cFromCustMaint or not(Amount) {
+		retVal			= oCreditCardSubmit'GetVaultForm(response.URL$, UserAction$)
+	} else {
+		retVal			= oCreditCardSubmit'GetHostedForm(response.URL$, UserAction$)
+	}
+
+	DROP OBJECT oCreditCardSubmit
+	oCreditCardSubmit	= 0
+	
+	_OBJ'WriteLog("Step 2 Portal Response",UserAction$)
+	
+	! We've submitted the form and will now poll
+	IF NOT(UCS(UserAction$)	="SUBMITTED") {
+		if POS("CANCEL"		= ucs(UserAction$)) {
+			! cancel pressed
+			APSStatus$		= "CANCEL"
+
+			SWITCH uTransaction$
+				CASE "true"
+					LastErrorNum$ 			= isNULL$
+					LastErrorMsg$ 			= "New APS Card Transaction Cancelled." 
+					coSession'LastErrorMsg$	= LastErrorMsg$
+					BREAK
+				DEFAULT
+					LastErrorNum$ 			= "AR_531APSSubmissionCancelled"
+					LastErrorMsg$ 			= MSG("AR_531APSSubmissionCancelled")
+					coSession'LastErrorMsg$	= LastErrorMsg$
+					BREAK
+			END SWITCH
+		} else {							! Declined (from EMV)
+			LastErrorNum$ 					= isNULL$
+			LastErrorMsg$ 					= "APS Card Transaction Declined." 
+			coSession'LastErrorMsg$			= LastErrorMsg$
+			APSStatus$						= "DECLINED"
+
+		}
+		_obj'WriteLog("APS Progress",coSession'LastErrorMsg$)
+		RETURN retFAILURE
+	}
+
 	! STEP 3 - Now we poll for results
-	! Finally, we're ready to complete the action IF we used the hosted form or EMV device.
+	! Finally, we're ready to complete the action IF we used the hosted form.
 
 	tryCount			= 0
 	goodResponse		= 0
@@ -3301,14 +3267,15 @@ PROCESS_THREE_STEP_API:
 	REPEAT
 		response.Result$		= isNULL$
 		response.Result_text$	= isNULL$
-		_OBJ'WriteLog("Step 3 Polling ","Try count: "+str(tryCount) + tbl((cUseEmvDevice$=isYES$),isNULL$," for EMV."))
+		_OBJ'WriteLog("Step 3 Polling ","Try count: "+str(tryCount))
 		
 	 	IF coSession'UI AND NOT(coSession'WebEngine) {
 			coSession'UI'ProgressBar("update","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")
-			wait .1 ! #231342 - force screen to update.
+			wait .1 ! force screen to update.
  		}
 		
-		cGetURL$		= tbl((cUseEmvDevice$ = isYES$),cHttpStepThreeUrl$+response.token$,cHttpStep3EmvUrl$+response.token$+"&asXml=true")
+!		cGetURL$		= tbl((cUseEmvDevice$ = isYES$),cHttpStepThreeUrl$+response.token$,cHttpStep3EmvUrl$+response.token$+"&asXml=true")
+		cGetURL$		= cHttpStepThreeUrl$+response.token$
 		_OBJ'WriteLog("Step 3 Polling URL",cGetURL$)
 
 		response$				= coHTTP'DownloadString$(cGetURL$)
@@ -3321,12 +3288,12 @@ PROCESS_THREE_STEP_API:
 			response.result$	= $$
 			APSStatus$			= $$
 		} else {
-			tmpRet					= _obj'ParseSOAP(response$, respIOL$, respREC$, status$)
+			tmpRet				= _obj'ParseSOAP(response$, respIOL$, respREC$, status$)
 			READ DATA FROM respREC$ to IOL=respIOL$
 			_OBJ'WriteLog("APS Step 3 Response","Status:  " + response.result_text$)
 
 			SWITCH response.result$
-				CASE "0"		! Pending EMV
+				CASE "0"
 					goodResponse		= isFALSE	! pending - try again.
 					wait .5
 					BREAK
@@ -3346,22 +3313,21 @@ PROCESS_THREE_STEP_API:
 			END SWITCH
 		}
 			
-	UNTIL goodResponse or tryCount>10
+	UNTIL goodResponse or tryCount > 10
 	
 	if NUL(response.result$) { 
 		_OBJ'WriteLog("APS Step 3 Response","Connection failed or transaction cancelled "+msg(-1)) 
   		retVal					= retFAILURE					! cannot write request
-  		_obj'TokenRemove(cSourceRef$)							! remove token
 		LastErrorNum$			= "CI_Report_Unable"
 		LastErrorMsg$			= MSG("CI_Report_Unable","to send request to the APS HTTP Host")
 		_OBJ'WriteLog("APS Progress","Did Not Complete Three Step Redirect - Write Failed.")
 		RETURN retVal
   	}
 		
-	APSStatus$				= response.result_text$
-	_obj'TokenRemove(cSourceRef$)		! token was processed.
+	APSStatus$					= response.result_text$
+
 	SWITCH response.result$
-		CASE "0"		! Pending EMV
+		CASE "0"
 			APSStatus$			= "ERROR" ! should never be here.
 			BREAK
 		CASE "1" 		! Approved
@@ -3381,14 +3347,14 @@ PROCESS_THREE_STEP_API:
 
  	IF coSession'UI AND NOT(coSession'WebEngine) {
 		coSession'UI'ProgressBar("update","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")
-		wait .1 ! #231342 - force screen to update.
+		wait .1 ! force screen to update.
 	}
 
-	UCSResponse$=UCS(response$)
+	UCSResponse$			= UCS(response$)
 	! Action "ADD_CUSTOMER", "DELETE_CUSTOMER", "TRANSACTION", "QUERY", "TEST_CREDENTIALS"
-	IF NOT(UCS(Action$)="QUERY") {
+	IF NOT(UCS(Action$)		="QUERY") {
  		tmpAction$			= Action$
- 		IF Action$ = "TEST_CREDENTIALS" {
+ 		IF Action$ 			= "TEST_CREDENTIALS" {
  			tmpAction$		= "ADD_CUSTOMER"
  		}
  	} ELSE {
@@ -3397,7 +3363,7 @@ PROCESS_THREE_STEP_API:
  	}
 
  	! declines, errors.
-	IF UCS(APSStatus$)<>"SUCCESS" AND NOT(Action$ = "TEST_CREDENTIALS") {
+	IF UCS(APSStatus$)		<> "SUCCESS" AND NOT(Action$ = "TEST_CREDENTIALS") {
 		retVal				= retFAILURE
 		_OBJ'TranslateError(ResponseCode$,ErrorText$)
 		LastErrorNum$		= "CI_Error"
@@ -3413,7 +3379,7 @@ PROCESS_THREE_STEP_API:
 		CASE "ADD_CUSTOMER"
 			guid$				= response.customer_vault_id$
 			CCnumber$			= STP(response.billing.cc_number$)
-			IF CCnumber$ > isNULL$ { ! #229341 - 2017-09-20 RCS - it is either a credit card or ACH, but not both.
+			IF CCnumber$ > isNULL$ { ! it is either a credit card or ACH, but not both.
 				last4Nos$		= MID(CCnumber$,-4)
 				expDate$		= response.billing.cc_exp$
 				tmpDate$		= coSession'SystemDate$ ! get year prefix.
@@ -3434,31 +3400,31 @@ PROCESS_THREE_STEP_API:
 				last4AcctNo$	= MID(response.billing.account_number$,-4)
 				acctType$		= TBL(lcs(response.billing.account_type$)="savings","C","S")
 				accountName$ 	= response.billing.account_name$
-				if last4RoutingNo$	= "****" { last4RoutingNo$	= $$ } ! #229341 - 2017-09-26 RCS
-				if last4AcctNo$		= "****" { last4AcctNo$		= $$ } ! #229341 - 2017-09-26 RCS
+				if last4RoutingNo$	= "****" { last4RoutingNo$	= $$ }
+				if last4AcctNo$		= "****" { last4AcctNo$		= $$ }
 			}
 			! pull back address data from the hosted form.
 			!	defIOL$		= CPL("IOLIST CardHolderName$, Address1$, Address2$, Zip$, City$, State$, Country$, EMailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")
 			READ DATA FROM defaultRec$,rec=CREC$ to iol=defaultIOL$
-			if not(cUseEmvDevice$	= isYES$) {		! EMV doesn't return address data
-				cRec.CardHolderName$	= tbl(nul(CCnumber$),response.Billing.Company$,response.Billing.Account_Name$) ! CC/ACH
-				cRec.Address1$			= response.Billing.Address1$
-				cRec.Address2$			= response.Billing.Address2$
-				cRec.Zip$				= response.Billing.Postal$
-				cRec.City$				= response.Billing.City$
-				cRec.State$				= response.Billing.State$
-				cRec.Country$			= response.Billing.Country$
-				cRec.EmailAddress$		= response.Billing.Email$
-			}
+
+			cRec.CardHolderName$	= tbl(nul(CCnumber$),response.Billing.Company$,response.Billing.Account_Name$) ! CC/ACH
+			cRec.Address1$			= response.Billing.Address1$
+			cRec.Address2$			= response.Billing.Address2$
+			cRec.Zip$				= response.Billing.Postal$
+			cRec.City$				= response.Billing.City$
+			cRec.State$				= response.Billing.State$
+			cRec.Country$			= response.Billing.Country$
+			cRec.EmailAddress$		= response.Billing.Email$
+
 			if nul(cRec.D531APSValidated$) {
 				cRec.D531APSValidated$	= isNO$
 			}
-			if response.cvv_Result$="M" { ! CVV matches, card is validated.
+			if response.cvv_Result$	= "M" { ! CVV matches, card is validated.
 				cRec.D531APSValidated$	= isYES$
 			}
 			cRec.D531APSMaskedCard$	= response.Billing.cc_Number$			! masked CC number
 
-			if cPaymentMethod$ = "A" {
+			if cPaymentMethod$		= "A" {
 				cRec.CardHolderName$			= response.billing.account_name$
 				cRec.D531APSAchAccountType$		= ucs(mid(response.Billing.Entity_Type$,1,1))
 				cRec.D531APSValidated$			= isNO$
@@ -3467,7 +3433,7 @@ PROCESS_THREE_STEP_API:
 				}
 			}
 			
-			defaultRec$=rec(defaultIOL$,rec=CREC$)
+			defaultRec$				= rec(defaultIOL$,rec=CREC$)
 			BREAK
 			
 		CASE "DELETE_CUSTOMER"
@@ -3484,7 +3450,7 @@ PROCESS_THREE_STEP_API:
 			}
 			guid$			= response.customer_vault_id$
 			CCnumber$		= STP(response.billing.cc_number$)
-			IF CCnumber$ > isNULL$ { ! #229341 - 2017-09-20 RCS - it is either a credit card or ACH, but not both.
+			IF CCnumber$ > isNULL$ { ! it is either a credit card or ACH, but not both.
 				last4Nos$		= MID(CCnumber$,-4)
 				expDate$		= response.billing.cc_exp$
 				tmpDate$		= coSession'SystemDate$ ! get year prefix.
@@ -3506,22 +3472,22 @@ PROCESS_THREE_STEP_API:
 				last4AcctNo$	= MID(response.billing.account_number$,-4)
 				acctType$		= TBL(lcs(response.billing.account_type$)="savings","C","S")
 				accountName$ 	= response.billing.account_name$
-				if last4RoutingNo$	= "****" { last4RoutingNo$	= $$ } ! #229341 - 2017-09-26 RCS
-				if last4AcctNo$		= "****" { last4AcctNo$		= $$ } ! #229341 - 2017-09-26 RCS
+				if last4RoutingNo$	= "****" { last4RoutingNo$	= $$ }
+				if last4AcctNo$		= "****" { last4AcctNo$		= $$ }
 			}
 			! pull back address data from the hosted form.
 			!	defIOL$		= CPL("IOLIST CardHolderName$, Address1$, Address2$, Zip$, City$, State$, Country$, EMailAddress$, D531APSValidated$, D531APSMaskedCard$, D531APSAchAccountType$")
 			READ DATA FROM defaultRec$,rec=CREC$ to iol=defaultIOL$
-			if not(cUseEmvDevice$	= isYES$) {	 	! EMV doesn't return address data
-				cRec.CardHolderName$	= response.Billing.Company$
-				cRec.Address1$			= response.Billing.Address1$
-				cRec.Address2$			= response.Billing.Address2$
-				cRec.Zip$				= response.Billing.Postal$
-				cRec.City$				= response.Billing.City$
-				cRec.State$				= response.Billing.State$
-				cRec.Country$			= response.Billing.Country$
-				cRec.EmailAddress$		= response.Billing.Email$
-			}
+
+			cRec.CardHolderName$	= response.Billing.Company$
+			cRec.Address1$			= response.Billing.Address1$
+			cRec.Address2$			= response.Billing.Address2$
+			cRec.Zip$				= response.Billing.Postal$
+			cRec.City$				= response.Billing.City$
+			cRec.State$				= response.Billing.State$
+			cRec.Country$			= response.Billing.Country$
+			cRec.EmailAddress$		= response.Billing.Email$
+
 			if nul(cRec.D531APSValidated$) {
 				cRec.D531APSValidated$	= isNO$
 			}

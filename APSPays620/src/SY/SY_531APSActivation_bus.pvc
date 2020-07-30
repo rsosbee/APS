@@ -1,11 +1,11 @@
 ! $Id$: SY_531APSActivation_bus.PVC $
 ! Activate APS Credit Card
-! Accounting Systems, Inc. 2013-2018. Irina Kouptsova, Robert Sosbee.
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 ! 
 DEF CLASS "SY_531APSActivation_bus" CREATE REQUIRED DELETE REQUIRED 
 	! Inherits from the following class(es)
 	 LIKE "SY_Maint"
-	 LIKE "SY_531APSTableCreation" ! PLW 2019-04-17  Ticket #250723 moved table creation to separate library so it can be shared.
+	 LIKE "SY_531APSTableCreation"
 
 	 
 	! Public Properties
@@ -23,9 +23,9 @@ DEF CLASS "SY_531APSActivation_bus" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION CheckIfActivated(APSActivated)						CHECK_IF_ACTIVATED
 	FUNCTION UpdateAPSAllCompanies(UpdateFlag$)					UPDATE_APS_ALL_COMPANIES
 	FUNCTION UpdateAPSCurrentCompany(UpdateFlag$)				UPDATE_APS_CURRENT_COMPANY
-	FUNCTION RetrieveVersionInfo(Version$,Additional$)			RETRIEVE_VERSION_INFO		! #227159 - RCS - 2017-09-14
- 	FUNCTION UpdatesURLs()										UPDATE_URLS 				! #232007 - RCS - 2017-11-20
- 	FUNCTION UpdateURLs()										UPDATE_URLS					! #232007 - RCS - 2018-11-21
+	FUNCTION RetrieveVersionInfo(Version$,Additional$)			RETRIEVE_VERSION_INFO
+ 	FUNCTION UpdatesURLs()										UPDATE_URLS
+ 	FUNCTION UpdateURLs()										UPDATE_URLS
  	FUNCTION UpdateAPSFiles(cCompany$)							UPDATE_APS_FILES
  	
 	! Local/Private Functions (Methods)
@@ -40,7 +40,7 @@ ENTER coSession
 
 	testFH					= coSession'OpenTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
 	if not(testFH) {
-		tmpRet				= coSession'CreateTable("SY_531APSActivation","SYSTEM",ERR=*NEXT) ! PLW 2018-04-18 Ticket #236884 changed to not use a constant for results
+		tmpRet				= coSession'CreateTable("SY_531APSActivation","SYSTEM",ERR=*NEXT)
 	}
 	if testFH {
 		close (testFH,err=*next)
@@ -66,8 +66,8 @@ CHECK_ACTIVATED_COMPANIES:
 ENTER CurrentCompanyActivated,AllCompaniesActivated
 
 	retVal					= retSUCCESS
-	CurrentCompanyActivated	= 0
-	AllCompaniesActivated	= 1
+	CurrentCompanyActivated	= isFALSE
+	AllCompaniesActivated	= isTRUE
 	CurrentCompanyKey$		= coSession'CompanyKey$
 
 	tmpSY_CompanyFH=coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
@@ -76,9 +76,9 @@ ENTER CurrentCompanyActivated,AllCompaniesActivated
 			TMP.APSActivated$			= "N"
 			FIND (cMainTableFh,KEY=COMPANY.CompanyKey$,REC=TMP$,DOM=*NEXT)
 			IF TMP.APSActivated$		= "Y" {
-				IF COMPANY.CompanyKey$	= CurrentCompanyKey$ { CurrentCompanyActivated = 1 }
+				IF COMPANY.CompanyKey$	= CurrentCompanyKey$ { CurrentCompanyActivated = isTRUE }
 			} ELSE {
-				AllCompaniesActivated	= 0
+				AllCompaniesActivated	= isFALSE
 				BREAK
 			}
 		NEXT RECORD
@@ -99,7 +99,7 @@ RETURN retVal
 UPDATE_APS_ALL_COMPANIES:
 ENTER UpdateFlag$
 
-	retVal=retSUCCESS
+	retVal					= retSUCCESS
 
 	tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
 	IF tmpSY_CompanyFH {
@@ -151,7 +151,7 @@ ENTER CurrentCompanyKey$,ERR=*NEXT
 		LastErrorNum$		= "SY_531APSNotActivated"
 		LastErrorMsg$		= MSG("SY_531APSNotActivated")
 	}
-	%APSActivated 			= retVal				! PLW 2016-09-29 
+	%APSActivated 			= retVal 
 RETURN retVal
 !
 
@@ -180,7 +180,7 @@ ENTER APSActivated
 RETURN retVal
 !
 
-RETRIEVE_VERSION_INFO:  							! #227159 - RCS - 2017-09-14 - moved to bus to make available to any APS program.
+RETRIEVE_VERSION_INFO:
 ENTER cAPSVersion$,cAPSAdditionalInfo$,err=*next
 	retVal=retSUCCESS
 	
@@ -193,7 +193,11 @@ ENTER cAPSVersion$,cAPSAdditionalInfo$,err=*next
 	cEnhancementFh			= coSession'OpenTable("SY_Enhancement","SYSTEM",ERR=*NEXT)
 		
 	IF cEnhancementFh  {
-		SELECT *,REC=ENH$ FROM cEnhancementFh BEGIN ModuleCode$ END ModuleCode$:$FE$ WHERE ENH.DeveloperCode$=DeveloperCode$ AND ENH.EnhancementCode$=ModCode$
+		SELECT *,REC=ENH$ FROM cEnhancementFh			\ 
+			BEGIN ModuleCode$ 							\
+			END ModuleCode$:$FE$ 						\
+			WHERE ENH.DeveloperCode$=DeveloperCode$ 	\
+				AND ENH.EnhancementCode$=ModCode$
 			cAPSVersion$		= STR(ENH.EnhancementLevel)
 			cAPSVersion$		= STR(ENH.EnhancementLevel:"###.00",ERR=*NEXT)
 			cAPSVersion$		= "rev "+STP(cAPSVersion$,2)
@@ -213,7 +217,7 @@ ENTER cAPSVersion$,cAPSAdditionalInfo$,err=*next
 RETURN retVal
 !
 
-UPDATE_URLS: 										! #232007 - Moved to BUS for C2P processing.
+UPDATE_URLS:
 
 	URLMaintObj			= NEW("SY_URLMaintenance_bus",coSession)
 	
@@ -273,12 +277,12 @@ UPDATE_URLS: 										! #232007 - Moved to BUS for C2P processing.
 RETURN retSUCCESS
 !
 
-UPDATE_APS_FILES: ! Used to insure that all APS files are updated.
+UPDATE_APS_FILES:			! Used to insure that all APS files are updated.
 ENTER (cCompanyCode$),err=*next
 	if nul(cCompanyCode$) { 
 		cCompanyCode$ = coSession'CompanyCode$ 
 	}
-	retVal = _obj'UpdateC2PFiles(cCompanyCode$)   ! PLW 2019-04-17 Ticket #250723
+	retVal = _obj'UpdateC2PFiles(cCompanyCode$)
 
 RETURN retVal
 !

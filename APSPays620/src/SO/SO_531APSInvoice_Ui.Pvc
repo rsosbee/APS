@@ -64,6 +64,7 @@ ON_CREATE:
 	if cAPSActivated {
 		coTerminalSvc	= new("SY_531APSTerminal_Svc",coSession)
 		cEmvEnabled		= coTerminalSvc'CheckProcessingPaymentTypesExist()
+
 		if cEmvEnabled {
 			isEnabled	= coTerminalSvc'CheckTerminalEnabled()
 			if isEnabled {

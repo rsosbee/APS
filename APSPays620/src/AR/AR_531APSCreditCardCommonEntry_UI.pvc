@@ -133,7 +133,6 @@ BT_CREDITCARD:
 		RETURN retVal
 	}
 
-
 	reqCols$					= TBL(cCreditCardBusObject'ProcessInBatch$ = isYES$, $$, "cCreditCardRequiredCols$+"",""+cCreditCardSPSRequiredAddressCols$")
 	expression					= TBL(cCreditCardBusObject'ProcessInBatch$ = isYES$, isFALSE, isTRUE)
 	retVal						= cCreditCardBusObject'CheckRequired(reqCols$, expression, fromBTCC)
