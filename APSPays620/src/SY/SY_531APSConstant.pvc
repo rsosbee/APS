@@ -1,7 +1,7 @@
 ! $Id: SY_531APSConstant.pvc $
 ! APS Sage 100 ERP System Object / Constants Class override
-! Accounting Systems, Inc. 2019. RCSosbee
-! #236076 - 2019-03-28 RCS
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
+!
 
 DEF CLASS "SY_531APSConstant" CREATE REQUIRED DELETE REQUIRED
 
