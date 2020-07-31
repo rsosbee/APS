@@ -1,6 +1,6 @@
 ! $Id: AR_531APSConvertByPayment_UI.pvc $
-! Copyright 2018-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
-! #236076 - 2019-04-30 - RCS
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
+!
 
 DEF CLASS "AR_531APSConvertByPayment_UI" CREATE REQUIRED DELETE REQUIRED
 
@@ -372,7 +372,7 @@ ENTER currentGridCtl, currentRow
 		currentGridCtl'TEXT$   = HTA(EVS(cKeyColumn$))
 		currentGridCtl'COLUMN$ = cKeyColumn$
 		currentGridCtl'LOCK    = isTRUE
-		!this should be implemented in SY_MaintSetUI and overrided as necessary
+		! this should be implemented in SY_MaintSetUI and overrided as necessary
 	}
 
 RETURN retSuccess
@@ -611,9 +611,9 @@ BT_PROCEED:
 	}
 
 	cConvertByPayment	= isTRUE ! this flag is used in the conversion
-!	DROP OBJECT coBusiness
 
-	! Set the vault only credentials PLW 2016-07-18 added logic to get vault only credentials
+
+	! Set the vault only credentials 2016-07-18 added logic to get vault only credentials
 	coSession'GetParameter("SYS","CreditCardVaultOnlyID$",cEncryptedVaultOnlyID$)
 	coSession'GetParameter("SYS","CreditCardVaultOnlyKey$",cEncryptedVaultOnlyKey$)
 	_obj'DecryptPassword(cEncryptedVaultOnlyID$,	cCreditCardVaultOnlyID$)

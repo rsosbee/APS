@@ -37,14 +37,14 @@ DEF CLASS "AR_531APSConvertToAPS" CREATE REQUIRED DELETE REQUIRED
 	LOCAL cEncryptedVaultID$
 	LOCAL cEncryptedVaultOnlyID$
 	LOCAL cEncryptedVaultOnlyKey$
-	LOCAL cFoundACH 			! PLW 2017-03-27 flag that says there are ACH payment types.  Use this to know how to set Company option
+	LOCAL cFoundACH 			! 2017-03-27 flag that says there are ACH payment types.  Use this to know how to set Company option
 	LOCAL cGUIDCrossRefIOL$		= CPL("IOLIST SPSGUID$,APSGUID$")
 	LOCAL cPaymentMethod$
 	LOCAL cUnencryptedMerchantKey$
 	LOCAL cUnencryptedVaultID$
 	LOCAL progressMeterDelay
-	LOCAL tmpAchIOL$			= CPL("IOLIST routing$,acctNo$,acctType$")	! #243530 - 2018-11-18 RCS
-	LOCAL tmpCcIOL$				= CPL("IOLIST CCnumber$,expdate$")			! #243530 - 2018-11-18 RCS
+	LOCAL tmpAchIOL$			= CPL("IOLIST routing$,acctNo$,acctType$")
+	LOCAL tmpCcIOL$				= CPL("IOLIST CCnumber$,expdate$")
 
 	! Functions
 	FUNCTION LOCAL ClearExpiredCreditCards(date$)								CLEAR_EXPIRED_CREDIT_CARDS
@@ -54,11 +54,11 @@ DEF CLASS "AR_531APSConvertToAPS" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION LOCAl RemoveObsoleteWrkTables()									REMOVE_OBSOLETE_WRK_TABLES
 	
 	FUNCTION LOCAL SwitchVaultRecord$(APSfromID$, APSfromKey$, APStoID$, \
-					APStoKey$, APSorig_guid$, APSAccountName$,cAPSApiKey$)		SWITCH_VAULT_RECORD		! #243530 - 2018-11-18 to pass account name. RCS
+					APStoKey$, APSorig_guid$, APSAccountName$,cAPSApiKey$)		SWITCH_VAULT_RECORD
 	FUNCTION LOCAL UpdatesURLs()												UPDATE_URLS
 	FUNCTION LOCAL ValidateCredentials(APS_m_Id$,APS_Pwd$,SPS_vID$,SPS_key$)	VALIDATE_CREDENTIALS
 	FUNCTION LOCAL ValidateCredentials(APS_m_Id$,APS_Pwd$,	\
-										SPS_vID$,SPS_key$, cAPSApiKey$)			VALIDATE_CREDENTIALS	! RCS #236076 - 2018-12-11 Added api key.
+										SPS_vID$,SPS_key$, cAPSApiKey$)			VALIDATE_CREDENTIALS	! 2018-12-11 Added api key.
 	FUNCTION LOCAL ValidateSPS(vaultID$, MerchKey$)								VALIDATE_SPS
  	
  	
@@ -70,7 +70,7 @@ END DEF
 
 ON_CREATE:
 ENTER coSession
-	%APSPreConversion			= 1 ! PLW 2016-05-12 allow for conversion before activation
+	%APSPreConversion			= isTRUE ! allow for conversion before activation
 	! Inheritance check to ensure object is not directly created
 	IF POS(UCS(_OBJ'_Class$)	= UCS(PGN)) {
 		coSession'LastErrorNum$	= "SY_NotInherited"
@@ -80,8 +80,8 @@ ENTER coSession
 	coSession'CreateTable("AR_531APSConvertPaymentTypes",					pthCOMPANY$)
 
 	cAR_CustFH				= _obj'OpenTable("AR_Customer",					pthCOMPANY$)
-	cOrderHeaderFH			= _obj'OpenTable("SO_SalesOrderHeader",			pthCOMPANY$,ERR=*NEXT)	! PLW 2017-01-12 added error branch
-	cInvHeaderFH			= _obj'OpenTable("SO_InvoiceHeader",			pthCOMPANY$, ERR=*NEXT)	! PLW 2017-01-12 added error branch
+	cOrderHeaderFH			= _obj'OpenTable("SO_SalesOrderHeader",			pthCOMPANY$,ERR=*NEXT)
+	cInvHeaderFH			= _obj'OpenTable("SO_InvoiceHeader",			pthCOMPANY$, ERR=*NEXT)
 
 	cAR_PaymentTypeFH		= _obj'OpenTable("AR_PaymentType",				pthCOMPANY$)
 	cAR_APSPaymentTypeFH	= _obj'OpenTable("AR_531APSPaymentType",		pthCOMPANY$,1)
@@ -123,7 +123,7 @@ ENTER date$
 			coSession'UI'MessageBox$(coSession'LastErrorNum$, coSession'LastErrorMsg$)
 		}
 	}
-	IF coARCustomerCreditCard_bus {  ! PLW Ticket #235697 "File in use" error if credit cards are cleared.
+	IF coARCustomerCreditCard_bus {  ! File in use" error if credit cards are cleared.
 		DROP OBJECT coARCustomerCreditCard_bus
 		coARCustomerCreditCard_bus	= 0
 	}
@@ -213,7 +213,7 @@ CONVERT_CARDS_TO_APS:
 			IF foundConvert {
 				pay.D531APSMerchantID$	= CNVT.D531APSMerchantID$
 				pay.D531APSPassword$	= CNVT.D531APSPassword$
-				pay.D531APSApiKey$		= CNVT.D531APSApiKey$			! RCS #236076 - 2018-12-18
+				pay.D531APSApiKey$		= CNVT.D531APSApiKey$
 			} ELSE {
 				coSession'UI'MessageBox$("Payment Type: '" + pay.PaymentType$ + "' - There are no conversion credentials")
 				RETURN retFAILURE
@@ -231,7 +231,7 @@ CONVERT_CARDS_TO_APS:
 	Password$						= cUnencryptedAPSMerchantPassword$
 	cAPSApiKey$						= cD531APSApiKey$
 	SELECT *, REC=pay$ FROM cAR_APSPaymentTypeFH BEGIN isNULL$ END $FE$ WHERE POS(pay.PaymentMethod$ = "RA")
-		cPaymentMethod$				= pay.PaymentMethod$ ! PLW 2017-03-20 need to know how to parse card data
+		cPaymentMethod$				= pay.PaymentMethod$	! need to know how to parse card data
 		_obj'DecryptPassword(pay.PriorMerchantID$,	fromID$)
 		_obj'DecryptPassword(pay.PriorMerchantKey$,	fromKey$)
 		IF cConvertByPayment {
@@ -243,10 +243,10 @@ CONVERT_CARDS_TO_APS:
 		selectStart$				= pay.PaymentType$
 		selectEnd$					= selectStart$
 
-		SELECT *, REC=cc$ FROM cCustCCFH, KNO="kPAYMENT"		\
-			BEGIN	selectStart$								\
-			END		selectEnd$:$FE$								\
-			WHERE	LEN(cc.CreditCardGUID$) > 15	! SPS' GUID are very long. APS' are short. We skip if short
+		SELECT *, REC=cc$ FROM cCustCCFH, KNO="kPAYMENT"	\
+			BEGIN	selectStart$							\
+			END		selectEnd$:$FE$							\
+			WHERE	LEN(cc.CreditCardGUID$) > 15			! SPS' GUID are very long. APS' are short. We skip if short
 			cardExists				= isFalse
 			EXTRACT(cAPSCustCCFH,KEY=cc.ARDivisionNo$:cc.CustomerNo$:cc.CreditCardID$,KNO="kCARDID",REC=newcc$,DOM=*NEXT); cardExists = isTRUE
 
@@ -254,25 +254,25 @@ CONVERT_CARDS_TO_APS:
 				newcc.ExpirationDateYear$	= cc.ExpirationDateYear$
 				newcc.ExpirationDateMonth$	= cc.ExpirationDateMonth$
 
-				if cPaymentMethod$ ="R" {			! 229341 - 2017-09-20 RCS
+				if cPaymentMethod$ ="R" {
 					newcc.Last4BankRoutingNos$				= isNULL$
 					newcc.Last4BankAccountNos$				= isNULL$
 					newcc.BankAccountType$					= isNULL$
 					newcc.BankName$							= isNULL$
-					newcc.D531APSValidated$					= isNO$		! RCS #236076 - 2018-12-03 Sage doesn't validate cards.  Must do that on the next transaction if possible.
-					newcc.D531APSMaskedCard$				= isNULL$	! RCS #236076 - 2018-12-03
-					newcc.D531APSAchAccountType$			= "B"		! RCS #236076 - 2018-12-03
+					newcc.D531APSValidated$					= isNO$		! Sage doesn't validate cards.  Must do that on the next transaction if possible.
+					newcc.D531APSMaskedCard$				= isNULL$
+					newcc.D531APSAchAccountType$			= "B"
 				}
 
-				if cPaymentMethod$ ="A" {			! 229341 - 2017-09-25 RCS
+				if cPaymentMethod$ ="A" {
 					newcc.ExpirationDateYear$				= isNULL$
 					newcc.ExpirationDateMonth$				= isNULL$
 					newcc.CardType$							= isNULL$
 					newcc.CorporateCustIDPurchOrder$		= isNULL$
 					newcc.Last4UnencryptedCreditCardNos$	= isNULL$
-					newcc.D531APSValidated$					= isNO$		! RCS #236076 - 2018-12-03
-					newcc.D531APSMaskedCard$				= isNULL$	! RCS #236076 - 2018-12-03
-					newcc.D531APSAchAccountType$			= "B"		! RCS #236076 - 2018-12-03
+					newcc.D531APSValidated$					= isNO$
+					newcc.D531APSMaskedCard$				= isNULL$
+					newcc.D531APSAchAccountType$			= "B"
 				}
 
 				WRITE(cAPScustCCFH, REC=newcc$)
@@ -286,26 +286,26 @@ CONVERT_CARDS_TO_APS:
 				cc.PriorCreditCardGUID$			= cc.CreditCardGUID$
 				cc.CreditCardGUID$				= isNULL$
 				cc.CreditCardGUID$ 				= _OBJ'SwitchVaultRecord$((fromID$), (fromKey$), (cEncryptedAPSMerchantID$), \
-													(cEncryptedAPSMerchantPassword$),(cc.PriorCreditCardGUID$), (cc.CardholderName$),(cAPSApiKey$))	! #243530 - 2018-11-18 RCS
+													(cEncryptedAPSMerchantPassword$),(cc.PriorCreditCardGUID$), (cc.CardholderName$),(cAPSApiKey$))
 
-				! PLW 2016-07-18 added following to try the vault only ID if we do not successfully convert using the payment type credentials
-				IF NUL(cc.CreditCardGUID$) and fromID$<>cCreditCardVaultOnlyID$ { 	! PLW 2016-07-18 this means it did not succeed
+				! added following to try the vault only ID if we do not successfully convert using the payment type credentials
+				IF NUL(cc.CreditCardGUID$) and fromID$<>cCreditCardVaultOnlyID$ { 	! this means it did not succeed
 					cc.CreditCardGUID$			= _OBJ'SwitchVaultRecord$((cCreditCardVaultOnlyID$), (cCreditCardVaultOnlyKey$), \
 													(cEncryptedAPSMerchantID$),(cEncryptedAPSMerchantPassword$), \
-													(cc.PriorCreditCardGUID$), (cc.CardholderName$),(cAPSApiKey$))	! #243530 - 2018-11-18 RCS
+													(cc.PriorCreditCardGUID$), (cc.CardholderName$),(cAPSApiKey$))
 				}
 
-				if cPaymentMethod$ = "R" { ! 229341 - 2017-09-20 RCS
+				if cPaymentMethod$ = "R" {
 					cc.Last4BankRoutingNos$					= isNULL$
 					cc.Last4BankAccountNos$					= isNULL$
 					cc.BankAccountType$						= isNULL$
 					cc.BankName$							= isNULL$
-					cc.D531APSValidated$					= isNO$		! RCS #236076 - 2018-12-03 Sage doesn't validate cards.  Must do that on the next transaction if possible.
+					cc.D531APSValidated$					= isNO$		! Sage doesn't validate cards.  Must do that on the next transaction if possible.
 					cc.D531APSMaskedCard$					= isNULL$
 					cc.D531APSAchAccountType$				= "B"
 				}
 
-				if cPaymentMethod$ = "A" { ! 229341 - 2017-09-25 RCS
+				if cPaymentMethod$ = "A" {
 					cc.ExpirationDateYear$					= isNULL$
 					cc.ExpirationDateMonth$					= isNULL$
 					cc.CardType$							= isNULL$
@@ -331,7 +331,7 @@ RETURN retVal
 
 SWITCH_VAULT_RECORD:
 
-ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, (cAccountName$), (cAPSApiKey$), ERR = *NEXT ! #243530 - add account name
+ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, (cAccountName$), (cAPSApiKey$), ERR = *NEXT
 	IF NOT(coARCreditCard) {
 		coARCreditCard		= NEW("AR_CreditCard", coSession, ERR=*NEXT)
 	}
@@ -349,7 +349,7 @@ ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, (cAccountName
 	IF NOT(NUL(data$)) {
 		SWITCH cPaymentMethod$
 			CASE "A"
-				read data from data$, sep="|" to iol = tmpAchIOL$	! #243530 - 2018-11-18 RCS
+				read data from data$, sep="|" to iol = tmpAchIOL$
 				IF acctType$="DDA" {
 					acctType$	= "C"
 				} ELSE {
@@ -359,7 +359,7 @@ ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, (cAccountName
 				expdate$	= isNULL$
 				BREAK
 			CASE "R"
-				read data from data$, sep="|" to iol = tmpCcIOL$		! #243530 - 2018-11-18 RCS
+				read data from data$, sep="|" to iol = tmpCcIOL$
 				acctType$	= isNULL$
 				acctNo$		= isNULL$
 				routing$	= isNULL$
@@ -382,7 +382,7 @@ ENTER EncryptedAPSMerchantID$,EncryptedAPSPassword$,EncryptedSPSVaultID$,Encrypt
 
 	IF NOT(coARCreditCard) {
 		coARCreditCard = NEW("AR_CreditCard", coSession, ERR=*NEXT)
-		IF NOT(coARCreditCard) { ! PLW 2017-04-18 added check to avoid error 65 later if error 200 occurs here
+		IF NOT(coARCreditCard) { ! 2017-04-18 added check to avoid error 65 later if error 200 occurs here
 			LastErrorNum$ = "APS - " + coSession'LastErrorNum$
 			if nul(coSession'LastErrorMsg$) {
 				LastErrorMsg$ = "APS - CC modules failed to load."
@@ -455,24 +455,28 @@ ENABLE_APS:  ! now we're going to switch from SPS to APS
 		oCompany			= NEW("SY_Company_bus",coSession)
 	}
 
-	! removed the iolist test for sy_company. #232007 - 2018-06-05 RCS
+	! removed the iolist test for sy_company.  2018-06-05 RCS
 	tmpRetVal = retFailure
 	IF NOT(cAR_PaymentTypeFH) {
-		cAR_PaymentTypeFH	= coSession'OpenTable("AR_PaymentType",		"COMPANY") ! PLW 2016-07-05 need to reopen to check IOList
+		cAR_PaymentTypeFH	= coSession'OpenTable("AR_PaymentType",		"COMPANY") ! need to reopen to check IOList
 	}
 	tstIOL$ = UCS(LST(IOL(cAR_PaymentTypeFH)))
-	IF not(POS("D531APSPASSWORD" = tstIOL$) and POS("D531APSMERCHANTID" = tstIOL$)) {
+	
+!	IF not(POS("D531APSPASSWORD" = tstIOL$) and POS("D531APSMERCHANTID" = tstIOL$)) {
+	IF not(POS("D531APSAPIKEY" = tstIOL$)) {	! HD-T47 - 2020-07-30 - RCS
 		CLOSE(cAR_PaymentTypeFH)
 		tmpRetVal			= coSession'CreateTable("AR_PaymentType",	"COMPANY",ERR=*NEXT)
 		wait .1 ! force Windows (and SQL) to catch up.  RCS 2018-06-05
 		cAR_PaymentTypeFH	= coSession'OpenTable("AR_PaymentType",		"COMPANY")
 	}
 	tstIOL$					= UCS(LST(IOL(cAR_PaymentTypeFH)))
-	IF not(POS("D531APSPASSWORD" = tstIOL$) and POS("D531APSMERCHANTID" = tstIOL$)) {  ! PLW 2016-07-05 added IOLIST fields
+			
+!	IF not(POS("D531APSPASSWORD" = tstIOL$) and POS("D531APSMERCHANTID" = tstIOL$)) {
+	IF not(POS("D531APSAPIKEY" = tstIOL$)) {	! HD-T47 - 2020-07-30 - RCS	
 		coSession'UI'MessageBox$("Unable to update AR_PaymentType definition. Make sure it is not in use: " + coSession'LastErrorMsg$)
 		return retFAILURE
 	}
-	! turn on level III - #248453 - 2019-05-19 - RCS
+	! turn on level III - 2019-05-19 - RCS
 	select * from cAR_PaymentTypeFH begin $00$ end $FE$ where PaymentMethod$ = "R" ! credit cards only.
 		AllowCorporateCards$	= isYES$
 		AddCorporateCardLevel3$	= isNO$
@@ -494,7 +498,7 @@ ENABLE_APS:  ! now we're going to switch from SPS to APS
 		coSession'UI'MessageBox$("Cannot create the APS Activation object")
 		return retFAILURE
 	}
-	! PLW 2016-10-20 Company tries to convert cards when we update under some circumstances.
+	! 2016-10-20 Company tries to convert cards when we update under some circumstances.
 	!  when it does that it find AR_Customer and AR_PaymentType open.  We have to temporarily close them
 	CLOSE(cAR_CustFH)
 	CLOSE(cAR_PaymentTypeFH)
@@ -508,15 +512,15 @@ ENABLE_APS:  ! now we're going to switch from SPS to APS
 		tmpRetVal						= oCompany'SetValue("D531APSMerchantID$",	cEncryptedAPSMerchantID$)
 		tmpRetVal						= oCompany'SetValue("D531APSPassword$", 	cEncryptedAPSMerchantPassword$)
 		tmpRetVal						= oCompany'SetValue("D531APSApiKey$", 		cD531APSApiKey$)
-		oCompany'cSkipCardConversion	= isTRUE ! PLW Ticket #235697 2018-03-20 flag to skip conversion
+		oCompany'cSkipCardConversion	= isTRUE ! 2018-03-20 flag to skip conversion
 		tmpRetVal						= oCompany'WRITE()
 	}
 	IF NOT(tmpRetVal) {
 		coSession'UI'MessageBox$("Unable to save company changes: " + oCompany'LastErrorMsg$)
 		return retFAILURE
 	} ELSE {
-		IF oCompany { ! PLW Ticket #235697 2018-03-20 flag from AR_531APSConvertToAPS
-			DROP OBJECT oCompany ! We no longer need this.
+		IF oCompany { 					! 2018-03-20 flag from AR_531APSConvertToAPS
+			DROP OBJECT oCompany		! We no longer need this.
 			oCompany					= 0
 		}
 		cAR_CustFH						= coSession'OpenTable("AR_Customer",		pthCOMPANY$)
@@ -530,20 +534,23 @@ ENABLE_APS:  ! now we're going to switch from SPS to APS
 				NOT(NUL(pay.D531APSMerchantID$)) AND	\
 				NOT(NUL(pay.D531APSPassword$))
 				
-		if nul(pay.D531APSSendEmail$) { 	pay.D531APSSendEmail$		= isNO$ }	! RCS #226560 - 2017-07-28 #231618 2018-04-24 RCS
-		if nul(Pay.D531APSRequireCVV$) { 	Pay.D531APSRequireCVV$		= isYES$ }	! RCS #237825 - 2018-05-23, changed to Y by default per Zac
-		if nul(Pay.D531APSRetailAccount$) { Pay.D531APSRetailAccount$	= isNO$ }	! RCS #237825 - 2018-05-23
-		if nul(Pay.D531APSUseEmvDevice$) {	Pay.D531APSUseEmvDevice$	= isNO$ }	! RCS #236076 - 2018-12-23
+		if nul(pay.D531APSSendEmail$) { 	pay.D531APSSendEmail$		= isNO$ }
+		if nul(Pay.D531APSRequireCVV$) { 	Pay.D531APSRequireCVV$		= isYES$ }	! 2018-05-23, changed to Y by default per Zac
+		if nul(Pay.D531APSRetailAccount$) { Pay.D531APSRetailAccount$	= isNO$ }
+		if nul(Pay.D531APSUseEmvDevice$) {	Pay.D531APSUseEmvDevice$	= isNO$ }
 		IF not(pay.PaymentMethod$ = "R") {
-			Pay.D531APSRequireCVV$										= isNO$		! RCS #237825 - 2018-05-23 for non cRedit card payment types.
-			Pay.D531APSUseEmvDevice$									= isNO$		! RCS #236076 - 2018-12-23
-			pay.D531APSSendEmail$										= isNO$		! RCS #236076 - 2018-12-23
-			Pay.D531APSRetailAccount$									= isNO$		! RCS #236076 - 2018-12-23
+			Pay.D531APSRequireCVV$										= isNO$		! for non cRedit card payment types.
+			Pay.D531APSUseEmvDevice$									= isNO$
+			pay.D531APSSendEmail$										= isNO$
+			Pay.D531APSRetailAccount$									= isNO$
 		}
-		if nul(pay.D531APSApiKey$) {		pay.D531APSApiKey$			= cD531APSApiKey$ }
+		if nul(pay.D531APSApiKey$) {		
+			pay.D531APSApiKey$			= cD531APSApiKey$ 
+		}
+		}
 		if pay.PaymentMethod$ = "R" {
-			Pay.D531APSRequireCVV$										= isYES$	! #236076 = 2019-04-08 RCS insure default flags are set.
-			Pay.D531APSRetailAccount$									= isNO$		! #236076 = 2019-04-08 RCS insure default flags are set.
+			Pay.D531APSRequireCVV$										= isYES$	! insure default flags are set.
+			Pay.D531APSRetailAccount$									= isNO$
 		}
 
 		WRITE (cAR_PaymentTypeFH,REC=pay$)
@@ -563,16 +570,16 @@ ENABLE_APS:  ! now we're going to switch from SPS to APS
 			REMOVE(cCustCCFH,KEY=cc.ARDivisionNo$:cc.CustomerNo$:cc.priorCreditCardGUID$,DOM=*NEXT)
 			REMOVE(cCustCCFH,KEY=cc.ARDivisionNo$:cc.CustomerNo$:cc.CreditCardGUID$,DOM=*NEXT)
 			cPaymentType$				= "R" ! default
-			read (cAR_PaymentTypeFH,rec=PT$,key=cc.PaymentType$,dom=*next); cPaymentType$=pt.PaymentMethod$ ! 229341 - 2017-09-20 RCS
-			SWITCH cPaymentType$ ! 229341 - 2017-09-20 RCS
+			read (cAR_PaymentTypeFH,rec=PT$,key=cc.PaymentType$,dom=*next); cPaymentType$=pt.PaymentMethod$
+			SWITCH cPaymentType$
 				CASE "R"
 					cc.BankAccountType$					= isNULL$
 					cc.BankName$						= isNULL$
 					cc.Last4BankRoutingNos$				= isNULL$
 					cc.Last4BankAccountNos$				= isNULL$
-					cc.D531APSValidated$				= isNO$		! RCS #236076 - 2018-12-03 Sage doesn't validate cards.  Must do that on the next transaction if possible.
-					cc.D531APSMaskedCard$				= isNULL$	! RCS #236076 - 2018-12-03
-					cc.D531APSAchAccountType$			= "B"		! RCS #236076 - 2018-12-03
+					cc.D531APSValidated$				= isNO$		! Sage doesn't validate cards.  Must do that on the next transaction if possible.
+					cc.D531APSMaskedCard$				= isNULL$
+					cc.D531APSAchAccountType$			= "B"
 					BREAK
 
 				CASE "A"
@@ -580,21 +587,21 @@ ENABLE_APS:  ! now we're going to switch from SPS to APS
 					cc.ExpirationDateMonth$				= isNULL$
 					cc.CardType$						= isNULL$
 					cc.Last4UnencryptedCreditCardNos$	= isNULL$
-					cc.D531APSValidated$				= isNO$		! RCS #236076 - 2018-12-03
-					cc.D531APSMaskedCard$				= isNULL$	! RCS #236076 - 2018-12-03
-					cc.D531APSAchAccountType$			= "B"		! RCS #236076 - 2018-12-03
+					cc.D531APSValidated$				= isNO$
+					cc.D531APSMaskedCard$				= isNULL$
+					cc.D531APSAchAccountType$			= "B"
 					BREAK
 
 				DEFAULT
 					BREAK
 
-			END SWITCH ! 229341 - 2017-09-20 RCS
+			END SWITCH
 			goodWrite					= isFalse
 			WRITE(cCustCCFH, REC=cc$, DOM=*NEXT); goodWrite = isTrue
 			IF NOT(goodWrite) {
 				cc.CreditCardID$		= origID$+STR(IDSeq++)
 			} else {
-				REMOVE(cAPSCustCCFH,KEY=cc.ARDivisionNo$:cc.CustomerNo$:cc.CreditCardGUID$,DOM=*NEXT)	! DI# 927 2020-01-24 #257696 - RCS
+				REMOVE(cAPSCustCCFH,KEY=cc.ARDivisionNo$:cc.CustomerNo$:cc.CreditCardGUID$,DOM=*NEXT)
 			}
 		UNTIL goodWrite
 		IF progressMeterDelay++ > 25 AND coSession'UI {
@@ -668,9 +675,9 @@ CONVERT_DATA_ENTRY:
 					de.Last4BankAccountNos$				= isNULL$
 					de.BankName$						= isNULL$
 					de.BankAccountType$					= isNULL$
-					de.D531APSValidated$				= isNO$		! RCS #236076 - 2018-12-03
-					de.D531APSMaskedCard$				= isNULL$	! RCS #236076 - 2018-12-03
-					de.D531APSAchAccountType$			= "B"		! RCS #236076 - 2018-12-03
+					de.D531APSValidated$				= isNO$
+					de.D531APSMaskedCard$				= isNULL$
+					de.D531APSAchAccountType$			= "B"
 
 				}
 				WRITE(tmpAltFH, REC=de$)
@@ -678,14 +685,14 @@ CONVERT_DATA_ENTRY:
 				READ(cGUIDCrossRefFH, KEY=de.CreditCardGUID$, DOM=*NEXT)IOL=cGUIDCrossRefIOL$; CardExists=isTRUE
 				IF CardExists {
 					de.CreditCardGUID$ 					= APSGUID$
-					IF de.Last4UnencryptedCreditCardNos$ > isNULL$ { ! 229341 - 2017-09-20 RCS
+					IF de.Last4UnencryptedCreditCardNos$ > isNULL$ {
 						de.Last4BankRoutingNos$			= isNULL$
 						de.Last4BankAccountNos$			= isNULL$
 						de.BankName$					= isNULL$
 						de.BankAccountType$				= isNULL$
-						de.D531APSValidated$			= isNO$		! RCS #236076 - 2018-12-03
-						de.D531APSMaskedCard$			= isNULL$	! RCS #236076 - 2018-12-03
-						de.D531APSAchAccountType$		= "B"		! RCS #236076 - 2018-12-03
+						de.D531APSValidated$			= isNO$
+						de.D531APSMaskedCard$			= isNULL$
+						de.D531APSAchAccountType$		= "B"
 
 					}
 					WRITE(tmpAltFH, REC=de$)
@@ -698,24 +705,24 @@ CONVERT_DATA_ENTRY:
 				_obj'DecryptPassword(pay.PriorMerchantID$,	fromID$)
 				_obj'DecryptPassword(pay.PriorMerchantKey$,	fromKey$)
 				
-				SPSGUID$								= de.CreditCardGUID$ ! PLW 2016-09-23
+				SPSGUID$								= de.CreditCardGUID$
 				de.CreditCardGUID$ 						= _OBJ'SwitchVaultRecord$((fromID$), (fromKey$), 		\
 															(pay.D531APSMerchantID$),(pay.D531APSPassword$),	\
 															(oldCreditCardGUID$),(de.CardholderName$),			\
 															(pay.D531APSApiKey$))
-				APSGUID$								= de.CreditCardGUID$ ! PLW 2016-09-23
+				APSGUID$								= de.CreditCardGUID$
 				IF de.Last4UnencryptedCreditCardNos$ 	> isNULL$ {
 					de.Last4BankRoutingNos$				= isNULL$
 					de.Last4BankAccountNos$				= isNULL$
 					de.BankName$						= isNULL$
 					de.BankAccountType$					= isNULL$
-					de.D531APSValidated$				= isNO$		! RCS #236076 - 2018-12-03
-					de.D531APSMaskedCard$				= isNULL$	! RCS #236076 - 2018-12-03
-					de.D531APSAchAccountType$			= "B"		! RCS #236076 - 2018-12-03
+					de.D531APSValidated$				= isNO$
+					de.D531APSMaskedCard$				= isNULL$
+					de.D531APSAchAccountType$			= "B"
 
 				}
 				WRITE(tmpAltFH, REC=de$)
-				WRITE(cGUIDCrossRefFH, KEY=SPSGUID$)IOL=cGUIDCrossRefIOL$ ! PLW 2016-09-23
+				WRITE(cGUIDCrossRefFH, KEY=SPSGUID$)IOL=cGUIDCrossRefIOL$
 			}
 
 		NEXT RECORD
@@ -726,7 +733,7 @@ CONVERT_DATA_ENTRY:
 RETURN retVal
 !
 
-UPDATE_URLS:  ! #236076 - 2018-11-21 RCS - use the URL update in the activation program.
+UPDATE_URLS:  ! use the URL update in the activation program.
 	retVal 					= retSUCCESS
 	IF NOT(coActivation) {
 		coActivation		= NEW("SY_531APSActivation_bus",coSession)

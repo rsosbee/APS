@@ -39,12 +39,12 @@ DEF CLASS "AR_531APSConvertToAPS_UI" CREATE REQUIRED DELETE REQUIRED
 
 	! Multilines
 	
-	FUNCTION LOCAL ChangeD531APSMerchantID()								CHANGE_APS_MERCHANT_ID
+!	FUNCTION LOCAL ChangeD531APSMerchantID()								CHANGE_APS_MERCHANT_ID
 	FUNCTION LOCAL ChangeD531APSApiKey()									CHANGE_APS_API_KEY
 	FUNCTION LOCAL ChangeDB_Refresh_Clear()									CHANGE_DB_REFRESH_CLEAR
 	FUNCTION LOCAL ChangeMerchantPassword()									CHANGE_MERCHANT_PASSWORD
 	FUNCTION LOCAL ChangeMerchantID()										CHANGE_MERCHANT_ID
-	FUNCTION LOCAL ChangeML_APSPassword()									CHANGE_ML_APS_PASSWORD
+!	FUNCTION LOCAL ChangeML_APSPassword()									CHANGE_ML_APS_PASSWORD
 
 	! Checkboxes
 	FUNCTION LOCAL ChangeClearExpiredCreditCards()							CHANGE_CLEAR_EXPIRED_CREDIT_CARDS
@@ -109,18 +109,18 @@ BT_PROCEED:
 		coSession'UI'MessageBox$(LastErrorNum$,LastErrorMsg$)
 		RETURN retFAILURE
 	}
-	LastErrorNum$		= isNULL$ ! RCS 2018-06-20 #232007
-	LastErrorMsg$		= isNULL$ ! RCS 2018-06-20 #232007
+	LastErrorNum$		= isNULL$
+	LastErrorMsg$		= isNULL$
 	IF NOT(_obj'ValidateCredentials(cEncryptedAPSMerchantID$,		\
 									cEncryptedAPSMerchantPassword$,	\
 									cEncryptedVaultOnlyID$,			\
 									cEncryptedVaultOnlyKey$,		\
-									cD531APSApiKey$) = retSUCCESS) {	! RCS #236076 - 2018-12-21
+									cD531APSApiKey$) = retSUCCESS) {
 		coSession'UI'MessageBox$(LastErrorNum$, LastErrorMsg$)
 		RETURN retFAILURE
 	}
 
-	! Set the vault only credentials PLW 2016-07-18 added logic to get vault only credentials
+	! Set the vault only credentials 2016-07-18 added logic to get vault only credentials
 	coSession'GetParameter("SYS","CreditCardVaultOnlyID$",	cEncryptedVaultOnlyID$)
 	coSession'GetParameter("SYS","CreditCardVaultOnlyKey$",	cEncryptedVaultOnlyKey$)
 	_obj'DecryptPassword(cEncryptedVaultOnlyID$,			cCreditCardVaultOnlyID$)
@@ -176,7 +176,7 @@ BT_YES:
 RETURN retSUCCESS
 !
 
-CHANGE_APS_API_KEY:		! RCS #236076 - 2018-12-11
+CHANGE_APS_API_KEY:
 	retVal				= retSUCCESS
 	cD531APSApiKey$		= D531APSApiKey$
 	cAPSApiKey$			= D531APSApiKey$

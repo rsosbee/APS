@@ -1,6 +1,6 @@
 ! $Id: AR_531APSConvertByPayment_Bus.pvc $
-! Copyright 2017-2019 (C) by Accounting Systems Inc. (ASI) All rights reserved.
-! #236076 - 2019-04-30 - RCS
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
+!
 
 DEF CLASS "AR_531APSConvertByPayment_Bus" CREATE REQUIRED DELETE REQUIRED
 
@@ -149,19 +149,23 @@ RETURN retVal$
 BUILD_PAYMENT_TYPE: ! build AR_531APSPaymentType
 	tmpAR_PaymentTypeFH = _obj'OpenTable("AR_PaymentType",pthCOMPANY$)
 	tstIOL$ = UCS(LST(IOL(tmpAR_PaymentTypeFH)))
-	IF NOT(POS("D531APSMERCHANTID$"=tstIOL$) AND POS("D531APSPASSWORD$"=tstIOL$)) {
+	
+!	IF NOT(POS("D531APSMERCHANTID$"=tstIOL$) AND POS("D531APSPASSWORD$"=tstIOL$)) {
+	IF not(POS("D531APSAPIKEY" = tstIOL$)) {	! HD-T47 - 2020-07-30 - RCS
 		CLOSE(tmpAR_PaymentTypeFH)
 		coSession'CreateTable("AR_PaymentType",pthCOMPANY$)
 		tmpAR_PaymentTypeFH = _obj'OpenTable("AR_PaymentType",pthCOMPANY$)
 	}
 	tstIOL$ = UCS(LST(IOL(cFH)))
-	IF NOT(POS("D531APSMERCHANTID$"=tstIOL$) AND POS("D531APSPASSWORD$"=tstIOL$)) {
+			
+!	IF NOT(POS("D531APSMERCHANTID$"=tstIOL$) AND POS("D531APSPASSWORD$"=tstIOL$)) {
+	IF not(POS("D531APSAPIKEY" = tstIOL$)) {	! HD-T47 - 2020-07-30 - RCS
 		CLOSE(cFH)
 		coSession'CreateTable(cMainTable$,pthCOMPANY$)
 		cFH = _obj'OpenTable(cMainTable$,pthCOMPANY$)
 	}
 
-	SELECT *,REC=pay$ FROM tmpAR_PaymentTypeFH BEGIN $$ END $FE$ WHERE POS(pay.PaymentMethod$="RA") ! PLW 2017-03-27
+	SELECT *,REC=pay$ FROM tmpAR_PaymentTypeFH BEGIN $$ END $FE$ WHERE POS(pay.PaymentMethod$="RA")
 		pay.CreditCardSetupTested$		= isYES$
 		pay.DisplayAVSCVVResponse$		= isNO$
 		pay.DisplayAVSCVVResponse$		= isNO$
@@ -175,10 +179,10 @@ BUILD_PAYMENT_TYPE: ! build AR_531APSPaymentType
 		IF NOT(NUL(new.D531APSPassword$)) {
 			pay.D531APSPassword$		= new.D531APSPassword$
 		}
-		if nul(Pay.D531APSSendEmail$) { 	Pay.D531APSSendEmail$		= "N" } ! #231618 changed to N by default per Zac 2018-03-27
-		if nul(Pay.D531APSRequireCVV$) { 	Pay.D531APSRequireCVV$		= "Y" } ! RCS #237825 - 2018-05-23, changed to Y by default per Zac
-		if nul(Pay.D531APSRetailAccount$) { Pay.D531APSRetailAccount$	= "N" } ! RCS #237825 - 2018-05-23
-		IF not(Pay.PaymentMethod$="R") {	Pay.D531APSRequireCVV$ 		= "N" } ! RCS #237825 - 2018-05-23 for non cRedit card payment types.
+		if nul(Pay.D531APSSendEmail$) { 	Pay.D531APSSendEmail$		= "N" } ! changed to N by default per Zac 2018-03-27
+		if nul(Pay.D531APSRequireCVV$) { 	Pay.D531APSRequireCVV$		= "Y" } ! 2018-05-23, changed to Y by default per Zac
+		if nul(Pay.D531APSRetailAccount$) { Pay.D531APSRetailAccount$	= "N" }
+		IF not(Pay.PaymentMethod$="R") {	Pay.D531APSRequireCVV$ 		= "N" } ! 2018-05-23 for non cRedit card payment types.
 		WRITE (cFH,REC=pay$)
 	NEXT RECORD
 	
