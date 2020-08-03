@@ -1,20 +1,20 @@
 ! $Id$: SY_531APSCompany_bus.pvc $
 ! Company Code BUS Object
-! Copyright 2013-2019 Accounting Systems, Inc.
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 !
 DEF CLASS "SY_531APSCompany_bus" CREATE REQUIRED DELETE REQUIRED
 	! Inherits from the following class(es)
 	LIKE "SY_Company_bus"
-	LIKE "SY_531APSTableCreation" ! PLW 2019-04-17  Ticket #250723 moved table creation to separate library so it can be shared.
+	LIKE "SY_531APSTableCreation"			! moved table creation to separate library so it can be shared.
 	
 	! Public Properties
 	PROPERTY APSActivated
 	PROPERTY APSCCEnabled
 	PROPERTY APSC2PEnabled
-	PROPERTY cSkipCardConversion ! PLW Ticket #235697 2018-03-20 flag from AR_531APSConvertToAPS
+	PROPERTY cSkipCardConversion											! flag from AR_531APSConvertToAPS
 	
 	PROPERTY D531_APSIOList$ GET getD531_APSIOList SET ERR
-	PROPERTY RecordChanged GET RECORD_CHANGED	SET ERR		! Has the record changed
+	PROPERTY RecordChanged GET RECORD_CHANGED	SET ERR						! Has the record changed
 	PROPERTY C2PDefault
 
 	! Local/Private Properties
@@ -30,6 +30,7 @@ DEF CLASS "SY_531APSCompany_bus" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION WRITE () 														WRITE
 	FUNCTION CLEAR () 														CLEAR
 	FUNCTION Delete(key$)													DELETE_REC
+	FUNCTION ValidateAPS_ApiKey()											VALIDATE_APS_API_KEY
 	FUNCTION ValidateC2P_ApiKey()											VALIDATE_C2P_API_KEY
 
 	! Local/Private Functions (Methods)
@@ -62,12 +63,12 @@ ON_CREATE:
 	! C2P Start
 	cD531_APSCompanyFH	= coSession'openTable("SY_531APSCompany", pthSYSTEM$)
 	STATIC IOL			= IOL(cD531_APSCompanyFH)
-	cIOLIst$			+= SUB(MID(LST(IOL(cD531_APSCompanyFH)), 8), ",", SEP)+SEP ! PLW 2018-02-21 missing trailing SEP
+	cIOLIst$			+= SUB(MID(LST(IOL(cD531_APSCompanyFH)), 8), ",", SEP)+SEP ! missing trailing SEP
 RETURN
 !
 
 ON_DELETE:
-	DROP OBJECT coAPSActivation,err=*proceed;	coAPSActivation		= 0 ! #232007 - RCS
+	DROP OBJECT coAPSActivation,err=*proceed;	coAPSActivation		= 0
 	CLOSE (cD531_APSCompanyFH, ERR=*PROCEED);	cD531_APSCompanyFH	= 0
 RETURN
 !
@@ -111,13 +112,11 @@ POST_WRITE_REC:
 	IF APSActivated {
 
 		retVal			= retSUCCESS
-		! Next line added cSkipCardConversion check PLW Ticket #235697 2018-03-20 flag from AR_531APSConvertToAPS
+		! Next line added cSkipCardConversion check flag from AR_531APSConvertToAPS
 		IF NOT(cSkipCardConversion)					\
 			AND POS(CreditCardEnable$	= "YAB")	\
 			AND cOrigCreditCardEnable$	= isNO$		\
-			AND NOT(NUL(D531APSApiKey$)) {			! #231342 - Yes, ACH, Both
-		!	AND NOT(NUL(D531APSMerchantID$))		\
-		!	AND NOT(NUL(D531APSPassword$)) {
+			AND NOT(NUL(D531APSApiKey$)) {			! Yes, ACH, Both
 
 			IF _OBJ'ARCreditCard {
 
@@ -139,7 +138,7 @@ POST_WRITE_REC:
 				retVal	= ARCreditCard'CopyAPSVaultToCCPaymentTypes(CompanyCode$,		\
 																	D531APSMerchantID$,	\
 																	D531APSPassword$,	\
-																	D531APSApiKey$)		! RCS #236076 - 2018-12-05
+																	D531APSApiKey$)
 
 				ARCreditCard'NumberOfConvertedCards			= 0
 				ARCreditCard'UnlockConvFiles()
@@ -156,7 +155,7 @@ POST_WRITE_REC:
 			}
 		}
 
-		IF CreditCardEnable$ = isNO$ AND POS(cOrigCreditCardEnable$ = "YAB") AND cValidProcessingPayTypesExist { ! #231342 - Yes, ACH, Both
+		IF CreditCardEnable$ = isNO$ AND POS(cOrigCreditCardEnable$ = "YAB") AND cValidProcessingPayTypesExist { ! Yes, ACH, Both
 			! for now we decided to leave enterything as is
 			! I just have to set CC setup tested to "N" for all payment types
 			IF _OBJ'ARCreditCard {
@@ -241,9 +240,9 @@ ENTER (APSkey$)
  				APSActivated	= coAPSActivation'CheckAPSActivation (tmpCompanyKey$)
  			}
  		}
-		IF APSActivated AND NOT(CCRegistered) { CCRegistered = 1 }
+		IF APSActivated AND NOT(CCRegistered) { CCRegistered = isTRUE }
 
-		! C2P Start #232007 - RCS
+		! C2P Start
 		%CompanyCode$	= Companycode$ ! for ALE lookup
 		C2PDefault		= isFALSE
 		cC2PRead		= 0
@@ -261,7 +260,7 @@ ENTER (APSkey$)
 			C2PDefault							= isTRUE
 			READ (cD531_APSCompanyFH, KEY=CompanyKey$, ERR=*NEXT)
 		}
-		APSC2PEnabled	= D531_C2PEnabled$="Y"
+		APSC2PEnabled	= D531_C2PEnabled$ = "Y"
 		cAPSOrigRcd$	= rec(iol(cD531_APSCompanyFH))
 	}
 RETURN retVal
@@ -338,7 +337,7 @@ ENTER (APS531val$)
 
 		retVal			= retSUCCESS
 
-		IF NOT(CCRegistered) AND POS(APS531val$ = "YAB") { ! 231342 - Yes, ACH, Both
+		IF NOT(CCRegistered) AND POS(APS531val$ = "YAB") { ! Yes, ACH, Both
 			mssg$			= "enable Credit Card Processing unless CC module is registered"
 			LastErrorNum$	= "CI_Cannot"
 			LastErrorMsg$	= MSG("CI_Cannot", mssg$)
@@ -347,10 +346,9 @@ ENTER (APS531val$)
 
 		IF retVal {
 
-			IF cOrigCreditCardEnable$ = isNO$ AND POS(APS531val$ = "YAB") { ! 231342 - Yes, ACH, Both
-!				IF NOT(NUL(D531APSMerchantID$)) AND NOT(NUL(D531APSPassword$)) {
+			IF cOrigCreditCardEnable$ = isNO$ AND POS(APS531val$ = "YAB") { ! Yes, ACH, Both
+				
 				IF NOT(NUL(D531APSApiKey$)) {
-
 					IF _OBJ'ARCreditCard {
 						retVal	= ARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$), (D531APSApiKey$))
 						IF NOT(retVal = retSUCCESS) {
@@ -393,7 +391,7 @@ ENTER (APS531val$)
 				tmpIOL$ = CPL( "IOLIST " + tmpIOL$ )
 
 				SWITCH APS531val$
-					CASE isYES$,"A","B" ! #231342 - Yes, ACH, Both.
+					CASE isYES$,"A","B" ! Yes, ACH, Both.
 						_OBJ'GetOriginalValue("CreditCardTransTimeOut")
 						_OBJ'GetOriginalValue("CreditCardBatchAuthTrans$")
 						_OBJ'GetOriginalValue("D531_APSCreditCardLog$")
@@ -418,7 +416,30 @@ ENTER (APS531val$)
 RETURN retVal
 !
 
-VALIDATE_C2P_API_KEY: ! #232007 - RCS 2017-12-04, refactored 2019-05-24 RCS
+VALIDATE_APS_API_KEY:
+	
+	IF NOT(coARCreditCard) {
+		coARCreditCard	= NEW("AR_CreditCard", coSession, ERR=*NEXT)
+	}
+	
+	retVal				= coARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$), (D531APSApiKey$))
+			
+	IF retVal {
+		! CreditCardSetupTested$	= isYES$
+	} ELSE {
+		retVal			= retFAILURE
+		LastErrorNum$	= "AR_531APSInvalidMerchant"
+		LastErrorMsg$	= MSG("AR_531APSInvalidMerchant")
+	}
+	
+			
+	drop object coARCreditCard,err=*next
+	coARCreditCard		= 0
+	
+RETURN retVal
+!
+
+VALIDATE_C2P_API_KEY:
 
 	! Does a "get Invoice link request" to validate the API key and connectivity to APS Click To Pay.
 
@@ -494,7 +515,7 @@ ENTER value$
 RETURN retSUCCESS
 !
 
-VALIDATE_PAYMENT_TYPE: ! #232007 - 2018-02-22 RCS
+VALIDATE_PAYMENT_TYPE:
 
 ENTER (value$),cPaymentTypeMethod$
 
@@ -526,7 +547,7 @@ WRITE:
 	APSC2PEnabled				= D531_C2PEnabled$="Y"
 	tmpCompanyKey$          	= CompanyKey$
 
-	IF APSActivated AND POS(CreditCardEnable$ = "YB") AND D531APSLevelIIIProcessing$="Y" { ! #231342 - Yes or Both for credit cards only.
+	IF APSActivated AND POS(CreditCardEnable$ = "YB") AND D531APSLevelIIIProcessing$="Y" { ! Yes or Both for credit cards only.
 		IF NUL(D531APSSummaryCommodityCode$)	\ 
 			OR NUL(D531APSItemCommodityCode$) 	\
 			OR NUL(D531ShipFromPostal$) {	
@@ -573,7 +594,7 @@ WRITE:
 
 		IF CreditCardEnable$ = isNO$				\
 			AND POS(cOrigCreditCardEnable$ = "YAB")	\
-			AND cValidProcessingPayTypesExist { ! # 231342 - Yes, ACH, Both
+			AND cValidProcessingPayTypesExist { ! Yes, ACH, Both
 
 			IF _OBJ'ARCreditCard {
 
@@ -594,7 +615,7 @@ WRITE:
 			}
 		}
 
-		IF POS(CreditCardEnable$ = "YAB") AND cOrigCreditCardEnable$ = isNO$ { ! #231342 - Yes, ACH, Both
+		IF POS(CreditCardEnable$ = "YAB") AND cOrigCreditCardEnable$ = isNO$ { ! Yes, ACH, Both
 
 			IF _OBJ'ARCreditCard {
 				retVal					= ARCreditCard'TestInternetConnection()

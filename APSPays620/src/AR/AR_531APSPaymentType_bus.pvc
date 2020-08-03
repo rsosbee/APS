@@ -16,11 +16,11 @@ DEF CLASS "AR_531APSPaymentType_bus" CREATE REQUIRED DELETE REQUIRED
  	PROPERTY OrigUnencryptedAPSPassword$ SET ERR
  	
 	! Local/Private Properties
-	LOCAL cD531APSApiKey$					! RCS #236076 - 2018-10-10
-	LOCAL cD531APSRequireCVV$				! RCS #237825 - 2018-05-23
-	LOCAL cD531APSRetailAccount$			! RCS #237825 - 2018-05-23
-	LOCAL cD531APSSendEmail$				! RCS #226560 - 2017-07-28
-	LOCAL cD531APSUseEmvDevice$				! RCS #236076 - 2018-12-23
+	LOCAL cD531APSApiKey$
+	LOCAL cD531APSRequireCVV$
+	LOCAL cD531APSRetailAccount$
+	LOCAL cD531APSSendEmail$
+	LOCAL cD531APSUseEmvDevice$
 	LOCAL cOrigEncryptedAPSPassword$
 	LOCAL cOrigEncryptedMerchantID$
 	LOCAL cUnencryptedAPSMerchantID$
@@ -80,11 +80,11 @@ ENTER (APSkey$)
 
 	retVal=_OBJ'CopyFrom(FROM "AR_531APSPaymentType_bus_BASE",APSkey$)
 
-	IF retVal = retSUCCESS AND cAPSActivated AND POS(PaymentMethod$="RA") {  ! PLW 2017-03-21
+	IF retVal = retSUCCESS AND cAPSActivated AND POS(PaymentMethod$="RA") {
 		cOrigEncryptedAPSPassword$	= D531APSPassword$
 		cOrigEncryptedMerchantID$	= D531APSMerchantID$
-		cD531APSApiKey$				= D531APSApiKey$		! RCS #236076 - 2018-10-10
-		cD531APSUseEmvDevice$		= D531APSUseEmvDevice$	! RCS #236076 - 2018-12-23
+		cD531APSApiKey$				= D531APSApiKey$
+		cD531APSUseEmvDevice$		= D531APSUseEmvDevice$
 		_OBJ'DecryptPassword(cOrigEncryptedAPSPassword$,	OrigUnencryptedAPSPassword$)
 		_OBJ'DecryptPassword(cOrigEncryptedMerchantID$,		OrigUnencryptedMerchantID$)
 	}
@@ -128,7 +128,7 @@ POST_WRITE_REC:
 
 		retVal						= retSUCCESS
 
-		IF POS(PaymentMethod$ 		= "RA") {		! PLW 2017-03-21
+		IF POS(PaymentMethod$ 		= "RA") {
 			IF NOT(coARCreditCard) {
 				coARCreditCard 		= NEW("AR_CreditCard", coSession, ERR=*NEXT)
 			}
@@ -169,11 +169,11 @@ ENTER (APS531key$)
 		cOrigEncryptedMerchantID$			= D531APSMerchantID$
 		OrigUnencryptedAPSPassword$			= isNULL$
 		cOrigEncryptedAPSPassword$			= D531APSPassword$
-		cD531APSSendEmail$					= D531APSSendEmail$		! RCS #226560 - 2017-07-28
-		cD531APSRequireCVV$					= D531APSRequireCVV$	! RCS #237825 - 2018-05-23
-		cD531APSRetailAccount$				= D531APSRetailAccount$	! RCS #237825 - 2018-05-23
-		cD531APSApiKey$						= D531APSApiKey$		! RCS #236076 - 2018-10-10
-		cD531APSUseEmvDevice$				= D531APSUseEmvDevice$	! RCS #236076 - 2018-12-23
+		cD531APSSendEmail$					= D531APSSendEmail$
+		cD531APSRequireCVV$					= D531APSRequireCVV$
+		cD531APSRetailAccount$				= D531APSRetailAccount$
+		cD531APSApiKey$						= D531APSApiKey$
+		cD531APSUseEmvDevice$				= D531APSUseEmvDevice$
 
 		_OBJ'DecryptPassword(cOrigEncryptedVirtualTerminalID$,	OrigUnencryptedVirtualTerminalID$)
 		_OBJ'DecryptPassword(cOrigEncryptedMerchantKey$,		OrigUnencryptedMerchantKey$)
@@ -202,7 +202,7 @@ ENTER (APS531key$)
 		}
 	}
 
-	IF POS(PaymentMethod$ = "RA") AND EditState { ! PLW 2017-03-21
+	IF POS(PaymentMethod$ = "RA") AND EditState {
 		CCPaymentMethodNotUsed					= isFALSE
 		CCPaymentMethodDoesNotHaveTransactions	= isFALSE
 		IF NOT(coARCreditCard) {
@@ -275,7 +275,7 @@ ENTER (SMCvalue$)
 		! clear APS values
 		tmpIOL$=CPL("IOLIST "+"PreAuthorizationTerm,D531APSMerchantID$,D531APSPassword$,AddCorporateCardLevel3$,D531APSSendEmail$,D531APSRequireCVV$,D531APSRetailAccount$,D531APSUseEmvDevice$")
 		AddCorporateCardLevel3$		= isNO$
-		D531APSSendEmail$			= isNO$ 	! RCS #226560 - 2017-07-28, #231618 changed to N by default per Zac 2018-03-27
+		D531APSSendEmail$			= isNO$ 	! changed to N by default per Zac 2018-03-27
 		D531APSRequireCVV$			= isNO$
 		D531APSRetailAccount$		= isNO$
 		D531APSMerchantID$			= isNULL$
@@ -380,7 +380,7 @@ WRITE_REC:
 		}
 
 		IF retVal {
-			retVal	= coARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$), (D531APSApiKey$))	! RCS #236076 - 2018-10-10
+			retVal	= coARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$), (D531APSApiKey$))
 			IF retVal {
 				CreditCardSetupTested$	= isYES$
 			} ELSE {
@@ -391,14 +391,14 @@ WRITE_REC:
 		}
 	}
 
-	if nul(D531APSSendEmail$) { 	D531APSSendEmail$		= isNO$ }	! RCS #226560 - 2017-07-28, #231618 changed to N by default per Zac 2018-03-27
-	if nul(D531APSRequireCVV$) { 	D531APSRequireCVV$		= isYES$ }	! RCS #237825 - 2018-05-23, changed to Y by default per Zac
+	if nul(D531APSSendEmail$) { 	D531APSSendEmail$		= isNO$ }	! changed to N by default per Zac 2018-03-27
+	if nul(D531APSRequireCVV$) { 	D531APSRequireCVV$		= isYES$ }	! changed to Y by default per Zac
 	if nul(D531APSRetailAccount$) { D531APSRetailAccount$	= isNO$ }
 	if nul(D531APSUseEmvDevice$) {	D531APSUseEmvDevice$	= isNO$ }
 	IF not(PaymentMethod$		= "R") {	
-		D531APSRequireCVV$		= isNO$	! RCS #237825 - 2018-05-23 for non cRedit card payment types.
-		D531APSUseEmvDevice$	= isNO$	! RCS #236076 - 2018-12-23
-		D531APSRetailAccount$	= isNO$	! RCS #237825 - 2018-12-23
+		D531APSRequireCVV$		= isNO$	! for non cRedit card payment types.
+		D531APSUseEmvDevice$	= isNO$
+		D531APSRetailAccount$	= isNO$
 	}
 	IF retVal {
 		retVal					= _OBJ'Write(FROM "SY_Maint")

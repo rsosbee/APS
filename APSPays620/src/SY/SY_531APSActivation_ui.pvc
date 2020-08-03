@@ -15,7 +15,7 @@ DEF CLASS "SY_531APSActivation_ui" CREATE REQUIRED DELETE REQUIRED
 	LOCAL cEnableForCompany$
 	LOCAL ARCreditCard
 	LOCAL SYConvDriver
-	LOCAL cAPSVersion$ 				! PLW 2016-02-26 added version and revision display 
+	LOCAL cAPSVersion$ 				! added version and revision display 
 	LOCAL cAPSAdditionalInfo$
 	
 	! Public Functions (Methods)
@@ -78,7 +78,7 @@ RETURN
 
 PRE_LOAD:
 	! moved to bus object _obj'RetrieveVersionInfo()
-	coBusiness'RetrieveVersionInfo(cAPSVersion$,cAPSAdditionalInfo$) ! #227159 - RCS - 2017-09-14
+	coBusiness'RetrieveVersionInfo(cAPSVersion$,cAPSAdditionalInfo$)
 	comp$				= coSession'CompanyCode$
 	cEnableForCompany$	= "Enable APS Credit Card Processing for "+comp$+" Company"
 RETURN retSuccess
@@ -151,7 +151,7 @@ CHANGE_CB_APSALLACTIVATED:
 				
 				IF CB_APSAllActivated$	= isYES$ {
 					! check if AR_PaymentType has been updated 
-					_obj'EnableAPSFiles(ENABLE.CompanyCode$) ! #229519 - RCS - 2017-10-19
+					_obj'EnableAPSFiles(ENABLE.CompanyCode$)
 					tmpAR_PaymentTypeFH	= coSession'OpenTable("AR_PaymentType", pthOTHERCOMPANY$ + ENABLE.CompanyCode$)
 					tmpNotPaymentTypeUpdated	= _OBJ'CheckIfPaymentTypeUpdated(tmpAR_PaymentTypeFH)
 					IF tmpNotPaymentTypeUpdated { 
@@ -762,7 +762,7 @@ REMOVE_CTL_RECORDS:
 	
 	retVal					=	retSUCCESS
 	
-	Modules$				= "ARCIITSOSY" ! #232007 - Merge C2P, added IT,SO - 2017-11-20 - RCS
+	Modules$				= "ARCIITSOSY" ! Merge C2P, added IT,SO - 2017-11-20 - RCS
 	
 	FILE_NAME$				= coSession'PathRoot$+"SOA\SY0CTL.SOA" 
 	CTLFileExists			= 0
@@ -927,7 +927,7 @@ REMOVE_NOMADS_CHANGES:
 RETURN retVal
 !
 
-REMOVE_URLS: ! #232007 - Merge C2P, APS.  2017-11-20 - RCS
+REMOVE_URLS: ! Merge C2P, APS.  2017-11-20 - RCS
 	
 	cURL_CH					= coSession'OpenTable("SY_URLMaintenance","SYSTEM")
 	

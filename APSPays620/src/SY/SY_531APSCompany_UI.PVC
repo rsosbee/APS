@@ -1,8 +1,6 @@
 ! $Id$: SY_531APSCompany_ui.pvc
 ! Company Code UI Object
-! Copyright 2013-2018 Accounting Systems, Inc. 
-! Irina Kouptsova, PLWhirley, Bob Sosbee
-! #232007 - 2018-02-22 RCS
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 !
 DEF CLASS "SY_531APSCompany_ui" CREATE REQUIRED DELETE REQUIRED
 	! Inherits from the following class(es)
@@ -39,6 +37,7 @@ DEF CLASS "SY_531APSCompany_ui" CREATE REQUIRED DELETE REQUIRED
 	FUNCTION LOCAL RulesForPCreditCards()						RULES_FOR_PCREDITCARDS
 
 	! C2P Change
+	FUNCTION LOCAL BT_APSAPITest()								BT_APS_API_TEST
 	FUNCTION LOCAL BT_C2PAPITest()								BT_C2P_API_TEST
 	FUNCTION LOCAL BT_OptoutHelp()								BT_OPTOUT_HELP
 	FUNCTION LOCAL changeD531_C2PEnabled()						CHANGE_D531_C2PENABLED
@@ -60,7 +59,7 @@ ON_CREATE:
 ENTER coSession
 	! C2P Change
 	cD531_APSIOList$	= coBusiness'D531_APSIOList$
-	STATIC IOL			= cD531_APSIOList$ ! PLW 2017-12-06
+	STATIC IOL			= cD531_APSIOList$
 
 RETURN
 !
@@ -89,9 +88,9 @@ BT_ACCEPT:
 		IF cOrigCreditCardEnable$	= isNO$ AND CreditCardEnable$ <> isNO$ {
 
 			retVal					= retFAILURE
-			spsIOL$					= CPL("IOLIST D531APSMerchantID$, D531APSPassword$")
+			spsIOL$					= CPL("IOLIST D531APSMerchantID$, D531APSPassword$, D531APSApiKey$")
 
-			IF NOT(NUL(ML_APSMERCHANTID$)) AND NOT(NUL(ML_APSPASSWORD$)) {
+			IF not(nul(D531APSApiKey$)) {
 
 				_OBJ'EncryptPassword(ML_APSMERCHANTID$, D531APSMerchantID$)
 				_OBJ'EncryptPassword(ML_APSPASSWORD$, D531APSPassword$)
@@ -119,6 +118,7 @@ BT_ACCEPT:
 				! re-set and re-display original id/key combination without validation
 				D531APSMerchantID$	= cOrigD531APSMerchantID$
 				D531APSPassword$	= cOrigD531APSPassword$
+				D531APSApiKey$		= cOrigD531APSApiKey$
 				spsRec$				= REC( spsIOL$ )
 				coBusiness'SetPartialRecord( spsRec$, spsIOL$ )
 				_OBJ'RulesForPCreditCards()
@@ -165,19 +165,28 @@ BT_ACCEPT:
 	RETURN retVal
 
 
-BT_CANCEL: ! C2P Change #232007 - RCS - 2018-06-20
+BT_CANCEL: ! C2P Change
 	retVal			= _OBJ'BT_Cancel(FROM "SY_531APSCompany_ui_BASE")
 	_OBJ'SetControlState("APS_C2P.GRP$",ctlDISABLE)
 	_OBJ'SetControlState("APS_C2P.GRP$",ctlHIDE)
 	_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlHIDE)
 	_OBJ'SetControlState("APS_VAULT.GRP$",ctlHIDE)
-	_OBJ'SetControlState("APS_MC.GRP$",ctlHIDE) ! PLW 2019-02-08 Ticket #248049
+	_OBJ'SetControlState("APS_MC.GRP$",ctlHIDE)
 	HIDE CONTROL D531APSLEVELIIIPROCESSING.CTL
 	HIDE CONTROL D531_APSCREDITCARDLOG.CTL
 
-	if coBusiness'C2PDefault { ! if default record was written but cancel was pressed remove it. #232007 - RCS
+	if coBusiness'C2PDefault { ! if default record was written but cancel was pressed remove it.
 		REMOVE (cD531_APSCompanyFH, KEY=companyKey$, ERR=*NEXT)
 		coBusiness'C2PDefault = isFALSE
+	}
+RETURN retVal
+!
+
+BT_APS_API_TEST:
+
+	retVal			= coBusiness'ValidateAPS_ApiKey()
+	if retval {
+		coSession'UI'MessageBox$($$,"APS API Key Test Successful!","title=APS Payments,style=OK,icon=I")
 	}
 RETURN retVal
 !
@@ -201,11 +210,11 @@ RETURN retVal
 
 CHANGE_APS_CREDENTIALS:
 	
-	IF NOT(NUL(ML_APSMerchantID$)) AND NOT(NUL(ML_APSPassword$)) {
+	IF NOT(NUL(D531APSApiKey$)) {
 		_OBJ'EncryptPassword(ML_APSMERCHANTID$, tmpAPSMerchantID$)
 		_OBJ'EncryptPassword(ML_APSPASSWORD$, tmpAPSPassword$)
 		
-		tstVal	= EVN("coBusiness'ARCreditCard",err=*next) ! checks to see if SED is running #232007 2018-04-11
+		tstVal	= EVN("coBusiness'ARCreditCard",err=*next) ! checks to see if SED is running
 		if tstVal {
 			test	= coBusiness'ARCreditCard'TestAPSCredentials(tmpAPSMerchantID$, tmpAPSPassword$, D531APSApiKey$)
 			IF test	= retSUCCESS {
@@ -226,11 +235,11 @@ CHANGE_APS_CREDENTIALS:
 				NEXT_ID					= D531APSApiKey.ctl ! wasML_APSMerchantID.ctl
 				REFRESH_FLG				= isTRUE
 			}
-			! PLW 2017-12-06 four lines below. Code wasn't doing SetValue(). Not sure how it was working in the old system
-			D531APSMerchantID$	= tmpAPSMerchantID$ ! PLW 2017-12-06
-			D531APSPassword$	= tmpAPSPassword$ ! PLW 2017-12-06
-			coBusiness'SetValue("D531APSMerchantID$",D531APSMerchantID$) ! PLW 2017-12-06
-			coBusiness'SetValue("D531APSPassword$",D531APSPassword$) ! PLW 2017-12-06
+			! four lines below. Code wasn't doing SetValue(). Not sure how it was working in the old system
+			D531APSMerchantID$			= tmpAPSMerchantID$
+			D531APSPassword$			= tmpAPSPassword$
+			coBusiness'SetValue("D531APSMerchantID$",D531APSMerchantID$)
+			coBusiness'SetValue("D531APSPassword$",D531APSPassword$)
 			coBusiness'SetValue("D531APSApiKey$",D531APSApiKey$)
 		} ELSE {
 			coSession'UI'MessageBox$( "SY_531APSSedRequired" )
@@ -251,11 +260,11 @@ CHANGE_CREDIT_CARD_ENABLE:
 
 		retVal		= retSUCCESS
 
-		IF POS(CreditCardEnable$= "YAB") { ! #231342 Yes, ACH, Both
+		IF POS(CreditCardEnable$= "YAB") {
 
 			! check if SY_Company has been updated
-			tmpSY_CompanyFH		= coSession'OpenTable("SY_531APSCompany","SYSTEM",ERR=*NEXT) ! PLW 2017-12-11 changed to check SY_531APSCompany instead of SY_Company
- 			IF NOT(tmpSY_CompanyFH) { ! removed SY_Company field checking RCS 2017-12-11 #232007
+			tmpSY_CompanyFH		= coSession'OpenTable("SY_531APSCompany","SYSTEM",ERR=*NEXT) ! changed to check SY_531APSCompany instead of SY_Company
+ 			IF NOT(tmpSY_CompanyFH) { ! removed SY_Company field checking RCS 2017-12-11
 				retVal			= retFAILURE
 				LastErrorNum$	= "SY_531APSCannotOpen"
 				LastErrorMsg$	= MSG("SY_531APSCannotOpen","SY_Company")
@@ -284,7 +293,7 @@ CHANGE_CREDIT_CARD_ENABLE:
 					IF CreditCardEnable$ = isNO$ { _OBJ'RulesForPCreditCards() }
 					BREAK
 				CASE retWARNING
-					IF POS(CreditCardEnable$ = "YAB") { ! #231342 - Yes, ACH, Both
+					IF POS(CreditCardEnable$ = "YAB") {
 						answer$		= coSession'UI'MessageBox$ (coBusiness'LastErrorNum$, coBusiness'LastErrorMsg$)
 						IF answer$	= msgYES$ {
 							ML_APSMerchantID$	= $$
@@ -382,7 +391,7 @@ CHANGE_DB_C2P_CURRENCY:
 
 	D531_C2PCurrency$	= DB_C2PCurrency$
 	c2pRec$				= rec ( cD531_APSIOList$ )
-	coBusiness'SetPartialRecord( c2pRec$, cD531_APSIOList$ )  ! ***** Why are we doing this?   PLW 2017-12-11
+	coBusiness'SetPartialRecord( c2pRec$, cD531_APSIOList$ )
 	retVal				= coBusiness'SetValue("D531_C2PCurrency$",D531_C2PCurrency$)
 
 RETURN retVal
@@ -392,7 +401,7 @@ CHANGE_DB_C2P_OPTION:
 
 	D531_C2POptOut$		= DB_C2POption$ ! PLW 2017-12-11 correct line added
 	c2pRec$				= rec ( cD531_APSIOList$ )
-	coBusiness'SetPartialRecord( c2pRec$, cD531_APSIOList$ )  ! ***** Why are we doing this?   PLW 2017-12-11
+	coBusiness'SetPartialRecord( c2pRec$, cD531_APSIOList$ )
 	retVal				= coBusiness'SetValue("D531_C2POptOut$",D531_C2POptOut$)
 
 RETURN retVal
@@ -421,10 +430,10 @@ CREDIT_CARD_CHECK_FOR_ENABLE:
 	retVal				= _OBJ'CreditCardCheckForEnable(FROM "SY_531APSCompany_ui_BASE")
 	IF cSecurityAccess AND cSecurityAccess<>secDELETEONLY {
 		IF coBusiness'APSActivated {
-			IF POS(CreditCardEnable$	= "YAB") { ! #231342 - Yes, ACH, Both
+			IF POS(CreditCardEnable$	= "YAB") {
 				tmpVal=_OBJ'SetControlState("CC_APS.grp$",ctlENABLE)
 				_OBJ'SetControlState("APS_VAULT.GRP$",ctlENABLE)
-				_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)	! #258342 - 2019-10-04 - RCS
+				_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)
 				ENABLE CONTROL D531_APSCREDITCARDLOG.CTL
 				ENABLE CONTROL D531APSLEVELIIIPROCESSING.CTL
 				IF D531APSLevelIIIProcessing$	= isYES$ {
@@ -432,7 +441,7 @@ CREDIT_CARD_CHECK_FOR_ENABLE:
 				} ELSE {
 					_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
 				}
-				_obj'MultiCurrencyCheckForEnable() ! PLW 2019-02-08 Ticket #248049
+				_obj'MultiCurrencyCheckForEnable()
 			} ELSE {
 				_OBJ'SetControlState("CC_APS.grp$",ctlDISABLE)
 				_OBJ'SetControlState("APS_VAULT.GRP$",ctlDISABLE)
@@ -445,7 +454,7 @@ CREDIT_CARD_CHECK_FOR_ENABLE:
 RETURN retVal
 !
 	
-MULTICURRENCY_CHECK_FOR_ENABLE:	! PLW 2019-02-08 Ticket #248049	
+MULTICURRENCY_CHECK_FOR_ENABLE:	
 	IF cAPSMultiCurrency { 
 		_OBJ'SetControlState("APS_MC.GRP$",ctlENABLE)
 	} ELSE {
@@ -454,16 +463,17 @@ MULTICURRENCY_CHECK_FOR_ENABLE:	! PLW 2019-02-08 Ticket #248049
 RETURN retSUCCESS
 !
 
-MULTICURRENCY_ENABLED:			! PLW 2019-02-08 Ticket #248049
+MULTICURRENCY_ENABLED:
 	retVal			= isFALSE
 	tmpEnhFH		= coSession'OpenTable("SY_Enhancement",pthSYSTEM$)
 	READ(tmpEnhFH,KEY="A/R234ARMC",DOM=*NEXT); retVal = isTRUE
 	CLOSE(tmpEnhFH)
 	tmpEnhFH		= 0
+
 RETURN retVAL
 !
 
-MULTICURRENCY_HIDE_SHOW:		! PLW 2019-02-08 Ticket #248049
+MULTICURRENCY_HIDE_SHOW:
 	IF cAPSMultiCurrency {
 		_OBJ'SetControlState("APS_MC.GRP$",ctlSHOW)
 	} ELSE {
@@ -483,7 +493,7 @@ POST_LOAD_PCREDITCARDS:
 		_OBJ'SetControlState("CC_APS.grp$",ctlSHOW)
 		_OBJ'SetControlState("APS_VAULT.GRP$",ctlSHOW)
 		_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlSHOW)
-		_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)		! #258342 - 2019-10-04 - RCS
+		_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)
 		SHOW CONTROL D531_APSCREDITCARDLOG.CTL
 		SHOW CONTROL D531APSLEVELIIIPROCESSING.CTL
 		cOldAPSLevelIIIProcessing$	= D531APSLevelIIIProcessing$
@@ -493,10 +503,10 @@ POST_LOAD_PCREDITCARDS:
 		} ELSE {
 			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
 		}
-		_obj'MultiCurrencyHideShow()				! PLW 2019-02-08 Ticket #248049
+		_obj'MultiCurrencyHideShow()
 	} ELSE {
 		_OBJ'SetControlState("CC_APS.grp$",ctlHIDE)
-		_OBJ'SetControlState("APS_MC.GRP$",ctlHIDE)	! PLW 2019-02-06 Ticket #248049
+		_OBJ'SetControlState("APS_MC.GRP$",ctlHIDE)
 		HIDE CONTROL D531_APSCREDITCARDLOG.CTL
 		HIDE CONTROL D531APSLEVELIIIPROCESSING.CTL
 		retVal			= _OBJ'PostLoadPCreditCards(FROM "SY_531APSCompany_ui_BASE")
@@ -541,16 +551,17 @@ POST_READ_REC:
 
 	retVal			= _OBJ'PostReadRec(FROM "SY_531APSCompany_ui_BASE")
 
-	coBusiness'GetPartialRecord(tempRecord$, cD531_APSIOList$)	! PLW 2017-12-06 moved to before enable/disable
-	READ DATA FROM tempRecord$ TO IOL=cD531_APSIOList$			! PLW 2017-12-06 moved to before enable/disable
-	cAPSMultiCurrency	= _obj'MultiCurrencyEnabled()			! PLW 2019-02-08 Ticket #248049
+	! APS
+	coBusiness'GetPartialRecord(tempRecord$, cD531_APSIOList$)	! 2017-12-06 moved to before enable/disable
+	READ DATA FROM tempRecord$ TO IOL=cD531_APSIOList$			! 2017-12-06 moved to before enable/disable
+	cAPSMultiCurrency	= _obj'MultiCurrencyEnabled()
 	IF coBusiness'APSActivated {
-		_OBJ'DecryptPassword(D531APSMerchantID$, ML_APSMerchantID$) ! RCS 2017-12-11 Added to insure screen is updated during browse.
-		_OBJ'DecryptPassword(D531APSPassword$, ML_APSPassword$) ! RCS 2017-12-11 Added to insure screen is updated during browse.
+		_OBJ'DecryptPassword(D531APSMerchantID$, ML_APSMerchantID$) ! 2017-12-11 Added to insure screen is updated during browse.
+		_OBJ'DecryptPassword(D531APSPassword$, ML_APSPassword$) 	! 2017-12-11 Added to insure screen is updated during browse.
 		_OBJ'SetControlState("CC_APS.grp$",ctlSHOW)
 		_OBJ'SetControlState("APS_VAULT.GRP$",ctlSHOW)
 		_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlSHOW)
-		_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)	! #258342 - 2019-10-04 - RCS
+		_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)
 		SHOW CONTROL D531_APSCREDITCARDLOG.CTL
 		SHOW CONTROL D531APSLEVELIIIPROCESSING.CTL
 		cOldAPSLevelIIIProcessing$		= D531APSLevelIIIProcessing$
@@ -560,13 +571,14 @@ POST_READ_REC:
 		} ELSE {
 			_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlDISABLE)
 		}
-		_obj'MultiCurrencyHideShow()							! PLW 2019-02-08 Ticket #248049
+		_obj'MultiCurrencyHideShow()
+		_OBJ'CreditCardCheckForEnable()
 	} ELSE {
 		HIDE CONTROL D531_APSCREDITCARDLOG.CTL
 		HIDE CONTROL D531APSLEVELIIIPROCESSING.CTL
 		_OBJ'SetControlState("APS_VAULT.GRP$",ctlHIDE)
 		_OBJ'SetControlState("APS_COMMODITY.GRP$",ctlHIDE)
-		_OBJ'SetControlState("APS_MC.GRP$",ctlHIDE)				! PLW 2019-02-08 Ticket #248049
+		_OBJ'SetControlState("APS_MC.GRP$",ctlHIDE)
 	}
 
 	cOrigD531APSMerchantID$	= D531APSMerchantID$
@@ -627,14 +639,15 @@ RULES_FOR_PCREDITCARDS:
 
 	IF coBusiness'APSActivated {
 
-		IF NUL(D531APSMerchantID$) {
+		IF NUL(D531APSApiKey$) {
 			ML_APSMerchantID$   = $$
 			ML_APSPassword$		= $$
 		} ELSE {
 			_OBJ'SetControlState("APS_VAULT.GRP$", ctlSHOW)
-			_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)	! #258342 - 2019-10-04 - RCS
+			_OBJ'SetControlState("VAULT.GRP$",ctlHIDE)
 			IF CreditCardEnable$ <> isNO$ AND cOrigCreditCardEnable$ = isNO$ {
 				_OBJ'SetControlState("APS_VAULT.GRP$", ctlENABLE)
+				_OBJ'CreditCardCheckForEnable()
 			} ELSE {
 				_OBJ'SetControlState("APS_VAULT.GRP$", ctlDISABLE)
 				_OBJ'DecryptPassword(D531APSMerchantID$, ML_APSMerchantID$)
