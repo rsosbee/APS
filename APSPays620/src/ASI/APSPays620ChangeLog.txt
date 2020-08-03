@@ -13,5 +13,6 @@ Build 0610
 	06/22/2020 - Fix for Settlement Report for missing records and compatibility with DSD SQL Mirroring.
 	07/13/2020 - Fix to strip ampersand for PO. HS-T49
 	07/15/2020 - Fix for invalid address loading on the payment page in 6.20. HS-T50
-	07/21/2020 - Change to remove APS username and password and only use APS API key.  HS-T47
-		
+	07/21/2020 - Change to remove APS user name and password and only use APS API key.  HS-T47
+	07/31/2020 - Change to remove old EMV programs and use the new IP based EMV terminals.  HS-T49
+			

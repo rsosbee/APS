@@ -93,11 +93,11 @@ ENTER Division$,Customer$,defRec$,defIOL$
 RETURN retSUCCESS
 !
 
-VALIDATE_PAYMENT_TYPE:  ! PLW 2015-06-01 Ticket #143591
+VALIDATE_PAYMENT_TYPE:
 
 ENTER (value$)
 
-	if APSActivated { _OBJ'ARCreditCard'GetAPSMerchantCredentials(value$,APSMerchantKey$,APSMerchantPassword$) }
+	if APSActivated { _OBJ'ARCreditCard'GetAPSMerchantCredentials(value$,APSMerchantKey$,APSMerchantPassword$, D531APSApiKey$) }
 
 	retVal				= _OBJ'ValidatePaymentType(FROM "AR_531APSCustomerCreditCard_bus_BASE",value$)
 

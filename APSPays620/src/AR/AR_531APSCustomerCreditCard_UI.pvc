@@ -194,7 +194,7 @@ BT_NEW_CARD:
 		}
 	}
 
-	if TestedCreditCard		= isFALSE { ! #231342 - Catch when payment type isn't valid after a conversion or import. RCS
+	if TestedCreditCard		= isFALSE { ! Catch when payment type isn't valid after a conversion or import. RCS
 		retVal				= retFAILURE
 		LastErrorNum$		= "AR_531APSInvalidPaymentType"
 		LastErrorMsg$		= MSG("AR_531APSInvalidPaymentType")
@@ -203,7 +203,7 @@ BT_NEW_CARD:
 		RETURN retVal
 	}
 
-	IF coBusiness'APSActivated AND TestedCreditCard { ! 227159 - RCS
+	IF coBusiness'APSActivated AND TestedCreditCard {
 
 		cAllowEdit = isFALSE
 
@@ -220,13 +220,13 @@ BT_NEW_CARD:
 
 			coBusiness'GetDefaults((cCurrentARDivisionNo$),(cCurrentCustomerNo$),defaultRec$,defaultIOL$)
 			READ DATA FROM defaultRec$,REC=custcard$ to IOL = defaultIOL$
-			CustomerID$ 	= STP(cCurrentARDivisionNo$)+"-"+STP(cCurrentCustomerNo$) ! PLW 2018-08-17 Ticket #236076
+			CustomerID$ 	= STP(cCurrentARDivisionNo$)+"-"+STP(cCurrentCustomerNo$)
 			IF CustomerID$	= "-" { 
-				CustomerID$	= isNULL$ ! PLW 2018-08-17 Ticket #236076
+				CustomerID$	= isNULL$
 			}
-			CardID$			= CreditCardID$ ! PLW 2018-08-17 Ticket #236076
-			CustomerName$	= custcard.CardholderName$ ! PLW 2018-08-17 Ticket #236076
-			accountName$	= custcard.CardholderName$ ! RCS 2018-11-21 Ticket #236076
+			CardID$			= CreditCardID$
+			CustomerName$	= custcard.CardholderName$
+			accountName$	= custcard.CardholderName$
 			cVaultIOL$		= coBusiness'ARCreditCard'vaultIOL$
 			vaultRec$		= rec(cVaultIOL$)
 
@@ -254,8 +254,8 @@ BT_NEW_CARD:
 					PaymentType$	= cPaymentType$
 					CreditCardID$	= cCreditCardID$
 					vaultRec$		= REC(cVaultIOL$)
-					READ DATA FROM defaultRec$ TO IOL = custIOL$	! RCS 2018-10-23 #236076 - read back changes from entry.
-					custRec$		= REC(custIOL$)					! RCS 2018-10-23 #236076 - read back changes from entry.
+					READ DATA FROM defaultRec$ TO IOL = custIOL$	! read back changes from entry.
+					custRec$		= REC(custIOL$)					! read back changes from entry.
 
 					coBusiness'SetKeyValue("ARDivisionNo$", 	cCurrentARDivisionNo$)
 					coBusiness'SetKeyValue("CustomerNo$", 		cCurrentCustomerNo$)
@@ -264,7 +264,7 @@ BT_NEW_CARD:
 
 					IF retVal {
 						coBusiness'SetValue("PaymentType$", 	PaymentType$)
-						retVal		= coBusiness'SetPartialRecord(custRec$, custIOL$)	! RCS 2018-10-18 #236076 - write back changes from entry.
+						retVal		= coBusiness'SetPartialRecord(custRec$, custIOL$)	! write back changes from entry.
 						IF cPaymentMethod$	= "R" { ! 227159 - RCS
 							coBusiness'SetValue("BankAccountType$", 	isNULL$)
 							coBusiness'SetValue("BankName$", 			isNULL$)

@@ -12,8 +12,10 @@ DEF CLASS "AR_531APSPaymentType_bus" CREATE REQUIRED DELETE REQUIRED
 	PROPERTY FixCredentials
 	! ** Original value of MerchantID$ (need this unencrypted in order to make comparisons).
  	PROPERTY OrigUnencryptedMerchantID$ SET ERR
- 	! ** Original value of APSPaaword$ (need this unencrypted in order to make comparisons).
+ 	! ** Original value of APSPassword$ (need this unencrypted in order to make comparisons).
  	PROPERTY OrigUnencryptedAPSPassword$ SET ERR
+ 	! ** Original value of D531APSApiKey$		HS-T47 - 2020-07-16 - RCS
+ 	PROPERTY OrigD531APSApiKey$ SET ERR
  	
 	! Local/Private Properties
 	LOCAL cD531APSApiKey$
@@ -25,6 +27,7 @@ DEF CLASS "AR_531APSPaymentType_bus" CREATE REQUIRED DELETE REQUIRED
 	LOCAL cOrigEncryptedMerchantID$
 	LOCAL cUnencryptedAPSMerchantID$
 	LOCAL cUnencryptedD531APSPassword$
+	LOCAL cOrigD531APSApiKey$
 
 	! Public Functions (Methods)
 	FUNCTION CopyFrom(APSkey$)											COPY_FROM
@@ -83,6 +86,7 @@ ENTER (APSkey$)
 	IF retVal = retSUCCESS AND cAPSActivated AND POS(PaymentMethod$="RA") {
 		cOrigEncryptedAPSPassword$	= D531APSPassword$
 		cOrigEncryptedMerchantID$	= D531APSMerchantID$
+		cOrigD531APSApiKey$			= D531APSApiKey$
 		cD531APSApiKey$				= D531APSApiKey$
 		cD531APSUseEmvDevice$		= D531APSUseEmvDevice$
 		_OBJ'DecryptPassword(cOrigEncryptedAPSPassword$,	OrigUnencryptedAPSPassword$)
@@ -169,6 +173,8 @@ ENTER (APS531key$)
 		cOrigEncryptedMerchantID$			= D531APSMerchantID$
 		OrigUnencryptedAPSPassword$			= isNULL$
 		cOrigEncryptedAPSPassword$			= D531APSPassword$
+		cOrigD531APSApiKey$					= D531APSApiKey$
+		OrigD531APSApiKey$					= isNULL$
 		cD531APSSendEmail$					= D531APSSendEmail$
 		cD531APSRequireCVV$					= D531APSRequireCVV$
 		cD531APSRetailAccount$				= D531APSRetailAccount$
@@ -184,7 +190,7 @@ ENTER (APS531key$)
 
 	SWITCH CreditCardEnabled$
 		CASE isYES$, "A", "B"
-			IF NUL(D531APSMerchantID$) OR NUL(D531APSPassword$) OR NUL(D531APSApiKey$) {
+			IF NUL(D531APSApiKey$) {		! HS-T47 - 2020-07-16 - RCS
 				_OBJ'SetValueNoValidate("CreditCardSetupTested$",	isNO$)
 			}
 			BREAK
@@ -225,7 +231,7 @@ ENTER (APS531key$)
 RETURN retVal
 !
 
-VALIDATE_APS_API_KEY:	! used only if payment method is cRedit card or ACH
+VALIDATE_APS_API_KEY:				! used only if payment method is cRedit card or ACH  HS-T47 - 2020-07-16 - RCS
 ENTER (APS531value$)
 	IF cAPSActivated {
 		IF NOT(NUL(APS531value$)) AND NOT(NUL(D531APSApiKey$)) {
@@ -239,7 +245,7 @@ ENTER (APS531value$)
 RETURN retSUCCESS
 !
 
-VALIDATE_APS_MERCHANT_ID:	! used only if payment method is cRedit card
+VALIDATE_APS_MERCHANT_ID:			! used only if payment method is cRedit card
 ENTER (APS531value$)
 	IF cAPSActivated {
 		IF NOT(NUL(APS531value$)) AND NOT(NUL(D531APSPassword$)) {
@@ -253,7 +259,7 @@ ENTER (APS531value$)
 RETURN retSUCCESS
 !
 
-VALIDATE_APS_PASSWORD:		! used only if payment method is cRedit card
+VALIDATE_APS_PASSWORD:				! used only if payment method is cRedit card
 ENTER (value$)
 	IF cAPSActivated {
 		IF NOT(NUL(value$)) AND NOT(NUL(D531APSMerchantID$)) {
@@ -267,13 +273,13 @@ ENTER (value$)
 RETURN retSUCCESS
 !
 
-VALIDATE_PAYMENT_METHOD:	! Panel label: Type - Ach, Check, cRedit card, cash on Delivery, Other
+VALIDATE_PAYMENT_METHOD:			! Panel label: Type - Ach, Check, cRedit card, cash on Delivery, Other
 ENTER (SMCvalue$)
 	retVal							= _OBJ'ValidatePaymentMethod(FROM "AR_531APSPaymentType_bus_BASE",SMCvalue$)
 
 	IF retVal AND cAPSActivated {
 		! clear APS values
-		tmpIOL$=CPL("IOLIST "+"PreAuthorizationTerm,D531APSMerchantID$,D531APSPassword$,AddCorporateCardLevel3$,D531APSSendEmail$,D531APSRequireCVV$,D531APSRetailAccount$,D531APSUseEmvDevice$")
+		tmpIOL$						= CPL("IOLIST PreAuthorizationTerm,D531APSMerchantID$,D531APSPassword$,AddCorporateCardLevel3$,D531APSSendEmail$,D531APSRequireCVV$,D531APSRetailAccount$,D531APSUseEmvDevice$")
 		AddCorporateCardLevel3$		= isNO$
 		D531APSSendEmail$			= isNO$ 	! changed to N by default per Zac 2018-03-27
 		D531APSRequireCVV$			= isNO$
@@ -311,7 +317,7 @@ WRITE_REC:
 
 	retVal		= retSUCCESS
 
-	IF PaymentMethod$ = "R" OR PaymentMethod$ = "A" {
+	IF pos(PaymentMethod$ = "RA") {
 
 		IF nul(D531APSApiKey$) {						! HS-T47 - 2020-07-16 - RCS
 			retVal			= retFAILURE
@@ -351,7 +357,7 @@ WRITE_REC:
 
 	  		IF retVal {
 				IF NOT(EditState 	= edtNEW) {
-					IF UCS(OrigUnencryptedMerchantID$) <> UCS(cUnencryptedAPSMerchantID$) {
+					IF OrigD531APSApiKey$ <> cD531APSApiKey$ {	! HS-T47 - 2020-07-16 - RCS
 						! if APS activated, we do not have SPS credit cards any more
 						! do not allow to change merchant ID if there are credit cards
 						! we should allow this change only if the fix button was pressed
@@ -376,6 +382,7 @@ WRITE_REC:
 	  		IF NOT(retVal) {
 				D531APSMerchantID$	= cUnencryptedAPSMerchantID$
 				D531APSPassword$	= cUnencryptedD531APSPassword$
+				D531APSApiKey$		= cD531APSApiKey$	! HS-T47 - 2020-07-16 - RCS
 			}
 		}
 
@@ -383,6 +390,7 @@ WRITE_REC:
 			retVal	= coARCreditCard'TestAPSCredentials((D531APSMerchantID$), (D531APSPassword$), (D531APSApiKey$))
 			IF retVal {
 				CreditCardSetupTested$	= isYES$
+				_OBJ'SetValue("CreditCardSetupTested$", CreditCardSetupTested$)		
 			} ELSE {
 				retVal			= retFAILURE
 				LastErrorNum$	= "AR_531APSInvalidMerchant"
