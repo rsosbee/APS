@@ -236,7 +236,7 @@ ENTER (APS531value$)
 	IF cAPSActivated {
 		IF NOT(NUL(APS531value$)) AND NOT(NUL(D531APSApiKey$)) {
 			CreditCardSetupTested$	= isYES$
-		} else {
+		} ELSE {
 			CreditCardSetupTested$	= isNO$
 		}
 		tmpIOL$						= CPL("IOLIST CreditCardSetupTested$")

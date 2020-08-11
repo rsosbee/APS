@@ -1,10 +1,10 @@
 ! $Id: APS_CREATE_ENHANCEMENT_RECORDS $
 ! Add records to the SY_EnhancementModule table for APS modification
-! Accounting Systems, Inc. 2015-2020. Bob Sosbee, Phil Whirley
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 !
 	
 	coSession				= %sys_ss
-	
+
 	! Create records in the SY_EnhancementModule table
 	tmpEnhModuleFH			= coSession'OpenTable("SY_EnhancementModule","SYSTEM")
 	
@@ -35,10 +35,10 @@
 !	enh.EnhancedModuleCode$	= "G/L"
 
 	! S/O
-	enh.ModuleCode$			= "S/O"		! DB# 1316 2020-04-02 - RCS
-	enh.EnhancedModuleCode$	= "S/O"		! DB# 1316 2020-04-02 - RCS
-	WRITE (tmpEnhModuleFH,REC=enh$)		! DB# 1316 2020-04-02 - RCS
-
+	enh.ModuleCode$			= "S/O"	
+	enh.EnhancedModuleCode$	= "S/O"
+	WRITE (tmpEnhModuleFH,REC=enh$)
+	
 Update_All_Companies:
 	
 	tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
@@ -47,7 +47,7 @@ Update_All_Companies:
  	SELECT * from tmpSY_CompanyFH BEGIN $00$ END $FE$
 
 		! Set module conversion sublevel.
-		tmpCIEnhModuleFH				= coSession'OpenTable("CI_EnhancementActivation","COMPANY:"+CompanyCode$,ERR=*next)
+		tmpCIEnhModuleFH	= coSession'OpenTable("CI_EnhancementActivation","COMPANY:"+CompanyCode$,ERR=*next)
 		if tmpCIEnhModuleFH {
 			SELECT *,rec=sy$ from tmpEnhModuleFH BEGIN $00$ END $FE$ WHERE sy.EnhancementCode$="ASIAPS"
 				ci.ModuleCode$			= sy.ModuleCode$
@@ -61,7 +61,7 @@ Update_All_Companies:
 			}
 			NEXT RECORD
 			CLOSE (tmpCIEnhModuleFH)
-			tmpCIEnhModuleFH	= 0
+			tmpCIEnhModuleFH			= 0
 		}
 
 	NEXT RECORD
@@ -74,8 +74,8 @@ Update_All_Companies:
 	coSession'CreateTable("SY_531APSActivation","SYSTEM",err=*next)
 	
 	! create APS transaction log
-	tmp	= 0
-	tmp	= coSession'CreateTable("SY_531APSTransactionLog","SYSTEM",err=*next)
+	tmp						= 0
+	tmp						= coSession'CreateTable("SY_531APSTransactionLog","SYSTEM",err=*next)
 	
 	if not(tmp) { ! Check during migration from 4.50
 		MSGBOX "Error updating SY_TransactionLog. Please reinstall APS after migrating!" ! *SC-OK*
@@ -87,13 +87,13 @@ Update_All_Companies:
 	wait .5 ! Allow SQL/Windows to update
 
 	! Copy existing company data into the company file if present.
-	cSY_APSCompanyFH	= coSession'OpenTable("SY_531APSCompany","SYSTEM",err=*next)
+	cSY_APSCompanyFH		= coSession'OpenTable("SY_531APSCompany","SYSTEM",err=*next)
 	if not(cSY_APSCompanyFH) { EXIT } ! new company code did not create
-	C2PIolist$			= IOL(cSY_APSCompanyFH)
-	tmpSY_CompanyFH		= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
+	C2PIolist$				= IOL(cSY_APSCompanyFH)
+	tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
  	IF not(tmpSY_CompanyFH) { EXIT } ! sy_company not available
 		
-	IF POS("D531APS"	= UCS(LST(IOL(tmpSY_CompanyFH)))) {
+	IF POS("D531APS"		= UCS(LST(IOL(tmpSY_CompanyFH)))) {
 		! check for copy, remove data from SY_Company and write to SY_531APSCompany
 		cConvert_SyCompany	= 1
 		SELECT * from tmpSY_CompanyFH BEGIN $00$ END $FE$
@@ -116,8 +116,8 @@ Update_All_Companies:
  	! should be a sy_531APSCompany record for each company
  	SELECT * from tmpSY_CompanyFH BEGIN $00$ END $FE$
  		READ DATA FROM "",rec=c2p$ TO C2PIolist$
- 		c2p.CompanyKey$	= CompanyKey$
- 		cRead			= 0
+ 		c2p.CompanyKey$		= CompanyKey$
+ 		cRead				= 0
  		READ (cSY_APSCompanyFH, REC = c2p$,key = CompanyKey$,dom = *next); cRead = 1
  		if cRead {
 			! check defaults
@@ -152,7 +152,7 @@ Update_All_Companies:
 			cCI_Read							= 0
 			READ (tmpCIEnhModuleFH,REC = ci$,KEY = ci.ModuleCode$:ci.DeveloperCode$:ci.EnhancementCode$,dom = *next); cCI_Read = 1
 			if cCI_Read {
-				ci.subLevel						= 0 ! PLW 2017-12-12 set SUBlevel to 0 not dataLevel insure a conversion will take place if previously done.
+				ci.subLevel						= 0 ! set SUBlevel to 0 not dataLevel insure a conversion will take place if previously done.
 				WRITE (tmpCIEnhModuleFH,REC=ci$)
 			}
 			CLOSE (tmpCIEnhModuleFH)
@@ -160,12 +160,12 @@ Update_All_Companies:
 		}
 
 	NEXT RECORD
-	if cConvert_SyCompany { ! RCS 2017-12-13 only drop columns if needed.
+	if cConvert_SyCompany { ! only drop columns if needed.
 	
 		tstPath$			= PTH(tmpSY_CompanyFH) ! we do this to get the full spec of the SY_Company table
 		close (cSY_APSCompanyFH)
 		close (tmpSY_CompanyFH)
-		close (65000,err=*next) ! close GFN from sy_session RCS #246446 - 2018-12-20 fix error 13 when installing PU
+		close (65000,err=*next) ! close GFN from sy_session - fix error 13 when installing PU
 	
 		REPEAT
 			tstF			= FFN(tstPath$)
@@ -176,13 +176,13 @@ Update_All_Companies:
 	
 		coDict				= NEW("SY_DictionaryConversionCommon",coSession,$$,0)
 		
-		coDict'DropColumn("SY_Company","D531_APSCreditCardLog") ! drop this column by itself - when migrating from 4.50 it won't be contiguous. 2018-06-07 RCS
+		coDict'DropColumn("SY_Company","D531_APSCreditCardLog") ! drop this column by itself - when migrating from 4.50 it won't be contiguous.
 		
-		coDict'DropColumn("SY_Company","D531_APSCREDITCARDLOG") ! Alternate way it may appear in the file. 2018-06-07 RCS
+		coDict'DropColumn("SY_Company","D531_APSCREDITCARDLOG") ! Alternate way it may appear in the file.
 
 		drop object coDict
 		coDict				= 0
-		coSession'CreateTable("SY_Company","SYSTEM") ! RCS 2018-06-11 force update to remove D531_APSCREDITCARDLOG from 4.50.
+		coSession'CreateTable("SY_Company","SYSTEM") ! force update to remove D531_APSCREDITCARDLOG from 4.50.
 		
 		wait .1 ! allow Windows and SQL to catch up.
 
@@ -198,6 +198,55 @@ Update_All_Companies:
 		coDict				= 0
 		coSession'CreateTable("SY_Company","SYSTEM") ! All columns were dropped now physical table must be updated.
 	}
+	
+Update_Libs:
+
+	! Sy_Company
+	cTmpFH					= HFN 
+	Open (cTmpFH)coSession'PathRoot$+"SY\SY_Company.m4l"	! no iolist on file, use OLD school
+	dim A$[60]
+	select A$[all] from cTmpFH begin "PCREDITCARDS"+$00$
+		k$					= kec(cTmpFH)
+		if not(pos("PCREDITCARDS"=ucs(k$))) {
+			BREAK
+		} 
+		if ucs(A$[0]) = "FT_MERCHANT_ID" {
+			remove (cTmpFH,key=k$)
+		}
+		if ucs(A$[0]) = "FT_MERCHANT_PASSWORD" {
+			remove (cTmpFH,key=k$)
+		}
+		if ucs(A$[0]) = "ML_APSMERCHANTID" {
+			remove (cTmpFH,key=k$)
+		}
+		if ucs(A$[0]) = "ML_APSPASSWORD" {
+			remove (cTmpFH,key=k$)
+		}
+	next record
+	close(cTmpFH)
+	cTmpFH					= 0
+
+	! AR_PaymentType
+	cTmpFH					= HFN 
+	Open (cTmpFH)coSession'PathRoot$+"AR\AR_PaymentType.m4l"	! no iolist on file, use OLD school
+	dim A$[60]
+	select A$[all] from cTmpFH begin $00$
+		k$					= kec(cTmpFH)
+		if ucs(A$[0]) = "FT_MERCHANT_ID" {
+			remove (cTmpFH,key=k$)
+		}
+		if ucs(A$[0]) = "FT_MERCHANT_PASSWORD" {
+			remove (cTmpFH,key=k$)
+		}
+		if ucs(A$[0]) = "D531APSMERCHANTID" {
+			remove (cTmpFH,key=k$)
+		}
+		if ucs(A$[0]) = "ML_APSPASSWORD" {
+			remove (cTmpFH,key=k$)
+		}
+	next record
+	close(cTmpFH)
+	cTmpFH					= 0
 	
 EXIT 
 ! 

@@ -373,7 +373,7 @@ BT_REMOVE:
 	retVal			= coBusiness'GetValue("TerminalKey$",TerminalKey$)
 	IF NUL(TerminalKey$) {
 		retVal		= _OBJ'BT_Cancel()
-	} ELSE {
+	} else {
 		retVal		= _OBJ'PostReadRec()
 	}
 RETURN retSUCCESS

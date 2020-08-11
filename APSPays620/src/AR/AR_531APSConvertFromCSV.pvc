@@ -1,7 +1,7 @@
 ! $Id: AR_531APSConvertFromCSV.pvc $
-! Copyright 2016-2018 (C) by Accounting Systems Inc. (ASI) All rights reserved.
-! ASI - PLW 2016-09-30, RCS 2017-09-27
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 !
+
 
 DEF CLASS "AR_531APSConvertFromCSV" CREATE REQUIRED DELETE REQUIRED
 
@@ -36,7 +36,7 @@ DEF CLASS "AR_531APSConvertFromCSV" CREATE REQUIRED DELETE REQUIRED
 	LOCAL inputIOL$ 			= CPL("IOLIST RefID$:[STR("","")],SPSGUID$:[STR("","")]")
 
 	! Functions
-	FUNCTION LOCAL RemoveObsoleteWrkTables()									REMOVE_OBSOLETE_WRK_TABLES
+	FUNCTION LOCAl RemoveObsoleteWrkTables()									REMOVE_OBSOLETE_WRK_TABLES
 	FUNCTION LOCAL ConvertCardsToAPS()											CONVERT_CARDS_TO_APS
 	FUNCTION LOCAL SwitchVaultRecord$(APSfromID$, APSfromKey$, APStoID$, \
 					APStoKey$, APSorig_guid$, D531APSApiKey$)					SWITCH_VAULT_RECORD
@@ -52,12 +52,12 @@ END DEF
 ON_CREATE:
 
 ENTER coSession
-	%APSPreConversion			= 1 ! PLW 2016-05-12 allow for conversion before activation
+	%APSPreConversion			= isTRUE	! allow for conversion before activation
 	! Inheritance check to ensure object is not directly created
 	IF POS(UCS(_OBJ'_Class$)	= UCS(PGN)) {
 		coSession'LastErrorNum$ = "SY_NotInherited"
 		coSession'LastErrorMsg$ = MSG("SY_NotInherited", _OBJ'_Class$)
-		EXIT 200 ! SY_Constant not in direct inheritance structure of this class
+		EXIT 200	! SY_Constant not in direct inheritance structure of this class
 	}
 
 RETURN
@@ -144,7 +144,7 @@ SWITCH_VAULT_RECORD:
 
 ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, D531APSApiKey$, ERR = *NEXT
 	IF NOT(coARCreditCard) { coARCreditCard = NEW("AR_CreditCard", coSession, ERR=*NEXT) }
-	cAPSActivated	= isFALSE ! the data must be taken from the SPS vault
+	cAPSActivated	= isFALSE		! the data must be taken from the SPS vault
 	new_guid$		= $$
 	data$			= coARCreditCard'VerifyGUID$(APSfromID$, APSfromKey$, APSorig_guid$)
 	cAPSActivated	= isTRUE
@@ -154,7 +154,7 @@ ENTER APSfromID$, APSfromKey$, APStoID$, APStoKey$, APSorig_guid$, D531APSApiKey
 			CCnumber$	= MID(data$,1,P-1)
 			expdate$	= MID(data$,P+1)
 			new_guid$	= coARCreditCard'AddAPSCreditCard$((APStoID$), (APStoKey$), (CCnumber$), (expdate$), (D531APSApiKey$))
-			IF NOT(NUL(new_guid$)) { NumberOfConvertedCards++ } ! I will use this property in CopyAPSVaultToCCPaymentTypes() method
+			IF NOT(NUL(new_guid$)) { NumberOfConvertedCards++ }		! I will use this property in CopyAPSVaultToCCPaymentTypes() method
 
 		}
 	}
@@ -214,51 +214,17 @@ ENTER cUnencryptedVaultID$, cUnencryptedMerchantKey$
 RETURN retVal
 !
 
-UPDATE_URLS:
-	retVal				= retSUCCESS
-	URLMaintenanceObj	= NEW("SY_URLMaintenance_bus",coSession)
-
-	IF URLMaintenanceObj {
-		! primary URL
-		tmpRet			= URLMaintenanceObj'SetKey("APS PRIMARY")
-		IF tmpRet {
-			tmpRet		= URLMaintenanceObj'SetValue("URLDesc$","APS Primary URL")
-		}
-		IF tmpRet {
-			tmpRet		= URLMaintenanceObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/transact.php")
-		}
-		IF tmpRet {
-			tmpRet		= URLMaintenanceObj'WRITE()
-		}
-		IF tmpRet {
-			! query URL
-			tmpRet		= URLMaintenanceObj'SetKey("APS Query")
-			IF tmpRet {
-				tmpRet	= URLMaintenanceObj'SetValue("URLDesc$","APS Query URL")
-			}
-			IF tmpRet {
-				tmpRet	= URLMaintenanceObj'SetValue("URL$","https://secure.apspaymentgateway.com/api/query.php")
-			}
-			IF tmpRet {
-				tmpRet	= URLMaintenanceObj'WRITE()
-			}
-			IF NOT(tmpRet) {
-				retVal			= retFAILURE
-				LastErrorNum$	= URLMaintenanceObj'LastErrorNum$
-				LastErrorMsg$	= URLMaintenanceObj'LastErrorMsg$
-			}
-		} ELSE {
-				retVal			= retFAILURE
-				LastErrorNum$	= URLMaintenanceObj'LastErrorNum$
-				LastErrorMsg$	= URLMaintenanceObj'LastErrorMsg$
-		}
-	} ELSE {
-		retVal			= retFAILURE
-		LastErrorNum$	= coSession'LastErrorNum$
-		LastErrorMsg$	= coSession'LastErrorMsg$
+UPDATE_URLS:  ! use the URL update in the activation program.
+	retVal 					= retSUCCESS
+	IF NOT(coActivation) {
+		coActivation		= NEW("SY_531APSActivation_bus",coSession)
 	}
-
-	DROP OBJECT URLMaintenanceObj,ERR=*NEXT
+	IF coActivation {
+		retVal				= coActivation'UpdateURLs()
+		retVal 				= coActivation'UpdateC2PFiles(coSession'CompanyCode$)
+		DROP OBJECT coActivation,err=*next
+		coActivation		= 0
+	}
 
 RETURN retVal
 !

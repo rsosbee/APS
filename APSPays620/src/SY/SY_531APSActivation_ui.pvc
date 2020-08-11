@@ -537,7 +537,7 @@ ENTER PaymentTypeFH
 RETURN FileNeedsToBeUpdated
 !
 	
-ENABLE_APS_FILES: ! #229519 - RCS - 2017-10-19
+ENABLE_APS_FILES:
 ENTER (cCompanyCode$),err=*next
 	if nul(cCompanyCode$) { 
 		cCompanyCode$ 	= coSession'CompanyCode$ 

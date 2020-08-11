@@ -39,11 +39,12 @@ DEF CLASS "AR_531APSCreditCard" CREATE REQUIRED DELETE REQUIRED
 	LOCAL cHttpStepThreeUrl$
 	LOCAL cHttpStep3EmvUrl$
 	LOCAL cPaymentMethod$
-	LOCAL tlsChk				! RCS 2018-01-11 pass status flag for TLS status
+	LOCAL tlsChk				! pass status flag for TLS status
 	LOCAL tmpCustNo$
 	LOCAL CR$			= $0D$
 	LOCAL CrLf$			= $0D0A$
 	LOCAL Tab$			= $09$
+	LOCAL Comma$		= ","	! HS-T52 - 2020-08-03 - RCS trailing comma issue
 	LOCAL BlockStart$
 	LOCAL BlockEnd$
 	LOCAL cService$
@@ -1692,9 +1693,11 @@ ENTER Name$,FirstName$,LastName$
 			CheckLastName$	= "|"+UCS(LastName$)+"|"
 			IF POS(CheckLastName$ = StripString$) {
 				Name$		= MID(Name$,1,LastNameStart)
+				Name$		= SUB(Name$,comma$," ")			! HS-T52 - 2020-08-03 - RCS trailing comma issue
 				Name$		= STP(Name$)
 			} ELSE {
 				FirstName$	= MID(Name$,1,LastNameStart)
+				FirstName$	= SUB(FirstName$,comma$," ")	! HS-T52 - 2020-08-03 - RCS trailing comma issue
 				FirstName$	= STP(FirstName$)
 				LastNameNotFound	= isFALSE
 			}

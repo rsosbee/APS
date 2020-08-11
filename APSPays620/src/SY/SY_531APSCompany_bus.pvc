@@ -59,7 +59,16 @@ ON_CREATE:
  	IF APSActivated AND NOT(CCRegistered) {
  		CCRegistered	= 1
  	}
-	DROP OBJECT coAPSActivation,err=*proceed;	coAPSActivation		= 0 ! #232007 - RCS
+	DROP OBJECT coAPSActivation,err=*proceed;	coAPSActivation		= 0
+	! APS Start
+	filePresent			= isFALSE
+	cD531_APSCompanyFH	= coSession'openTable("SY_531APSCompany", pthSYSTEM$,err=*next); filePresent = isTRUE
+	IF NOT(filePresent) {
+		tmp				= coSession'CreateTable("SY_531APSCompany",pthSYSTEM$)
+	} else {
+		close(cD531_APSCompanyFH); cD531_APSCompanyFH	= 0
+	}
+	
 	! C2P Start
 	cD531_APSCompanyFH	= coSession'openTable("SY_531APSCompany", pthSYSTEM$)
 	STATIC IOL			= IOL(cD531_APSCompanyFH)

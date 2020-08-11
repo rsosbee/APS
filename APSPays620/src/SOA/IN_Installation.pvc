@@ -64,11 +64,11 @@ POST_FINALIZE:
 	! Called from SY_Installation after all installation related task completed.
 	! Menus are compiled here.Test
 	! 
-	! Generate enhancemet records
+	! Generate enhancement records
 	CALL "..\ASI\APS_CREATE_ENHANCEMENT_RECORDS",ERR=*NEXT
 	! 
 	! Create new record(s) in the SY_EmbeddedIOSettings.M4T table
-	CALL "..\SOA\ASI_EmbeddedIolSettings",ERR=*NEXT
+!	CALL "..\SOA\ASI_EmbeddedIolSettings",ERR=*NEXT
 RETURN 
 !
 
