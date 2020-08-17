@@ -38,7 +38,7 @@
 	enh.ModuleCode$			= "S/O"	
 	enh.EnhancedModuleCode$	= "S/O"
 	WRITE (tmpEnhModuleFH,REC=enh$)
-	MESSAGEBOX "processing APS_Create_Enhancement_Records..."	! *SC-OK*
+
 Update_All_Companies:
 	
 	tmpSY_CompanyFH			= coSession'OpenTable("SY_Company","SYSTEM",ERR=*NEXT)
