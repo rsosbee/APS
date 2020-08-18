@@ -1,0 +1,167 @@
+! SY_PALCreation.pvc  12/22/11 (JGD)
+DEF CLASS "SY_PALCreation" CREATE REQUIRED DELETE REQUIRED 
+	! Inheritance
+	LIKE "SY_Maint","SY_File"
+	! Public Properties
+	! Local/Private Properties
+	LOCAL cCode3$
+	LOCAL cMainTable$="*SKIP*"
+	LOCAL cTestSystemFolder$
+	LOCAL cPrimaryModule$
+	LOCAL cNomadsIOL$
+	LOCAL cModuleList$
+	LOCAL cSYModuleFH
+	LOCAL cDevSystem$
+	LOCAL cPALFH
+	LOCAL cControlSystemPath$
+	LOCAL sourceFolder$
+	LOCAL cNomadsPartialIOL$
+	LOCAL cNomadsLineIOL$
+	
+	! Public Functions (Methods)
+	FUNCTION CreatePAL(DevSystem$,TestSystemFolder$,ControlSystemPath$,PrimaryModule$,Code3$)CREATE_PAL
+	FUNCTION CreatePAL(DevSystem$,TestSystemFolder$,ControlSystemPath$,PrimaryModule$,Code3$,addlmodules$)CREATE_PAL
+	FUNCTION LOCAL CreateNomadsPatchFile(sourceFile$)CREATE_NOMADS_PATCH_FILE
+	
+	! Elements Defined Elsewhere, but Referenced Locally
+	LOCAL coSession
+END DEF
+!
+ON_CREATE:
+	cNomadsIOL$			= CPL("IOLIST _OBJ_NME$,_OBJ_C,_OBJ_L,_OBJ_W,_OBJ_H,_OBJ_TYPE$,INIT_TEXT$,INIT_VAL$,_OBJ_TAB,_OBJ_DEF$,_OBJ_DSP$,_OBJ_FCS$,_OBJ_SEL$,_OBJ_MSG$,_OBJ_HLP$,_OBJ_ATTR$,_OBJ_IDX$,_OBJ_HOTKEY$,_OBJ_QRY$,_OBJ_SEC$,_OBJ_STS$,_OBJ_GRP$,_OBJ_NULL$,_OBJ_TAG$,_OBJ_TBL$,_OBJ_INP$,_OBJ_OUT$,_OBJ_VALID$,_OBJ_CLASS$,_OBJ_TIP$,_OBJ_ORIG$,_OBJ_FONT$,_OBJ_COLOR$,_OBJ_LISTBOX_TYPE$,_OBJ_SEP$,_OBJ_SCRATCH$,_OBJ_POPUP$,_OBJ_SIZING$,_OBJ_LOGIC1$,_OBJ_LOGIC2$,_OBJ_POPUP_LOGIC$,_OBJ_QRY_BITMAP$,_OBJ_QRY_WIDTH,_OBJ_QRY_TIP$,_OBJ_QRY_ATTR$,_OBJ_EXTENSION$,_OBJ_DEMAND$,_OBJ_DEMAND_LOGIC$,_OBJ_BACKGROUND_LOGIC$,_OBJ_PERSISTENCE$,_OBJ_NOTES$,_OBJ_TBL_LEN,OBJ_TVLINE_COLOR$,OBJ_AUTOSZ_WIDTH$,OBJ_AUTOSZ_HEIGHT$,OBJ_AUTOMATION_TEXT$,  OBJ_HILIGHT_COLORS$,OBJ_PROPS$,OBJ_VISUAL_CLASS$")
+	cNomadsPartialIOL$	= CPL("IOLIST _OBJ_TYPE$,INIT_TEXT$,INIT_VAL$,_OBJ_TAB,_OBJ_DEF$,_OBJ_DSP$,_OBJ_FCS$,_OBJ_SEL$,_OBJ_MSG$,_OBJ_HLP$,_OBJ_ATTR$,_OBJ_IDX$,_OBJ_HOTKEY$,_OBJ_QRY$,_OBJ_SEC$,_OBJ_STS$,_OBJ_GRP$,_OBJ_NULL$,_OBJ_TAG$,_OBJ_TBL$,_OBJ_INP$,_OBJ_OUT$,_OBJ_VALID$,_OBJ_CLASS$,_OBJ_TIP$,_OBJ_ORIG$,_OBJ_FONT$,_OBJ_COLOR$,_OBJ_LISTBOX_TYPE$,_OBJ_SEP$,_OBJ_SCRATCH$,_OBJ_POPUP$,_OBJ_SIZING$,_OBJ_LOGIC1$,_OBJ_LOGIC2$,_OBJ_POPUP_LOGIC$,_OBJ_QRY_BITMAP$,_OBJ_QRY_WIDTH,_OBJ_QRY_TIP$,_OBJ_QRY_ATTR$,_OBJ_EXTENSION$,_OBJ_DEMAND$,_OBJ_DEMAND_LOGIC$,_OBJ_BACKGROUND_LOGIC$,_OBJ_PERSISTENCE$,_OBJ_NOTES$") ! ,_OBJ_TBL_LEN,OBJ_TVLINE_COLOR$,OBJ_AUTOSZ_WIDTH$,OBJ_AUTOSZ_HEIGHT$,OBJ_AUTOMATION_TEXT$,  !OBJ_HILIGHT_COLORS$,OBJ_PROPS$,OBJ_VISUAL_CLASS$")
+	cNomadsLineIOL$		= CPL("IOLIST _OBJ_C,_OBJ_L,_OBJ_W,_OBJ_H")
+RETURN
+!
+
+ON_DELETE:
+	IF cSYModuleFH { CLOSE (cSYModuleFH); cSYModuleFH=0 } ! 7/13/2020 (JCR) 
+RETURN
+!
+
+CREATE_PAL:
+ENTER cDevSystem$,cTestSystemFolder$,cControlSystemPath$,cPrimaryModule$,cCode3$,addlmodules$,ERR=*NEXT
+	tARGLIST$=",cDevSystem$,cTestSystemFolder$,cControlSystemPath$,cPrimaryModule$,cCode3$,"
+	missingArgVal		= isFALSE
+	FOR t=1 TO 5
+		arg$			= EVS(MID(tARGLIST$,POS(","=tARGLIST$,1,t)+1,POS(","=tARGLIST$,1,t+1)-2-POS(","=tARGLIST$,1,t)+1),ERR=*BREAK)
+		IF NUL(arg$) { missingArgVal=isTRUE; BREAK }
+	NEXT t
+	IF missingArgVal {
+		LastErrorNum$	= "One or more of the required arguments is missing"
+		LastErrorMsg$	= LastErrorNum$
+		RETURN retFAILURE
+	}
+	cPrimaryModule$		= TBL(cPrimaryModule$="LM",cPrimaryModule$,"IN")
+	meter				= 0
+	coSession'UI'ProgressBar("init","DSD Nomads Patch File Creation","Creating Patch file...",0,"force")
+	! Build module list
+	cModuleList$		= cPrimaryModule$
+	! Test system folder
+	cDIRFH				= HFN
+	OPEN (cDIRFH,ERR=*NEXT)cTestSystemFolder$
+	READ (cDIRFH)
+	IF NOT(cPALFH) {
+		palFile$		= cDevSystem$+DLM+cPrimaryModule$+DLM+cPrimaryModule$+"0PAL."+cCode3$
+		IF cPrimaryModule$="IN" { palFile$	= cDevSystem$+DLM+"SOA"+DLM+cPrimaryModule$+"0PAL."+cCode3$ } ! 7/13/2020 (JCR)
+		ERASE palFile$,ERR=*NEXT
+		cPALFH			= HFN
+		KEYED palFile$,76,,-2048,OPT="0",ERR=*NEXT
+		OPEN (cPALFH,IOL=cNomadsIOL$)palFile$
+	}
+	IF NOT(NUL(addlmodules$)) { cModuleList$+=addlmodules$ }
+	
+	! select files from test system and compare to control system
+	SELECT sourceFolder$ FROM cDIRFH WHERE NOT(POS(sourceFolder$:".."))
+	coSession'UI'ProgressBar("update")
+		CLOSE (srcFH,ERR=*PROCEED); srcFH=0
+		meter			++
+		IF NOT(MOD(meter,10)) {coSession'UI'ProgressBar("update") }
+		srcFH			= HFN
+		OPEN (srcFH,ERR=*CONTINUE)sourceFolder$
+		IF NOT(POS(sourceFolder$=cModuleList$)) { CONTINUE }
+		! read file from test system
+		SELECT sourceFile$ FROM srcFH,ERR=*BREAK WHERE LEN(sourceFile$)>3 AND (POS(".M4L"=UCS(sourceFile$)) OR POS(".LIB"=UCS(sourceFile$))) AND NOT(POS("234"=sourceFile$))
+			if POS("531"=sourceFile$) {	! old APS (ASI) developer code
+				 CONTINUE
+			}
+			if POS("568"=sourceFile$) {	! New APS developer code
+				 CONTINUE
+			}
+			retVal		= _OBJ'CreateNomadsPatchFile(sourceFile$)
+		NEXT RECORD 
+	NEXT RECORD 
+	coSession'UI'ProgressBar("close")
+	CLOSE (cPALFH,ERR=*PROCEED); cPALFH=0
+RETURN retSUCCESS
+!
+
+CREATE_NOMADS_PATCH_FILE:
+ENTER (sourceFile$)
+	retVal				= retFAILURE
+	! Open test system file
+	sourceFH			= HFN
+	OPEN (sourceFH,IOL=cNomadsIOL$)cTestSystemFolder$+DLM+sourceFolder$+DLM+sourceFile$
+	src$				= FIN(sourceFH,"NAME")
+	! open control system file
+	destFh				= HFN
+	OPEN (destFh,IOL=cNomadsIOL$,ERR=*RETURN)cControlSystemPath$+DLM+sourceFolder$+DLM+sourceFile$
+	SELECT * FROM sourceFH BEGIN $$
+		coSession'UI'ProgressBar("update")
+		sourceRec$		= REC(IOL(sourceFH))
+		standardRec		= isFALSE
+		tRec$			= $$
+		curKey$			= $$
+		keySeed$		= ".."+MID(src$,POS("MAS90"=UCS(src$))+5)
+		READ (destFh,KEY=KEC(sourceFH),REC=dst$,DOM=*NEXT); standardRec=isTRUE; tRec$=REC(IOL(destFh),REC=dst$); curKey$=KEC(destFh)
+		IF standardRec {
+			IF REC(cNomadsIOL$)=REC(cNomadsIOL$,REC=dst$) {
+				CONTINUE
+			}
+		}
+		IF NOT(standardRec) {
+			IF NOT(NUL(_OBJ_NME$)) AND NOT(POS(_OBJ_TYPE$="A")) {
+				SELECT *,REC=dst$ FROM destFh BEGIN MID(KEC(sourceFH),1,12)+$$ END MID(KEC(sourceFH),1,12)+$FE$ WHERE dst._OBJ_NME$=_OBJ_NME$ AND dst.INIT_TEXT$=INIT_TEXT$
+					standardRec	= isTRUE
+					! entire record is the same
+					IF REC(cNomadsIOL$)=REC(cNomadsIOL$,REC=dst$) {
+						CONTINUE
+					}
+					if not(pos("APS"=ucs(Nomads_Notes$))) {		! select APS records only. RCS 2020-08-17
+						CONTINUE
+					}
+					! partial record differs
+					IF (REC(cNomadsPartialIOL$)=REC(cNomadsPartialIOL$,REC=dst$) AND REC(cNomadsLineIOL$)<>REC(cNomadsLineIOL$,REC=dst$)) OR (dst._OBJ_TYPE$="G" AND KEC(sourceFH)<>KEC(destFh)) {
+						curKey$	= KEC(destFh)
+						tRec$	= REC(IOL(destFh),REC=dst$)
+						BREAK
+					}
+					curKey$		= KEC(destFh)
+					tRec$		= REC(IOL(destFh),REC=dst$)
+					BREAK
+				NEXT RECORD 
+			}
+			IF NOT(NUL(dst._OBJ_TYPE$)) AND dst._OBJ_TYPE$="G" AND NUL(_OBJ_listbox_type$) AND KEC(sourceFH)<>KEC(destFh) {
+				curKey$	= KEC(destFh)
+			} ELSE {
+				IF NOT(standardRec) { curKey$=KEC(sourceFH) }
+			}
+		}
+		IF NOT(standardRec) { curKey$=KEC(sourceFH) }
+		IF (NOT(NUL(tRec$)) AND tRec$<>sourceRec$) OR NOT(standardRec) {
+			READ DATA FROM sourceRec$ TO IOL=cNomadsIOL$
+			onFileRec	= isTRUE
+			WRITE (cPALFH,KEY=PAD(keySeed$,60)+curKey$); onFileRec=isFALSE
+			WHILE onFileRec
+				midKey$	= MID(curKey$,1,LEN(curKey$)-4)
+				keyNum	= NUM(MID(curKey$,LEN(midKey$)+1))+1
+				curKey$	= midKey$+STR(keyNum:"0000")
+				WRITE (cPALFH,KEY=PAD(keySeed$,60)+curKey$,DOM=*NEXT); onFileRec=isFALSE
+			WEND 
+			retVal=retSUCCESS
+		}
+	NEXT RECORD 
+	CLOSE (destFh,ERR=*PROCEED); destFh=0
+	CLOSE (sourceFH,ERR=*PROCEED); sourceFH=0
+RETURN retVal
+!

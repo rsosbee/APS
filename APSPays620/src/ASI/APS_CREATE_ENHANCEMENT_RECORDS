@@ -78,7 +78,7 @@ Update_All_Companies:
 	tmp						= coSession'CreateTable("SY_531APSTransactionLog","SYSTEM",err=*next)
 	
 	if not(tmp) { ! Check during migration from 4.50
-		MSGBOX "Error updating SY_TransactionLog. Please reinstall APS after migrating!" ! *SC-OK*
+		MSGBOX "Error updating SY_APSTransactionLog. Please reinstall APS after migrating!" ! *SC-OK*
 		EXIT
 	}
 

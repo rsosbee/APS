@@ -1,77 +1,108 @@
+! $Id: MenuFx_APS $
 ! * Fix menu items
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
+!
+
 ENTER TERM$,ERR=*NEXT
-MENU_DONE=0
-EnhancementFileOpened=0
-! find and open SY_Menu in ASI directory
-FileName$="SY_Menu.M4T"
-FilePath$="..\ASI\"
-FileToOpen$=FilePath$+FileName$
-! open file
-ASIMenu=HFN
-ProjectmenuExists=0; OPEN (ASIMenu,IOL=*,ERR=*NEXT)FileToOpen$; ProjectmenuExists=1
-IF ProjectmenuExists THEN FileToErase$=PTH(ASIMenu)
-! open SY_Menu in MAS_SYSTEM directory
-ErrorMessage$="MenuFX. Cannot open MAS_SYSTEM/SY_Menu.M4T table"
-NewMenu=%SYS_SS'OpenTable("SY_Menu.M4T","SYSTEM",ERR=PROGRAM_ERROR)
-! fix project menu 
-! read MDINST file to find base application and enhancement code
-DIR$="SOA"; CALL "SYPATH",TERM$,DIR$
-IF DIR$="ERR" THEN GOTO PROGRAM_END
-MD_CHN=UNT,E1=MD_CHN,E1$="MDINST"; OPEN (E1,ERR=PROGRAM_END)E1$
+	coSession				= %sys_ss
+	IF nul(TERM$) {
+		TERM$				= coSession'LegacyTerm$
+	}
+	MENU_DONE				= 0
+	EnhancementFileOpened	= 0
+	! find and open SY_Menu in ASI directory
+	FileName$				= "SY_Menu.M4T"
+	FilePath$				= "..\ASI\"
+	FileToOpen$				= FilePath$+FileName$
+	! open file
+	ASIMenu					= HFN
+	ProjectmenuExists		= 0
+	OPEN (ASIMenu,IOL=*,ERR=*NEXT)FileToOpen$; ProjectmenuExists	= 1
+	IF ProjectmenuExists {
+		FileToErase$		= PTH(ASIMenu)
+	}
+	! open SY_Menu in MAS_SYSTEM directory
+	ErrorMessage$			= "MenuFX_APS. Cannot open MAS_SYSTEM/SY_Menu.M4T table"
+	NewMenu					= coSession'OpenTable("SY_Menu.M4T","SYSTEM",ERR=PROGRAM_ERROR)
+	! fix project menu 
+	! read MDINST file to find base application and enhancement code
+	DIR$					= "SOA"
+	CALL "SYPATH",TERM$,DIR$
+	IF DIR$="ERR" THEN GOTO PROGRAM_END
+	MD_CHN					= UNT
+	E1						= MD_CHN
+	E1$						= "MDINST"
+	OPEN (E1,ERR=PROGRAM_END)E1$
 MDINST_LOOP: ! READ NEXT MDINST RECORD
-E1=MD_CHN; READ RECORD (E1,SIZ=34,END=PROGRAM_END)tmpENH$
-IF LEN(tmpENH$)<33 THEN GOTO MDINST_LOOP
-IF tmpENH$(1,5)=DIM(5) THEN GOTO MDINST_LOOP
-tmpPATH$=tmpENH$(1,2),tmpBASE_APP$=tmpENH$(1,2),tmpENH_CODE$=tmpENH$(3,3)
-IF tmpBASE_APP$="IN" THEN tmpPATH$="SOA"
-CWDIR ".."
-ErrorMessage$="Cannot open "+tmpPATH$+" directory"
-tmpPATHCTL=UNT,E1=tmpPATHCTL,E1$=tmpPATH$; OPEN (E1,ERR=PROGRAM_ERROR)E1$
-IF ProjectmenuExists THEN {
-! find and read _MENU file
-MENU_FILE_NAME$=tmpBASE_APP$+"_Menu."+tmpENH_CODE$
-TASK_FILE_NAME$=tmpBASE_APP$+"_Task."+tmpENH_CODE$
-MENU_READ=UNT,E1=MENU_READ,E1$=MENU_FILE_NAME$; OPEN (E1,IOL=*,ERR=MDINST_LOOP)E1$
-TaskFileOpened=0; TASK_BASE=UNT,E1=TASK_BASE,E1$=TASK_FILE_NAME$; OPEN (E1,IOL=*,ERR=*NEXT)E1$; TaskFileOpened=1
-MENU_DONE=1
-IF UCS(tmpENH_CODE$)="SMC" THEN {
-! we don't need to fix menu if we install SMC
-GOTO MDINST_LOOP
- }
-READ (MENU_READ,KEY="",ERR=*NEXT,END=MDINST_LOOP)
-READ_NEXT_MENU_RECORD:
-READ (MENU_READ,REC=ADJ$,ERR=MDINST_LOOP,END=MDINST_LOOP)
-IF NOT(NUL(ADJ.ParentTaskKey$)) THEN {
-! find menu item in the old menu file
-READ (ASIMenu,KEY=ADJ.ParentModuleCode$:ADJ.ParentTaskKey$:ADJ.ParentSequence$,REC=OldMenu$,ERR=READ_NEXT_MENU_RECORD,END=READ_NEXT_MENU_RECORD)
-! find the same menu item in the new menu
-READ (NewMenu,KEY=OldMenu.ModuleCode$,REC=NewMenu$,ERR=*NEXT,END=READ_NEXT_MENU_RECORD)
-READ_NEXT_NEW_MENU_RECORD:
-READ (NewMenu,REC=NewMenu$,ERR=*NEXT,END=READ_NEXT_MENU_RECORD)
-IF OldMenu.ModuleCode$<>NewMenu.ModuleCode$ THEN {
-GOTO READ_NEXT_MENU_RECORD
- }
-IF UCS(STP(NewMenu.MenuName$))=UCS(STP(OldMenu.MenuName$)) THEN {
-ADJ.ParentTaskKey$=NewMenu.TaskKey$
-ADJ.ParentSequence$=NewMenu.Sequence$
-ADJ.ParentPosition$=NewMenu.Position$
-WRITE (MENU_READ,REC=ADJ$)
-GOTO READ_NEXT_MENU_RECORD
- } ELSE {
-GOTO READ_NEXT_NEW_MENU_RECORD
- }
- } ELSE {
-GOTO READ_NEXT_MENU_RECORD
- }
- }
-GOTO PROGRAM_END
+	E1						= MD_CHN
+	READ RECORD (E1,SIZ=34,END=PROGRAM_END)tmpENH$
+	IF LEN(tmpENH$)<33 THEN GOTO MDINST_LOOP
+	IF tmpENH$(1,5)=DIM(5) THEN GOTO MDINST_LOOP
+	tmpPATH$				= tmpENH$(1,2)
+	tmpBASE_APP$			= tmpENH$(1,2)
+	tmpENH_CODE$			= tmpENH$(3,3)
+	IF tmpBASE_APP$="IN" {
+		tmpPATH$			= "SOA"
+	}
+	CWDIR ".."
+	ErrorMessage$			= "Cannot open "+tmpPATH$+" directory"
+	tmpPATHCTL				= UNT
+	E1						= tmpPATHCTL
+	E1$						= tmpPATH$
+	OPEN (E1,ERR=PROGRAM_ERROR)E1$
+	IF ProjectmenuExists {
+		! find and read _MENU file
+		MENU_FILE_NAME$		= tmpBASE_APP$+"_Menu."+tmpENH_CODE$
+		TASK_FILE_NAME$		= tmpBASE_APP$+"_Task."+tmpENH_CODE$
+		MENU_READ			= UNT
+		E1					= MENU_READ
+		E1$					= MENU_FILE_NAME$
+		OPEN (E1,IOL=*,ERR=MDINST_LOOP)E1$
+		TaskFileOpened		= 0
+		TASK_BASE			= UNT
+		E1					= TASK_BASE
+		E1$					= TASK_FILE_NAME$
+		OPEN (E1,IOL=*,ERR=*NEXT)E1$; TaskFileOpened=1
+		MENU_DONE			= 1
+		IF UCS(tmpENH_CODE$)="SMC" THEN {
+			! we don't need to fix menu if we install SMC
+			GOTO MDINST_LOOP
+		}
+		READ (MENU_READ,KEY="",ERR=*NEXT,END=MDINST_LOOP)
+	READ_NEXT_MENU_RECORD:
+		READ (MENU_READ,REC=ADJ$,ERR=MDINST_LOOP,END=MDINST_LOOP)
+		IF NOT(NUL(ADJ.ParentTaskKey$)) {
+			! find menu item in the old menu file
+			READ (ASIMenu,KEY=ADJ.ParentModuleCode$:ADJ.ParentTaskKey$:ADJ.ParentSequence$,REC=OldMenu$,ERR=READ_NEXT_MENU_RECORD,END=READ_NEXT_MENU_RECORD)
+			! find the same menu item in the new menu
+			READ (NewMenu,KEY=OldMenu.ModuleCode$,REC=NewMenu$,ERR=*NEXT,END=READ_NEXT_MENU_RECORD)
+			READ_NEXT_NEW_MENU_RECORD:
+			READ (NewMenu,REC=NewMenu$,ERR=*NEXT,END=READ_NEXT_MENU_RECORD)
+			IF OldMenu.ModuleCode$<>NewMenu.ModuleCode$ {
+				GOTO READ_NEXT_MENU_RECORD
+			}
+			IF UCS(STP(NewMenu.MenuName$))=UCS(STP(OldMenu.MenuName$)) {
+				ADJ.ParentTaskKey$=NewMenu.TaskKey$
+				ADJ.ParentSequence$=NewMenu.Sequence$
+				ADJ.ParentPosition$=NewMenu.Position$
+				WRITE (MENU_READ,REC=ADJ$)
+				GOTO READ_NEXT_MENU_RECORD
+			} ELSE {
+				GOTO READ_NEXT_NEW_MENU_RECORD
+			}
+		} ELSE {
+			GOTO READ_NEXT_MENU_RECORD
+		}
+	}
+	GOTO PROGRAM_END
 PROGRAM_ERROR:
-MSGBOX ErrorMessage$
+	MSGBOX ErrorMessage$	! *SC-OK*
+	
 PROGRAM_END:
-CLOSE (MENU_READ,ERR=*NEXT)
-CLOSE (NewMenu,ERR=*NEXT)
-CLOSE (MD_CHN,ERR=*NEXT)
-CLOSE (TASK_BASE,ERR=*NEXT)
-CLOSE (ASIMenu,ERR=*NEXT)
-ERASE FileToErase$,ERR=*NEXT
+	CLOSE (MENU_READ,ERR=*NEXT)
+	CLOSE (NewMenu,ERR=*NEXT)
+	CLOSE (MD_CHN,ERR=*NEXT)
+	CLOSE (TASK_BASE,ERR=*NEXT)
+	CLOSE (ASIMenu,ERR=*NEXT)
+	ERASE FileToErase$,ERR=*NEXT
 EXIT 

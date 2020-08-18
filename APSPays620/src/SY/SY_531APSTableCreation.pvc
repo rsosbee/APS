@@ -123,7 +123,7 @@ RETURN tmpVal
 !
 
 AR_FILES:	
-	! RCS #236076 - 2019-04-17 - updated additional files.
+
 	tmpVal				= _obj'CreateTables("AR_531APSConvertPaymentTypes",	cCompanyCode$); filecnt += tmpVal	! 1
 	tmpVal				= _obj'CreateTables("AR_531APSCustomerCreditCard",	cCompanyCode$); filecnt += tmpVal	! 2
 	tmpVal				= _obj'CreateTables("AR_531APSPaymentType",			cCompanyCode$); filecnt += tmpVal	! 3
@@ -138,7 +138,7 @@ AR_FILES:
 	tmpVal				= _obj'CreateTables("AR_InvoiceWrk",				cCompanyCode$); filecnt += tmpVal	! 12
 	tmpVal				= _obj'CreateTables("AR_PaymentType",				cCompanyCode$); filecnt += tmpVal	! 13
 	tmpVal				= _obj'CreateTables("AR_TransactionPaymentHistory",	cCompanyCode$); filecnt += tmpVal	! 14
-	tmpVal				= _obj'CreateTables("AR_TransactionPosting",		cCompanyCode$); filecnt += tmpVal	! 15 #241845 2018-09-17 RCS
+	tmpVal				= _obj'CreateTables("AR_TransactionPosting",		cCompanyCode$); filecnt += tmpVal	! 15
 RETURN tmpVal
 !
 
@@ -170,11 +170,11 @@ RETURN tmpVal
 SY_FILES:
 	cCompanyCode$		= %cCompanyCode$
 	tmpVal				= coSession'CreateTable("SY_531APSActivation",		"SYSTEM",err=*next); filecnt += tmpVal	! 24 - may be in use DB# 1324
-	tmpVal				= coSession'CreateTable("SY_531APSActiveToken",		"SYSTEM"); filecnt += tmpVal		! 25 #236076 - 2019-02-02 RCS
+	tmpVal				= coSession'CreateTable("SY_531APSActiveToken",		"SYSTEM"); filecnt += tmpVal		! 25
 	tmpVal				= coSession'CreateTable("SY_531APSCompany",			"SYSTEM"); filecnt += tmpVal		! 26
 	tmpVal				= coSession'CreateTable("SY_531APSDocumentDetail",	"SYSTEM"); filecnt += tmpVal		! 27
 	tmpVal				= coSession'CreateTable("SY_531APSDocumentHeader",	"SYSTEM"); filecnt += tmpVal		! 28
-	tmpVal				= coSession'CreateTable("SY_531APSEmvTerminal",		"SYSTEM"); filecnt += tmpVal		! 29 #236076 - 2019-01-28 RCS
+	tmpVal				= coSession'CreateTable("SY_531APSEmvTerminal",		"SYSTEM"); filecnt += tmpVal		! 29
 	tmpVal				= coSession'CreateTable("SY_531APSTransactionLog",	"SYSTEM"); filecnt += tmpVal		! 30
 RETURN tmpVal
 !

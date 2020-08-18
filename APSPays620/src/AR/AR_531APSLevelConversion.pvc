@@ -1,7 +1,8 @@
 ! $Id$: AR_531APSLevelConversion.pvc
 ! MAS 90/MAS 200 Wrapper for all AR level conversions & actual conversion for 5.1+ levels
-! Accounting Systems, Inc. 2013-2020 Bob Sosbee
+! Copyright 2020 (C) by American Payment Systems Inc. (APS) All rights reserved.
 !
+
 DEF CLASS "AR_531APSLevelConversion" CREATE REQUIRED DELETE REQUIRED
 
 	! Inherits from the following class(es)
@@ -12,7 +13,7 @@ DEF CLASS "AR_531APSLevelConversion" CREATE REQUIRED DELETE REQUIRED
 	! Public Properties
 
 	! Local/Private Properties
-	LOCAL APSActivationFh			! RCS #240836 - 2018-08-17 
+	LOCAL APSActivationFh 
 
 	! Public Functions (Methods)
 	FUNCTION CONVERT(APScurrLevel, APStargLevel)											CONVERT
@@ -34,7 +35,7 @@ END DEF
 ON_CREATE:
 ENTER coSession
 	PRECISION 6 FOR OBJECT
-	APSActivationFh			= coSession'OpenTable("SY_531APSActivation", "SYSTEM") ! RCS #240836 - 2018-08-17
+	APSActivationFh			= coSession'OpenTable("SY_531APSActivation", "SYSTEM")
 RETURN
 !
 
@@ -43,7 +44,7 @@ ON_DELETE:
 	if APSActivationFh { 
 		CLOSE (APSActivationFh, err=*next)
 		APSActivationFh		= 0 
-	} ! RCS #240836 - 2018-08-30
+	}
 	
 RETURN
 !
@@ -77,7 +78,7 @@ ENTER (ConvertFromLevel)
 	}
 	! ******  above lines modified to allow for conversion to premium
 	
-	ctmpFH					= coSession'CreateTable("AR_531APSConvertPaymentTypes",pthCOMPANY$) ! Insure conversion table is current. #229519 RCS 2017-08-08
+	ctmpFH					= coSession'CreateTable("AR_531APSConvertPaymentTypes",pthCOMPANY$) ! Insure conversion table is current.
 
 	READ(tmpEnhActivationFH, KEY=APSModuleCode$:APSDeveloperCode$:APSEnhancementCode$, REC=compare$, DOM=*NEXT)
 
@@ -110,25 +111,24 @@ ENTER (ConvertFromLevel)
 							WHERE											\
 								POS(PAYMENT.PaymentMethod$ = "AR") AND		\
 								NOT(NUL(PAYMENT.MerchantID$)) AND			\
-								NOT(NUL(PAYMENT.D531APSPassword$)) ! # 232007 2017-11-20 RCS
-
-						tmpMerchantID$			= PAYMENT.MerchantID$
-						_OBJ'DecryptPassword(FROM "SY_Password", tmpMerchantID$, decryptedMerchantID$)
-						coSession'EncryptPassword(decryptedMerchantID$, defaultMerchantID$)
-						tmpMerchantPassword$	= PAYMENT.D531APSPassword$
-						_OBJ'DecryptPassword(FROM "SY_Password", tmpMerchantPassword$, decryptedMerchantPassword$)
-						coSession'EncryptPassword(decryptedMerchantPassword$, defaultMerchantPassword$)
+								NOT(NUL(PAYMENT.D531APSPassword$))
+							tmpMerchantID$			= PAYMENT.MerchantID$
+							_OBJ'DecryptPassword(FROM "SY_Password", tmpMerchantID$, decryptedMerchantID$)
+							coSession'EncryptPassword(decryptedMerchantID$, defaultMerchantID$)
+							tmpMerchantPassword$	= PAYMENT.D531APSPassword$
+							_OBJ'DecryptPassword(FROM "SY_Password", tmpMerchantPassword$, decryptedMerchantPassword$)
+							coSession'EncryptPassword(decryptedMerchantPassword$, defaultMerchantPassword$)
 						BREAK
 					NEXT RECORD
 
 					IF NOT(NUL(defaultMerchantID$)) AND NOT(NUL(defaultMerchantPassword$)) {
-						IF NOT(cProgressBarStarted) { ! PLW 2016-02-25
-							coSession'UI'ProgressBar("init", "Updating APS Fields", "Processing APS changes..."+SEP+"", 1) ! PLW 2016-02-25
-							cProgressBarStarted	= isTrue ! PLW 2016-02-25
+						IF NOT(cProgressBarStarted) {
+							coSession'UI'ProgressBar("init", "Updating APS Fields", "Processing APS changes..."+SEP+"", 1) 
+							cProgressBarStarted	= isTrue 
 							wait .1 ! insure progress bar appears RCS 2017-11-20
-						}  ! PLW 2016-02-25
+						} 
 						! transfer merchant ID to the new field
-						SELECT *, REC=PAYMENT$ FROM tmpAR_PaymentTypeFH BEGIN $$ END $FE$ WHERE POS(PAYMENT.PaymentMethod$ = "AR") ! # 232007 2017-11-20 RCS
+						SELECT *, REC=PAYMENT$ FROM tmpAR_PaymentTypeFH BEGIN $$ END $FE$ WHERE POS(PAYMENT.PaymentMethod$ = "AR")
 							IF NOT(NUL(PAYMENT.MerchantID$)) AND NOT(NUL(PAYMENT.D531APSPassword$)) {
 								_OBJ'DecryptPassword(FROM "SY_Password", PAYMENT.MerchantID$, decryptedAPSMerchantID$)
 								coSession'EncryptPassword(decryptedAPSMerchantID$, PAYMENT.D531APSMerchantID$)
@@ -138,14 +138,14 @@ ENTER (ConvertFromLevel)
 								PAYMENT.D531APSMerchantID$	= defaultMerchantID$
 								PAYMENT.D531APSPassword$	= defaultMerchantPassword$
 							}
-							if nul(Payment.D531APSSendEmail$) { 	Payment.D531APSSendEmail$		= "N" } ! #231618 changed to N by default per Zac 2018-03-27
-							if nul(Payment.D531APSRequireCVV$) { 	Payment.D531APSRequireCVV$		= "Y" } ! RCS #237825 - 2018-05-23, changed to Y by default per Zac
-							if nul(Payment.D531APSRetailAccount$) { Payment.D531APSRetailAccount$	= "N" } ! RCS #237825 - 2018-05-23
-							IF not(Payment.PaymentMethod$="R") {	Payment.D531APSRequireCVV$ 		= "N" } ! RCS #237825 - 2018-05-23 for non cRedit card payment types.
+							if nul(Payment.D531APSSendEmail$) { 	Payment.D531APSSendEmail$		= "N" } ! changed to N by default per Zac 2018-03-27
+							if nul(Payment.D531APSRequireCVV$) { 	Payment.D531APSRequireCVV$		= "Y" } ! 2018-05-23, changed to Y by default per Zac
+							if nul(Payment.D531APSRetailAccount$) { Payment.D531APSRetailAccount$	= "N" }
+							IF not(Payment.PaymentMethod$="R") {	Payment.D531APSRequireCVV$ 		= "N" } ! 2018-05-23 for non cRedit card payment types.
 							IF Payment.PaymentMethod$	= "R"  {	
-								Payment.D531APSRequireCVV$ 		= "Y"	! #237825 - 2018-05-23 - RCS - for cRedit card payment types.
-								Payment.AllowCorporateCards$	= "Y"	! #248453 - 2019-05-19 - RCS - default to Level III
-								Payment.AddCorporateCardLevel3$	= "N"	! #248453 - 2019-05-19 - RCS - default to Level III
+								Payment.D531APSRequireCVV$ 		= "Y"	! for cRedit card payment types.
+								Payment.AllowCorporateCards$	= "Y"	! default to Level III
+								Payment.AddCorporateCardLevel3$	= "N"	! default to Level III
 							}
 							WRITE (tmpAR_PaymentTypeFH, REC=PAYMENT$)
 						NEXT RECORD
@@ -167,7 +167,7 @@ ENTER (ConvertFromLevel)
 				CLOSE (tmpAR_PaymentTypeFH,ERR=*NEXT)
 
 
-			} ELSE { ! RCS #226560 - 2017-07-28
+			} ELSE {
 
 				IF compare.DataLevel <= 6.2 {
 
@@ -178,16 +178,16 @@ ENTER (ConvertFromLevel)
 					IF recordFound AND ACTIV.APSActivated$="Y" {
 						tmpAR_PaymentTypeFH = coSession'OpenTable("AR_PaymentType", "COMPANY")
 						!
-						SELECT *, REC=PAYMENT$ FROM tmpAR_PaymentTypeFH BEGIN $$ END $FE$ WHERE POS(PAYMENT.PaymentMethod$ = "AR") ! # 232007 2017-11-20 RCS
+						SELECT *, REC=PAYMENT$ FROM tmpAR_PaymentTypeFH BEGIN $$ END $FE$ WHERE POS(PAYMENT.PaymentMethod$ = "AR")
 							IF NOT(NUL(PAYMENT.D531APSMerchantID$))  {
-								if nul(Payment.D531APSSendEmail$) { 	Payment.D531APSSendEmail$		= "N" } ! #231618 changed to N by default per Zac 2018-03-27
-								if nul(Payment.D531APSRequireCVV$) { 	Payment.D531APSRequireCVV$		= "Y" } ! RCS #237825 - 2018-05-23, changed to Y by default per Zac
-								if nul(Payment.D531APSRetailAccount$) { Payment.D531APSRetailAccount$	= "N" } ! RCS #237825 - 2018-05-23
-								IF not(Payment.PaymentMethod$="R") {	Payment.D531APSRequireCVV$ 		= "N" } ! RCS #237825 - 2018-05-23 for non cRedit card payment types.
+								if nul(Payment.D531APSSendEmail$) { 	Payment.D531APSSendEmail$		= "N" } ! changed to N by default per Zac 2018-03-27
+								if nul(Payment.D531APSRequireCVV$) { 	Payment.D531APSRequireCVV$		= "Y" } ! 2018-05-23, changed to Y by default per Zac
+								if nul(Payment.D531APSRetailAccount$) { Payment.D531APSRetailAccount$	= "N" }
+								IF not(Payment.PaymentMethod$="R") {	Payment.D531APSRequireCVV$ 		= "N" } ! 2018-05-23 for non cRedit card payment types.
 								IF Payment.PaymentMethod$	= "R"  {	
-									Payment.D531APSRequireCVV$ 		= "Y"	! #237825 - 2018-05-23 - RCS - for cRedit card payment types.
-									Payment.AllowCorporateCards$	= "Y"	! #248453 - 2019-05-19 - RCS - default to Level III
-									Payment.AddCorporateCardLevel3$	= "N"	! #248453 - 2019-05-19 - RCS - default to Level III
+									Payment.D531APSRequireCVV$ 		= "Y"	! for cRedit card payment types.
+									Payment.AllowCorporateCards$	= "Y"	! default to Level III
+									Payment.AddCorporateCardLevel3$	= "N"	! default to Level III
 								}
 							}
 							WRITE (tmpAR_PaymentTypeFH, REC=PAYMENT$)
@@ -197,7 +197,7 @@ ENTER (ConvertFromLevel)
 				}
 			}
 		}
-		IF retVal {	! # 232007 - 2018-03-29 - RCS - moved down the stack. removed setting the enh.sublevel to 0.
+		IF retVal {	! 2018-03-29 - RCS - moved down the stack. removed setting the enh.sublevel to 0.
 			! Update the enhancement activation record for the company. This step is required.
 			enh.ModuleCode$			= APSModuleCode$
 			enh.DeveloperCode$		= APSDeveloperCode$
