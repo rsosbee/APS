@@ -2633,7 +2633,7 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 	READ DATA FROM vaultRec$ to IOL = vaultIOL$
 	READ DATA FROM defaultRec$,rec=CC$ to IOL = defaultIOL$
 	
-
+	guid$				= CreditCardGUID$
 	tmpCustNo$			= CustomerID$
 	cService$			= service$
 	cMaskedCard$		= cc.D531APSMaskedCard$
@@ -2656,7 +2656,7 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 		IF NOT(coPaymentTypeSvc) {
 			coPaymentTypeSvc	= NEW("AR_PaymentType_Svc",coSession)
 		}
-		retVal=coPaymentTypeSvc'Find(PaymentType$)
+		retVal			= coPaymentTypeSvc'Find(PaymentType$)
 		IF retVal {
 			coPaymentTypeSvc'GetRecord(cCurrentPaymentTypeRec$,cCurrentPaymentTypeIOL$)
 			READ DATA FROM cCurrentPaymentTypeRec$,REC=ARPaymentType$ TO IOL=cCurrentPaymentTypeIOL$
@@ -2743,7 +2743,7 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 				IF coSession'UI AND NOT(coSession'WebEngine) {
 					needToCloseProgressBar	= TBL(coSession'UI'ProgressActive,isTRUE,isFALSE) ! if we are creating the progress bar we need to kill it.
 					coSession'UI'ProgressBar("init","APS Payments","Processing "+pBarCaption$+" Transaction Request",0,"force")
-					wait .1 ! #231342 - force screen to update.
+					wait .1
 				}
 
 				SWITCH service$
@@ -2751,7 +2751,7 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 						CustomerVaultRequestString$			+= "&customer_vault=add_customer"
 						_obj'AddBillingData(CustomerVaultRequestString$, defaultRec$, defaultIOL$)
 						CustomerVaultRequestString$			+= "&email="+cEmail$
-						SWITCH cPaymentMethod$ !  #230568 - RCS
+						SWITCH cPaymentMethod$
 							CASE "A" ! ACH
 								CustomerVaultRequestString$	+= "&payment=check"
 								CustomerVaultRequestString$	+= "&checkaba="+APSroutingNo$
@@ -2767,7 +2767,7 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 								CustomerVaultRequestString$	+= "&ccexp="+CCexp$
 								ccExpiration$				= CCexp$
 
-								! RCS #235036 - 2018-03-08
+								
 								IF ARPaymentType.D531APSRetailAccount$ <> "Y" {
 									CustomerVaultRequestString$		+= "&amount=0.00" ! validate
 									CustomerVaultRequestString$		+= "&type=validate"
@@ -2829,9 +2829,9 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 
 					SWITCH cPaymentMethod$
 						CASE "A" ! ACH
-							IF NUL(guid$) and service$ = "CREATE" {					! for ACH force form for any new entry.
+							IF NUL(CreditCardGUID$) and service$ = "CREATE" {					! for ACH force form for any new entry.
 								ProcessHostedForm	= isTRUE
-								retVal				= _obj'ProcessThreeStepApi()	! if we don't have a vault ID we use three-step
+								retVal				= _obj'ProcessThreeStepApi()				! if we don't have a vault ID we use three-step
 							} ELSE {
 								IF NOT(NUL(CreditCardGUID$)) AND service$="UPDATE" AND NOT(cFromCustMaint) {  ! if we have a vault ID we use direct post
 									ProcessHostedForm	= isFALSE
@@ -2839,7 +2839,7 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 								} ELSE {
 									IF cFromCustMaint {
 										ProcessHostedForm	= isTRUE
-										retVal				= _obj'ProcessThreeStepApi() ! if we don't have a vault ID we use three-step
+										retVal				= _obj'ProcessThreeStepApi() 		! if we don't have a vault ID we use three-step
 									} else {
 										retVal				= retSUCCESS
 									}
@@ -2848,12 +2848,12 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 							BREAK						
 						
 						CASE "R" ! CC
-							IF NOT(NUL(CreditCardGUID$)) AND NOT(service$="UPDATE") {  ! if we have a vault ID we use direct post
+							IF NOT(NUL(CreditCardGUID$)) AND NOT(service$="UPDATE") {  			! if we have a vault ID we use direct post
 								ProcessHostedForm	= isFALSE
 								retVAL				= _obj'ProcessSecureHttp()
 							} ELSE {
 								ProcessHostedForm	= isTRUE
-								retVal				= _obj'ProcessThreeStepApi() ! if we don't have a vault ID we use three-step
+								retVal				= _obj'ProcessThreeStepApi() 				! if we don't have a vault ID we use three-step
 							}
 							BREAK
 					END SWITCH
@@ -2875,6 +2875,49 @@ ENTER service$,vaultRec$,vaultIOL$,defaultRec$,defaultIOL$,err=*next
 		}
 	}
 
+	! HS-T53 - 2020-08-19 - resolved issue with vault data returned.
+	SWITCH ProcessHostedForm
+		CASE isTRUE
+			tmpExpDate$						= response.billing.cc_exp$
+			CCnumber$						= STP(response.billing.cc_number$)
+			vaultID$						= response.customer_vault_id$
+			BREAK
+		DEFAULT
+			tmpExpDate$						= expDate$
+			! CCNumber$ and vaultID$ are set during ProcessSecureHTTP
+			BREAK
+	END SWITCH
+
+	if nul(tmpExpDate$) { tmpExpDate$ 		= expDate$ }
+	if nul(tmpExpDate$) { tmpExpDate$ 		= CCexp$ }
+	
+	IF CCnumber$ > isNULL$ { 				! it is either a credit card or ACH, but not both.
+		Last4UnencryptedCreditCardNos$		= MID(CCnumber$,-4)
+		expDate$							= tmpExpDate$
+		tmpDate$							= coSession'SystemDate$ ! get year prefix.
+		ExpirationDateMonth$				= MID(expDate$,1,2)
+		ExpirationDateYear$					= MID(tmpDate$,1,2)+MID(expDate$,3,4)
+		cardType$							= _obj'SetCreditCardType$(CCnumber$) 
+		Last4BankRoutingNos$				= $$
+		Last4BankAccountNos$				= $$
+		BankAccountType$					= $$
+		accountName$ 						= $$
+	} ELSE {								! ACH
+		Last4UnencryptedCreditCardNos$		= $$
+		cardType$							= $$
+		expDate$							= $$
+		ExpirationDateMonth$				= $$
+		ExpirationDateYear$					= $$
+		Last4BankRoutingNos$				= MID(response.billing.routing_number$,-4)
+		Last4BankAccountNos$				= MID(response.billing.account_number$,-4)
+		BankAccountType$					= TBL(lcs(response.billing.account_type$)="savings","C","S")
+		accountName$ 						= response.billing.account_name$
+		if Last4BankRoutingNos$				= "****" { Last4BankRoutingNos$	= $$ }
+		if Last4BankAccountNos$				= "****" { Last4BankAccountNos$	= $$ }
+	}
+
+	CreditCardGUID$	= VaultID$
+	VaultRec$		= rec(VaultIOL$)
 RETURN retVal
 !
 
@@ -3355,7 +3398,7 @@ PROCESS_THREE_STEP_API:
 
 	UCSResponse$			= UCS(response$)
 	! Action "ADD_CUSTOMER", "DELETE_CUSTOMER", "TRANSACTION", "QUERY", "TEST_CREDENTIALS"
-	IF NOT(UCS(Action$)		="QUERY") {
+	IF NOT(UCS(Action$)		= "QUERY") {
  		tmpAction$			= Action$
  		IF Action$ 			= "TEST_CREDENTIALS" {
  			tmpAction$		= "ADD_CUSTOMER"
@@ -3381,6 +3424,7 @@ PROCESS_THREE_STEP_API:
 	SWITCH UCS(Action$)
 		CASE "ADD_CUSTOMER"
 			guid$				= response.customer_vault_id$
+			CreditCardguid$		= response.customer_vault_id$
 			CCnumber$			= STP(response.billing.cc_number$)
 			IF CCnumber$ > isNULL$ { ! it is either a credit card or ACH, but not both.
 				last4Nos$		= MID(CCnumber$,-4)
