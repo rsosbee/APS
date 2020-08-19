@@ -17,3 +17,5 @@ Build 0610
 	07/31/2020 - Change to remove old EMV programs and use the new IP based EMV terminals.  HS-T49
 	08/03/2020 - Fix for trailing comma issue in the firstname/lastname logic.  HS-T52
 	08/09/2020 - Manual updated.  HS-T49
+	08/19/2020 - resolved issue with vault data returned on new cards entered in customer maintenance. HS-T53
+	
