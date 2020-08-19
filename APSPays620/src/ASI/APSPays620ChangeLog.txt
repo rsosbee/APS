@@ -19,3 +19,4 @@ Build 0610
 	08/09/2020 - Manual updated.  HS-T49
 	08/19/2020 - resolved issue with vault data returned on new cards entered in customer maintenance. HS-T53
 	08/19/2020 - Fix for typo on existing payment type records not allowed to update.  HS-T47
+	
