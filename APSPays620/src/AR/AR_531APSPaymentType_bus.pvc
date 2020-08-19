@@ -174,7 +174,7 @@ ENTER (APS531key$)
 		OrigUnencryptedAPSPassword$			= isNULL$
 		cOrigEncryptedAPSPassword$			= D531APSPassword$
 		cOrigD531APSApiKey$					= D531APSApiKey$
-		OrigD531APSApiKey$					= isNULL$
+		OrigD531APSApiKey$					= D531APSApiKey$
 		cD531APSSendEmail$					= D531APSSendEmail$
 		cD531APSRequireCVV$					= D531APSRequireCVV$
 		cD531APSRetailAccount$				= D531APSRetailAccount$
@@ -357,7 +357,7 @@ WRITE_REC:
 
 	  		IF retVal {
 				IF NOT(EditState 	= edtNEW) {
-					IF OrigD531APSApiKey$ <> cD531APSApiKey$ {	! HS-T47 - 2020-07-16 - RCS
+					IF OrigD531APSApiKey$ <> D531APSApiKey$ {	! HS-T47 - 2020-07-16 - RCS
 						! if APS activated, we do not have SPS credit cards any more
 						! do not allow to change merchant ID if there are credit cards
 						! we should allow this change only if the fix button was pressed
